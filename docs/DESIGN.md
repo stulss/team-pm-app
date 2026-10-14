@@ -1,0 +1,519 @@
+# 원격 팀 프로젝트 관리 웹앱 — 설계 문서
+
+> 대상: 2~10명 규모의 소규모 원격 팀
+> 스택: React(Vite) · Node.js + Express · **Supabase(관리형 PostgreSQL)** · Socket.io · JWT
+> 상태: 설계 단계 (코드 없음)
+
+---
+
+## 0. 설계 원칙 및 주요 결정
+
+| 결정 | 선택 | 이유 |
+|---|---|---|
+| 권한 모델 | **시스템 역할(users.role)** 하나 + 프로젝트 멤버십 | 팀이 작아 단순함이 우선. Admin=전체, Manager=프로젝트 생성/관리, Member=배정된 프로젝트 내 작업 |
+| 프로젝트 접근 | `project_members` 에 속한 사용자만 접근 (Admin 제외) | 프로젝트별 가시성 제어 |
+| 칸반 순서 | `position` (double precision, 사이에 끼우는 방식) | 드래그 시 한 행만 UPDATE. 정밀도 고갈 시 재정렬 |
+| 상태 | Enum: `todo`, `in_progress`, `review`, `done` | 칸반 컬럼 고정으로 시작 (커스텀 컬럼은 향후 확장) |
+| 인증 | Access JWT(15분, 메모리) + Refresh JWT(7일, httpOnly 쿠키, DB에 해시 저장) | XSS로부터 refresh 보호, 로그아웃/폐기 가능 |
+| 실시간 | REST로 변경 → 서버가 Socket.io `project:{id}` 룸에 브로드캐스트 | 단일 쓰기 경로(REST)로 일관성 유지, 소켓은 푸시 전용 |
+| 마감 임박 알림 | node-cron 으로 매시간 스캔 (24시간 이내, 미완료) | 소규모라 별도 큐 불필요. 중복 방지 컬럼 사용 |
+| 동시 편집 충돌 | 마지막 쓰기 우선 + `updated_at` 기반 낙관적 체크(선택) | 단순화 |
+| DB 호스팅 | **Supabase Postgres** (순수 Postgres로만 사용) | Express 서버가 `pg`로 직접 연결. Supabase Auth/Realtime/PostgREST는 쓰지 않음 → 스택(자체 JWT, Socket.io) 유지 |
+| DB 접속 | Session pooler(5432) 또는 direct 연결, `DATABASE_URL` | Express·node-cron·Socket.io는 상시 구동 서버라 세션 모드가 적합. 서버리스 배포 시에만 Transaction pooler(6543, prepared statement 비활성) |
+| RLS | 모든 테이블 `ENABLE ROW LEVEL SECURITY`, 정책 없음 | Supabase는 `public` 스키마를 anon key로 PostgREST에 노출함. RLS를 켜고 정책을 두지 않으면 anon/authenticated 직접 접근이 차단되고, 서버(postgres 역할)는 RLS를 우회해 정상 동작 |
+| 서버 수평 확장 | 1차는 단일 인스턴스. 필요 시 Socket.io Redis adapter | 2~10명이면 불필요 |
+
+### 역할별 권한 매트릭스
+
+| 동작 | Admin | Manager | Member |
+|---|:-:|:-:|:-:|
+| 사용자 역할 변경/비활성화 | ✅ | ❌ | ❌ |
+| 프로젝트 생성 | ✅ | ✅ | ❌ |
+| 프로젝트 수정/삭제/멤버 관리 | ✅ | ✅(본인 소유·관리 프로젝트) | ❌ |
+| 작업 생성/수정/삭제 | ✅ | ✅ | 생성·수정 ✅ / 삭제는 본인 생성분만 |
+| 작업 상태 이동 (칸반) | ✅ | ✅ | ✅ (소속 프로젝트) |
+| 댓글 작성 | ✅ | ✅ | ✅ |
+| 댓글 수정/삭제 | 모두 | 모두(소속 프로젝트) | 본인 것만 |
+| 대시보드 조회 | 전체 | 소속 프로젝트 | 소속 프로젝트 |
+
+> 회원가입: 첫 가입자는 자동 Admin. 이후 가입자는 Member. Admin이 역할 승격. (초대 코드 방식은 향후 확장)
+
+---
+
+## 1. ERD
+
+### 1.1 다이어그램
+
+```mermaid
+erDiagram
+    users ||--o{ refresh_tokens : has
+    users ||--o{ projects : owns
+    users ||--o{ project_members : joins
+    projects ||--o{ project_members : has
+    projects ||--o{ tasks : contains
+    users ||--o{ tasks : "assigned / created"
+    tasks ||--o{ comments : has
+    users ||--o{ comments : writes
+    users ||--o{ notifications : receives
+    tasks ||--o{ notifications : "refers to"
+    tasks ||--o{ activity_logs : logs
+    projects ||--o{ activity_logs : logs
+
+    users {
+        uuid id PK
+        varchar email UK
+        varchar password_hash
+        varchar name
+        enum role "admin|manager|member"
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    refresh_tokens {
+        uuid id PK
+        uuid user_id FK
+        varchar token_hash UK
+        timestamptz expires_at
+        timestamptz revoked_at
+        timestamptz created_at
+    }
+    projects {
+        uuid id PK
+        varchar name
+        text description
+        uuid owner_id FK
+        enum status "active|archived"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    project_members {
+        uuid project_id PK,FK
+        uuid user_id PK,FK
+        timestamptz joined_at
+    }
+    tasks {
+        uuid id PK
+        uuid project_id FK
+        varchar title
+        text description
+        enum status "todo|in_progress|review|done"
+        enum priority "low|medium|high|urgent"
+        uuid assignee_id FK "nullable"
+        uuid created_by FK
+        date due_date "nullable"
+        double position
+        timestamptz completed_at "nullable"
+        timestamptz due_notified_at "nullable"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    comments {
+        uuid id PK
+        uuid task_id FK
+        uuid author_id FK
+        text body
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz deleted_at "soft delete"
+    }
+    notifications {
+        uuid id PK
+        uuid user_id FK
+        enum type "task_assigned|due_soon|comment_added|task_overdue"
+        uuid task_id FK
+        uuid actor_id FK "nullable"
+        text message
+        boolean is_read
+        timestamptz created_at
+    }
+    activity_logs {
+        uuid id PK
+        uuid project_id FK
+        uuid task_id FK "nullable"
+        uuid actor_id FK
+        varchar action "task.created|task.moved|..."
+        jsonb meta
+        timestamptz created_at
+    }
+```
+
+### 1.2 테이블 상세 / 제약 / 인덱스
+
+**users**
+- `email` UNIQUE (lower-case 저장), `password_hash` = bcrypt(cost 12)
+- 비활성 사용자는 로그인 불가, 기존 작업의 `assignee_id` 는 유지
+
+**refresh_tokens**
+- 토큰 원문 대신 SHA-256 해시 저장. 회전(rotation): 재발급 시 기존 토큰 `revoked_at` 설정
+- 인덱스: `(user_id)`, `(expires_at)`
+
+**projects**
+- `owner_id` → users, ON DELETE RESTRICT
+- 삭제는 기본 archive 처리, 하드 삭제는 Admin만(CASCADE로 tasks/comments 삭제)
+
+**project_members**
+- PK `(project_id, user_id)`, 양쪽 FK ON DELETE CASCADE
+- 인덱스: `(user_id)` — "내 프로젝트" 조회용
+- 제약: 작업 담당자는 반드시 해당 프로젝트 멤버여야 함 → **애플리케이션 레벨 검증** (복합 FK로도 가능하나 단순화)
+
+**tasks**
+- 인덱스:
+  - `(project_id, status, position)` — 칸반 보드 조회/정렬
+  - `(assignee_id, status)` — 내 작업 조회
+  - `(due_date) WHERE status <> 'done'` — 마감 스캔 (partial index)
+- `status` 가 `done` 으로 바뀌면 `completed_at = now()`, 다른 상태로 되돌리면 NULL
+- `due_notified_at` — 임박 알림 중복 방지. `due_date` 변경 시 NULL로 리셋
+- CHECK: `title` 길이 1~200
+
+**comments**
+- 인덱스: `(task_id, created_at)`
+- 삭제는 soft delete (`deleted_at`), 본문은 응답 시 "삭제된 댓글"로 마스킹
+
+**notifications**
+- 인덱스: `(user_id, is_read, created_at DESC)`
+- 보관: 90일 이후 정리(cron)
+
+**activity_logs** (선택 기능이지만 MVP에서 단순 기록 권장)
+- 칸반 이동, 담당자 변경 등 이력. 대시보드/타임라인 확장 기반
+- 인덱스: `(project_id, created_at DESC)`
+
+### 1.3 대시보드 지표 정의
+
+- **진행률** = `done 작업 수 / 전체 작업 수` (프로젝트별, 전체)
+- **지연 작업** = `due_date < CURRENT_DATE AND status <> 'done'`
+- 추가 제공: 상태별 개수, 담당자별 미완료 수, 이번 주 마감 예정 수
+
+---
+
+## 2. API 설계
+
+### 2.1 공통 규약
+
+- Base URL: `/api/v1`
+- 인증: `Authorization: Bearer <accessToken>` (인증 필요 엔드포인트 전체)
+- 형식: JSON, 날짜는 ISO 8601 (`due_date` 만 `YYYY-MM-DD`)
+- ID: UUID
+- 에러 포맷:
+```json
+{ "error": { "code": "VALIDATION_ERROR", "message": "title is required", "details": [{ "field": "title", "issue": "required" }] } }
+```
+- 상태 코드: 200/201/204, 400(검증), 401(미인증), 403(권한), 404, 409(중복), 429(레이트리밋)
+- 페이지네이션(목록): `?page=1&limit=20` → `{ "data": [...], "meta": { "page":1, "limit":20, "total":57 } }`
+
+### 2.2 엔드포인트 목록
+
+#### Auth
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| POST | `/auth/register` | 회원가입 | 공개 |
+| POST | `/auth/login` | 로그인 | 공개 |
+| POST | `/auth/refresh` | 토큰 재발급 (쿠키) | 공개 |
+| POST | `/auth/logout` | 로그아웃(refresh 폐기) | 로그인 |
+| GET | `/auth/me` | 내 정보 | 로그인 |
+
+#### Users
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/users` | 사용자 목록 (멤버 초대용 검색 `?q=`) | 로그인 |
+| PATCH | `/users/:id/role` | 역할 변경 | Admin |
+| PATCH | `/users/:id/status` | 활성/비활성 | Admin |
+| PATCH | `/users/me` | 내 프로필(이름/비밀번호) 수정 | 본인 |
+
+#### Projects
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects` | 내가 속한 프로젝트 목록 | 로그인 |
+| POST | `/projects` | 프로젝트 생성 | Admin, Manager |
+| GET | `/projects/:id` | 상세 | 멤버 |
+| PATCH | `/projects/:id` | 수정/아카이브 | Admin, 소유 Manager |
+| DELETE | `/projects/:id` | 삭제 | Admin |
+| GET | `/projects/:id/members` | 멤버 목록 | 멤버 |
+| POST | `/projects/:id/members` | 멤버 추가 | Admin, 소유 Manager |
+| DELETE | `/projects/:id/members/:userId` | 멤버 제거 | Admin, 소유 Manager |
+
+#### Tasks
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects/:id/tasks` | 작업 목록/칸반 데이터 (필터: `status, assignee, priority, due_before, q`) | 멤버 |
+| POST | `/projects/:id/tasks` | 작업 생성 | 멤버 |
+| GET | `/tasks/:id` | 상세 | 멤버 |
+| PATCH | `/tasks/:id` | 필드 수정 (제목, 설명, 담당자, 우선순위, 마감일) | 멤버 |
+| PATCH | `/tasks/:id/move` | 칸반 이동 (상태+위치) | 멤버 |
+| DELETE | `/tasks/:id` | 삭제 | Admin/Manager/작성자 |
+| GET | `/tasks/mine` | 내게 배정된 작업 | 로그인 |
+
+#### Comments
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/tasks/:id/comments` | 댓글 목록 | 멤버 |
+| POST | `/tasks/:id/comments` | 댓글 작성 | 멤버 |
+| PATCH | `/comments/:id` | 수정 | 작성자 |
+| DELETE | `/comments/:id` | 삭제 | 작성자/Admin/Manager |
+
+#### Notifications
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/notifications` | 목록 (`?unread=true`) | 본인 |
+| GET | `/notifications/unread-count` | 안읽은 개수 | 본인 |
+| PATCH | `/notifications/:id/read` | 읽음 처리 | 본인 |
+| POST | `/notifications/read-all` | 전체 읽음 | 본인 |
+
+#### Dashboard
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/dashboard` | 내 전체 요약 (소속 프로젝트 합산) | 로그인 |
+| GET | `/projects/:id/dashboard` | 프로젝트별 요약 | 멤버 |
+
+### 2.3 요청/응답 예시
+
+**POST `/auth/register`**
+```json
+// 요청
+{ "email": "jiho@example.com", "password": "S3cure!pass", "name": "지호" }
+// 201
+{ "user": { "id": "u1…", "email": "jiho@example.com", "name": "지호", "role": "member" },
+  "accessToken": "eyJ…" }
+// + Set-Cookie: refresh_token=…; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth
+```
+
+**POST `/auth/login`**
+```json
+// 요청
+{ "email": "jiho@example.com", "password": "S3cure!pass" }
+// 200
+{ "user": { "id": "u1…", "name": "지호", "role": "manager" }, "accessToken": "eyJ…" }
+// 401
+{ "error": { "code": "INVALID_CREDENTIALS", "message": "이메일 또는 비밀번호가 올바르지 않습니다." } }
+```
+
+**POST `/projects`**
+```json
+// 요청
+{ "name": "웹사이트 리뉴얼", "description": "Q4 리뉴얼", "memberIds": ["u2…", "u3…"] }
+// 201
+{ "id": "p1…", "name": "웹사이트 리뉴얼", "ownerId": "u1…", "status": "active",
+  "members": [{ "id": "u1…", "name": "지호" }, { "id": "u2…", "name": "민서" }], "createdAt": "…" }
+```
+
+**POST `/projects/:id/tasks`**
+```json
+// 요청
+{ "title": "로그인 화면 디자인", "description": "피그마 시안 반영", "assigneeId": "u2…",
+  "priority": "high", "dueDate": "2026-10-20", "status": "todo" }
+// 201
+{ "id": "t1…", "projectId": "p1…", "title": "로그인 화면 디자인", "status": "todo",
+  "priority": "high", "assignee": { "id": "u2…", "name": "민서" }, "dueDate": "2026-10-20",
+  "position": 3072.0, "createdBy": "u1…", "createdAt": "…" }
+```
+
+**GET `/projects/:id/tasks?assignee=u2…`** (칸반용 그룹 응답, `?groupBy=status`)
+```json
+{ "columns": {
+    "todo":        [{ "id": "t1…", "title": "…", "priority": "high", "assignee": {…}, "dueDate": "…", "position": 1024, "commentCount": 2 }],
+    "in_progress": [],
+    "review":      [],
+    "done":        []
+} }
+```
+
+**PATCH `/tasks/:id/move`** (드래그 앤 드롭)
+```json
+// 요청: 대상 컬럼의 앞/뒤 이웃 task를 알려주면 서버가 position 계산
+{ "status": "in_progress", "beforeTaskId": "t7…", "afterTaskId": null }
+// 200
+{ "id": "t1…", "status": "in_progress", "position": 512.0, "completedAt": null, "updatedAt": "…" }
+// 403 (비멤버)
+{ "error": { "code": "FORBIDDEN", "message": "프로젝트 멤버가 아닙니다." } }
+```
+
+**POST `/tasks/:id/comments`**
+```json
+// 요청
+{ "body": "시안 v2 올렸어요 @민서" }
+// 201
+{ "id": "c1…", "taskId": "t1…", "author": { "id": "u1…", "name": "지호" }, "body": "…", "createdAt": "…" }
+```
+
+**GET `/notifications?unread=true`**
+```json
+{ "data": [
+  { "id": "n1…", "type": "task_assigned", "taskId": "t1…", "message": "지호님이 '로그인 화면 디자인' 작업을 배정했습니다.", "isRead": false, "createdAt": "…" },
+  { "id": "n2…", "type": "due_soon", "taskId": "t4…", "message": "'API 문서화' 마감이 24시간 이내입니다.", "isRead": false, "createdAt": "…" }
+], "meta": { "page": 1, "limit": 20, "total": 2 } }
+```
+
+**GET `/projects/:id/dashboard`**
+```json
+{ "projectId": "p1…",
+  "progress": { "total": 24, "done": 9, "percent": 37.5 },
+  "byStatus": { "todo": 8, "in_progress": 5, "review": 2, "done": 9 },
+  "overdue": { "count": 3, "tasks": [{ "id": "t9…", "title": "…", "dueDate": "2026-10-10", "assignee": {…} }] },
+  "dueThisWeek": 4,
+  "byAssignee": [{ "userId": "u2…", "name": "민서", "open": 6 }] }
+```
+
+### 2.4 Socket.io 이벤트 설계
+
+**연결/인증**: `io(url, { auth: { token: accessToken } })` → 서버 미들웨어에서 JWT 검증, 실패 시 연결 거부. 토큰 만료 시 재연결 때 새 토큰 사용.
+
+**룸**
+- `user:{userId}` — 개인 알림 (연결 시 자동 join)
+- `project:{projectId}` — 프로젝트 보드 (클라이언트가 `project:join` 요청 → 서버가 멤버십 검증 후 join)
+
+| 방향 | 이벤트 | 페이로드 | 설명 |
+|---|---|---|---|
+| C→S | `project:join` | `{ projectId }` | 보드 진입 시 (ack로 성공/실패) |
+| C→S | `project:leave` | `{ projectId }` | 보드 이탈 |
+| S→C | `task:created` | `{ task }` | 작업 생성 |
+| S→C | `task:updated` | `{ task }` | 필드 수정 |
+| S→C | `task:moved` | `{ taskId, status, position, movedBy }` | 칸반 이동 |
+| S→C | `task:deleted` | `{ taskId }` | 삭제 |
+| S→C | `comment:created` / `comment:updated` / `comment:deleted` | `{ taskId, comment }` | 댓글 변경 |
+| S→C | `member:added` / `member:removed` | `{ projectId, user }` | 멤버 변경 |
+| S→C | `notification:new` | `{ notification }` | 개인 알림 푸시 |
+| S→C | `presence:update` (선택) | `{ projectId, onlineUserIds }` | 접속자 표시 |
+
+**동기화 원칙**
+1. 변경은 **REST로만** 수행 → 서버가 DB 커밋 후 `io.to('project:ID').emit(...)` (요청자 소켓 제외 가능: `X-Socket-Id` 헤더)
+2. 클라이언트는 낙관적 UI 업데이트 → 실패 시 롤백
+3. 재연결 시 해당 프로젝트 tasks를 다시 fetch (이벤트 유실 보정)
+
+### 2.5 알림 생성 규칙
+
+| 트리거 | 수신자 | 타입 |
+|---|---|---|
+| 작업 생성/수정으로 담당자 지정·변경 | 새 담당자 (본인이 본인에게 지정 시 제외) | `task_assigned` |
+| 마감 24시간 이내 & 미완료 (cron, 매시간) | 담당자 | `due_soon` (`due_notified_at` 로 1회만) |
+| 마감 경과 & 미완료 (cron, 매일 오전) | 담당자 | `task_overdue` |
+| 내 담당 작업에 댓글 | 담당자·작성자 (댓글 작성자 제외) | `comment_added` |
+
+---
+
+## 3. 폴더 구조
+
+모노레포(npm workspaces) — 클라이언트/서버 분리, 공유 타입은 1차에서는 생략(필요 시 `packages/shared`).
+
+```
+team-pm-app/
+├─ docs/
+│  └─ DESIGN.md
+├─ package.json                 # workspaces: ["client", "server"]
+├─ docker-compose.yml           # (선택) 오프라인 개발용 로컬 postgres. 기본은 Supabase 개발 프로젝트 사용
+├─ .env.example
+├─ .gitignore
+├─ README.md
+│
+├─ server/
+│  ├─ package.json
+│  ├─ .env.example
+│  ├─ db/
+│  │  ├─ migrations/            # 001_init.sql … (node-pg-migrate. 마지막에 RLS 활성화 포함, Supabase 프로젝트에 적용)
+│  │  └─ seeds/                 # 개발용 샘플 데이터
+│  └─ src/
+│     ├─ index.js               # http 서버 + socket 부착, 부팅
+│     ├─ app.js                 # express 앱 (미들웨어, 라우터 마운트)
+│     ├─ config/
+│     │  ├─ env.js              # 환경변수 검증
+│     │  └─ db.js               # pg Pool
+│     ├─ middleware/
+│     │  ├─ auth.js             # JWT 검증 → req.user
+│     │  ├─ requireRole.js
+│     │  ├─ requireProjectMember.js
+│     │  ├─ validate.js         # zod 스키마 검증
+│     │  ├─ rateLimit.js
+│     │  └─ errorHandler.js
+│     ├─ modules/               # 도메인별 (routes → controller → service → repository)
+│     │  ├─ auth/
+│     │  ├─ users/
+│     │  ├─ projects/
+│     │  ├─ tasks/
+│     │  ├─ comments/
+│     │  ├─ notifications/
+│     │  └─ dashboard/
+│     ├─ sockets/
+│     │  ├─ index.js            # io 초기화, 인증 미들웨어
+│     │  ├─ rooms.js            # join/leave + 멤버십 검증
+│     │  └─ emitter.js          # service에서 호출하는 emit 헬퍼
+│     ├─ jobs/
+│     │  ├─ scheduler.js        # node-cron 등록
+│     │  └─ dueDateNotifier.js
+│     └─ utils/                 # jwt, hash, position 계산, 에러 클래스
+│     └─ tests/                 # 통합 테스트 (vitest/jest + supertest)
+│
+└─ client/
+   ├─ package.json
+   ├─ vite.config.js            # /api, /socket.io 프록시
+   ├─ index.html
+   └─ src/
+      ├─ main.jsx
+      ├─ App.jsx                # 라우터
+      ├─ api/                   # axios 인스턴스(토큰 첨부·401 시 refresh), 리소스별 함수
+      ├─ socket/                # socket 클라이언트, 이벤트 → 쿼리 캐시 반영
+      ├─ context/ (또는 store/) # AuthContext, 필요 시 zustand
+      ├─ hooks/                 # useTasks, useProject, useNotifications …
+      ├─ routes/                # ProtectedRoute, RoleRoute
+      ├─ pages/
+      │  ├─ LoginPage / RegisterPage
+      │  ├─ DashboardPage
+      │  ├─ ProjectListPage
+      │  ├─ ProjectBoardPage    # 칸반
+      │  ├─ MyTasksPage
+      │  └─ AdminUsersPage
+      ├─ components/
+      │  ├─ board/              # Board, Column, TaskCard (@dnd-kit)
+      │  ├─ task/               # TaskModal, TaskForm, CommentList
+      │  ├─ notifications/      # Bell, Dropdown
+      │  ├─ dashboard/          # ProgressCard, OverdueList
+      │  └─ common/             # Button, Modal, Avatar, Toast …
+      └─ styles/
+```
+
+**주요 라이브러리 제안**
+- 서버: `express`, `pg`, `socket.io`, `jsonwebtoken`, `bcrypt`, `zod`, `helmet`, `cors`, `cookie-parser`, `express-rate-limit`, `node-cron`, `node-pg-migrate`, `pino`
+- 클라이언트: `react-router`, `@tanstack/react-query`, `axios`, `socket.io-client`, `@dnd-kit/core`+`sortable`, `react-hook-form`+`zod`, (스타일) Tailwind CSS
+- 테스트: `vitest`, `supertest`, (선택) Playwright E2E
+
+---
+
+## 4. 구현 순서 (마일스톤)
+
+| M | 목표 | 주요 작업 | 완료 기준 |
+|---|---|---|---|
+| **M0** | 기반 세팅 (0.5~1일) | 모노레포, **Supabase 프로젝트 생성(dev/prod 분리) 및 `DATABASE_URL` 연결 확인**, env 검증, eslint/prettier, 마이그레이션 도구, `/health` | `npm run dev` 로 client·server·DB 기동 |
+| **M1** | 인증·사용자 (2~3일) | users/refresh_tokens 마이그레이션, 가입·로그인·refresh·logout·me, 역할 미들웨어, 클라 로그인/가입 화면, ProtectedRoute, axios 인터셉터 | 가입→로그인→새로고침 후 세션 유지, 역할별 라우트 차단 |
+| **M2** | 프로젝트·멤버 (2일) | projects/project_members CRUD, requireProjectMember, 프로젝트 목록/생성 UI, 멤버 관리 UI, Admin 사용자 관리 | Manager가 프로젝트 생성 후 멤버 초대, 비멤버 접근 403 |
+| **M3** | 작업 CRUD (3일) | tasks 마이그레이션/인덱스, 작업 CRUD API, 필터, 작업 모달(담당자·우선순위·마감일), 리스트 뷰 | 작업 생성·수정·삭제·필터 동작 |
+| **M4** | 칸반 보드 (2~3일) | `/move` API + position 계산(+재정렬), @dnd-kit 보드, 낙관적 업데이트/롤백 | 컬럼 간·내 드래그 시 순서가 새로고침 후에도 유지 |
+| **M5** | 실시간 동기화 (2일) | Socket.io 서버(JWT 인증, 룸), emitter 연동, 클라 이벤트→쿼리 캐시 반영, 재연결 시 refetch | 두 브라우저에서 한쪽 이동이 1초 내 반대쪽 반영 |
+| **M6** | 댓글 (1~2일) | comments API, 작업 모달 댓글 UI, 댓글 실시간 이벤트, 댓글 수 배지 | 댓글 작성/수정/삭제가 양쪽에 즉시 반영 |
+| **M7** | 알림 (2~3일) | notifications API, 할당·댓글 트리거, `notification:new` 푸시, 벨 UI+읽음 처리, cron(마감 임박/지연) | 할당 즉시 알림, 마감 24h 전 1회 알림 |
+| **M8** | 대시보드 (1~2일) | 집계 쿼리(진행률, 지연, 상태별, 담당자별), 대시보드 UI(카드·차트) | 수치가 실제 데이터와 일치 |
+| **M9** | 마무리·배포 (2~3일) | 입력 검증 보강, 레이트리밋/helmet/CORS, 에러·빈 상태 UI, 반응형, 통합/E2E 테스트, 배포(프론트 정적 호스팅 + Express 상시 구동 서버 — Socket.io/cron 때문에 서버리스 부적합), Supabase 백업(PITR 여부는 요금제 확인)·로그 | 핵심 플로우 E2E 통과, 프로덕션 환경변수/HTTPS 적용 |
+
+> 총 예상: 약 3~4주(1인 기준). **M1~M5가 MVP 핵심**이며, M6~M8은 독립적이라 순서 교체 가능.
+
+---
+
+## 5. 보안 / 품질 체크리스트
+
+- 비밀번호 bcrypt, 최소 8자; 로그인 레이트리밋(IP+이메일)
+- **Supabase**: anon/service_role 키를 클라이언트에 절대 노출하지 않음(클라이언트는 Supabase에 직접 접속하지 않음), `DATABASE_URL` 은 서버 환경변수로만 관리, 전 테이블 RLS 활성화, DB 비밀번호 로테이션 가능하도록 분리
+- 모든 입력 zod 검증, SQL은 파라미터 바인딩만 사용
+- refresh 토큰 httpOnly 쿠키 + CSRF 완화(SameSite=Strict, refresh 엔드포인트 한정 Path)
+- 모든 task/comment 접근 시 **프로젝트 멤버십 검증** (ID 추측 공격 방지 — 404로 응답 고려)
+- 소켓 룸 입장 시에도 동일한 멤버십 검증
+- 댓글 본문 렌더링은 텍스트로 처리(XSS), 마크다운 도입 시 sanitize
+- 환경별 CORS 화이트리스트, `helmet` 적용
+
+## 6. 향후 확장 (범위 외)
+
+초대 링크, 이메일 알림, 파일 첨부, 서브태스크/라벨, 커스텀 칸반 컬럼, @멘션 알림, 작업 검색 전문 인덱스, 감사 로그 UI, Redis adapter(다중 인스턴스), 다국어(i18n)
+
+## 7. 확인이 필요한 열린 질문
+
+1. 첫 가입자 자동 Admin 방식으로 괜찮은지, 아니면 초대 전용으로 할지
+2. 한 사용자가 여러 팀(워크스페이스)에 속할 필요가 있는지 (현재는 단일 팀 가정)
+3. 이메일 알림이 필요한지 (현재는 앱 내 알림만)
+4. 칸반 컬럼을 4개로 고정해도 되는지
+5. 배포 대상 (Express는 상시 구동 필요 → Render/Fly.io/Railway 등. Vercel은 프론트만 권장)
+6. Supabase를 DB로만 쓸지, 추후 Supabase Auth/Realtime으로 대체할 여지를 둘지 (현재 설계는 DB 전용)
