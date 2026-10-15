@@ -8,7 +8,6 @@ import ProjectListPage from './pages/ProjectListPage.jsx';
 import ProjectDetailPage from './pages/ProjectDetailPage.jsx';
 import MyTasksPage from './pages/MyTasksPage.jsx';
 import AdminUsersPage from './pages/AdminUsersPage.jsx';
-import SpikePage from './pages/SpikePage.jsx';
 
 function AuthLayout() {
   return (
@@ -34,7 +33,6 @@ export default function App() {
               <Route path="/" element={<ProjectListPage />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
               <Route path="/tasks/mine" element={<MyTasksPage />} />
-              <Route path="/spike" element={<SpikePage />} />
               <Route element={<RoleRoute roles={['admin']} />}>
                 <Route path="/admin/users" element={<AdminUsersPage />} />
               </Route>

@@ -3,8 +3,9 @@ import { Server } from 'socket.io';
 import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { env } from '../config/env.js';
+import { authenticateSocket } from './auth.js';
 
-// 인스턴스 식별자 — 스파이크에서 서로 다른 인스턴스 간 전달을 확인하는 데 사용.
+// 인스턴스 식별자 — 로그에서 어느 인스턴스인지 구분하는 용도.
 export const instanceId = randomUUID().slice(0, 8);
 
 export async function attachSockets(httpServer) {
@@ -27,16 +28,10 @@ export async function attachSockets(httpServer) {
     console.warn(`[socket] REDIS_URL not set — single instance mode (instance ${instanceId})`);
   }
 
-  // ---- M0 스파이크: 실제 기능 이벤트가 생기면(M5) 제거 ----
+  io.use(authenticateSocket);
   io.on('connection', (socket) => {
-    socket.emit('spike:hello', { instanceId, socketId: socket.id });
-    socket.on('spike:send', (text) => {
-      io.emit('spike:message', {
-        text: String(text).slice(0, 200),
-        fromInstance: instanceId,
-        at: new Date().toISOString(),
-      });
-    });
+    // 개인 알림 룸. 프로젝트 룸 입장(멤버십 검증)과 이벤트는 M5 에서 추가한다.
+    socket.join(`user:${socket.data.user.id}`);
   });
 
   return io;
