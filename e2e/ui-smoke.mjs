@@ -315,7 +315,82 @@ try {
     await page.getByRole('tab', { name: '목록' }).click();
   });
 
+  // DB 에서 같은 정의로 기대값을 직접 계산한다. (오늘 = 앱과 같은 Asia/Seoul 기준)
+  const dbDashboard = async (projectId) => {
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS total,
+              (count(*) FILTER (WHERE status = 'done'))::int AS done,
+              (count(*) FILTER (WHERE status <> 'done'
+                 AND due_date < (now() AT TIME ZONE 'Asia/Seoul')::date))::int AS overdue
+       FROM tasks WHERE project_id = $1`,
+      [projectId],
+    );
+    const r = rows[0];
+    return { ...r, percent: r.total ? Math.round((r.done / r.total) * 1000) / 10 : 0 };
+  };
+  const stat = (p, id) => p.getByTestId(id).textContent();
+  await step('대시보드: 프로젝트 화면의 집계 수치가 실제 데이터와 일치', async () => {
+    const projectId = projectUrl.split('/').pop();
+    await page.getByRole('tab', { name: '목록' }).click();
+    await page.getByRole('region', { name: '프로젝트 요약' }).waitFor();
+    const expected = await dbDashboard(projectId);
+    await pollUntil(
+      async () => Number(await stat(page, 'stat-total')) === expected.total,
+      '전체 수',
+    );
+    if (Number(await stat(page, 'stat-done')) !== expected.done) throw new Error('완료 수 불일치');
+    if (Number(await stat(page, 'stat-overdue')) !== expected.overdue) {
+      throw new Error('지연 수 불일치');
+    }
+    if ((await stat(page, 'progress-percent')) !== `${expected.percent}%`) {
+      throw new Error(
+        `진행률 불일치: ${await stat(page, 'progress-percent')} vs ${expected.percent}%`,
+      );
+    }
+    // 지연된 작업 목록에 지난 마감의 작업 제목이 보여야 한다 (e2e 에서 2020-01-01 마감으로 만든 작업)
+    await page.getByRole('region', { name: '프로젝트 요약' }).getByText('디자인 시안 v2').waitFor();
+  });
+  await step('대시보드: 작업 상태를 바꾸면 요약이 새로고침 없이 갱신됨', async () => {
+    const projectId = projectUrl.split('/').pop();
+    const before = await dbDashboard(projectId);
+    // 뒤 단계에서 쓰는 작업을 건드리지 않도록 대상을 명시한다. (진행 중이던 작업을 완료로)
+    const select = page.getByLabel('디자인 시안 v2 상태');
+    await Promise.all([
+      page.waitForResponse(
+        (r) => /\/api\/v1\/tasks\//.test(r.url()) && r.request().method() === 'PATCH',
+      ),
+      select.selectOption('done'),
+    ]);
+    const after = await dbDashboard(projectId);
+    if (after.done !== before.done + 1)
+      throw new Error('DB 의 완료 수가 늘지 않음 (테스트 전제 오류)');
+    await pollUntil(
+      async () => Number(await stat(page, 'stat-done')) === after.done,
+      '완료 수 갱신',
+    );
+    await pollUntil(
+      async () => (await stat(page, 'progress-percent')) === `${after.percent}%`,
+      '진행률 갱신',
+    );
+  });
+  await step('대시보드: 전체 대시보드에 프로젝트별 진행률이 표시됨', async () => {
+    const projectId = projectUrl.split('/').pop();
+    const expected = await dbDashboard(projectId);
+    await page.getByRole('link', { name: '대시보드' }).click();
+    await page.getByRole('heading', { name: '대시보드' }).waitFor();
+    const row = page.locator(`li[data-project-id="${projectId}"]`);
+    await row.waitFor();
+    await row.getByText(`${expected.percent}%`).waitFor();
+    await row.getByText(`${expected.done}/${expected.total}`).waitFor();
+    if (Number(await stat(page, 'stat-total')) < expected.total) {
+      throw new Error('전체 작업 수가 프로젝트 합계보다 작음');
+    }
+  });
+
   await step('보관 → 진행 중 목록에서 사라지고 보관됨 탭에 나타남', async () => {
+    // 앞 단계(전체 대시보드)에서 이동했으므로 프로젝트 화면으로 돌아온다.
+    await page.goto(projectUrl);
+    await page.getByRole('heading', { name: `ui-${run}-개편` }).waitFor();
     await page.getByRole('button', { name: '보관', exact: true }).click();
     await page.getByText('보관됨', { exact: true }).first().waitFor();
     if ((await page.getByRole('button', { name: '작업 추가' }).count()) !== 0) {

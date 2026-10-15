@@ -508,3 +508,86 @@ export const notificationsRepo = {
     }));
   },
 };
+
+// 대시보드 집계(실제 repository 와 같은 정의). SQL 은 실DB 스모크가 검증한다.
+const sortOverdue = (rows) =>
+  rows.sort((a, b) => a.due_date.localeCompare(b.due_date) || a.created_at - b.created_at);
+const overdueRows = (tasks, today) =>
+  sortOverdue(tasks.filter((t) => t.status !== 'done' && t.due_date && t.due_date < today));
+const statusRows = (tasks) =>
+  Object.entries(
+    tasks.reduce((acc, t) => ({ ...acc, [t.status]: (acc[t.status] ?? 0) + 1 }), {}),
+  ).map(([status, n]) => ({ status, n }));
+const dueThisWeek = (tasks, today, weekEnd) =>
+  tasks.filter(
+    (t) => t.status !== 'done' && t.due_date && t.due_date >= today && t.due_date <= weekEnd,
+  ).length;
+const userName = (id) => store.users.find((u) => u.id === id)?.name ?? null;
+
+export const dashboardRepo = {
+  async projectStats(projectId, today, weekEnd) {
+    const tasks = store.tasks.filter((t) => t.project_id === projectId);
+    const overdue = overdueRows(tasks, today);
+    const open = tasks.filter((t) => t.status !== 'done');
+    const groups = new Map();
+    for (const t of open) groups.set(t.assignee_id, (groups.get(t.assignee_id) ?? 0) + 1);
+    return {
+      byStatus: statusRows(tasks),
+      overdue: overdue.slice(0, 10).map((t) => ({
+        id: t.id,
+        title: t.title,
+        due_date: t.due_date,
+        assignee_id: t.assignee_id,
+        assignee_name: userName(t.assignee_id),
+        total: overdue.length,
+      })),
+      dueThisWeek: dueThisWeek(tasks, today, weekEnd),
+      byAssignee: [...groups.entries()]
+        .map(([assignee_id, n]) => ({ assignee_id, name: userName(assignee_id), open: n }))
+        .sort(
+          (a, b) =>
+            b.open - a.open ||
+            (a.name === null) - (b.name === null) || // 미배정은 동점에서 마지막
+            (a.name ?? '').localeCompare(b.name ?? ''),
+        ),
+    };
+  },
+  async overallStats(user, today, weekEnd) {
+    const projects = store.projects
+      .filter(
+        (p) =>
+          p.status === 'active' &&
+          (user.role === 'admin' ||
+            store.members.some((m) => m.project_id === p.id && m.user_id === user.id)),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const ids = new Set(projects.map((p) => p.id));
+    const tasks = store.tasks.filter((t) => ids.has(t.project_id));
+    const overdue = overdueRows(tasks, today);
+    return {
+      byStatus: statusRows(tasks),
+      overdue: overdue.slice(0, 10).map((t) => ({
+        id: t.id,
+        title: t.title,
+        due_date: t.due_date,
+        project_id: t.project_id,
+        project_name: projects.find((p) => p.id === t.project_id).name,
+        assignee_id: t.assignee_id,
+        assignee_name: userName(t.assignee_id),
+        total: overdue.length,
+      })),
+      dueThisWeek: dueThisWeek(tasks, today, weekEnd),
+      myOpen: tasks.filter((t) => t.assignee_id === user.id && t.status !== 'done').length,
+      projects: projects.map((p) => {
+        const own = tasks.filter((t) => t.project_id === p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          total: own.length,
+          done: own.filter((t) => t.status === 'done').length,
+          overdue: overdueRows(own, today).length,
+        };
+      }),
+    };
+  },
+};

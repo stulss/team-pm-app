@@ -903,6 +903,108 @@ try {
         .rowCount === 1,
   );
 
+  // --- 대시보드: 알려진 데이터로 집계 수치가 실제 데이터와 정확히 일치하는지 확인
+  {
+    const today = (await db.query("SELECT (now() AT TIME ZONE 'Asia/Seoul')::date::text AS d"))
+      .rows[0].d;
+    const shift = async (n) =>
+      (await db.query('SELECT ($1::date + $2::int)::text AS d', [today, n])).rows[0].d;
+    const [dm5, dm1, d0, d30] = [await shift(-5), await shift(-1), today, await shift(30)];
+    const dp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-dash', memberIds: [people.member.id] },
+    });
+    const dpid = dp.body.id;
+    const dmk = (title, body) =>
+      call('POST', `/projects/${dpid}/tasks`, { token: t('manager'), body: { title, ...body } });
+    const M = people.member.id;
+    const G = people.manager.id;
+    // todo 3, in_progress 1, review 1, done 3 → 전체 8, 완료 3 (37.5%)
+    await dmk('T1', { assigneeId: M, dueDate: dm5 }); // 지연
+    await dmk('T2', { assigneeId: M, dueDate: dm1 }); // 지연
+    await dmk('T3', { dueDate: d0 }); // 오늘 → 이번 주 마감
+    await dmk('P1', { status: 'in_progress', assigneeId: G, dueDate: d30 });
+    await dmk('R1', { status: 'review', assigneeId: M });
+    await dmk('D1', { status: 'done', assigneeId: M, dueDate: dm5 }); // 완료는 지연이 아님
+    await dmk('D2', { status: 'done', assigneeId: G });
+    await dmk('D3', { status: 'done' });
+
+    const pd = (await call('GET', `/projects/${dpid}/dashboard`, { token: t('member') })).body;
+    check(
+      '프로젝트 진행률 3/8 = 37.5%',
+      pd.progress.total === 8 && pd.progress.done === 3 && pd.progress.percent === 37.5,
+      JSON.stringify(pd.progress),
+    );
+    check(
+      '상태별 개수 (3/1/1/3)',
+      JSON.stringify(pd.byStatus) ===
+        JSON.stringify({ todo: 3, in_progress: 1, review: 1, done: 3 }),
+      JSON.stringify(pd.byStatus),
+    );
+    check(
+      '지연 2건 (완료된 과거 마감은 제외), 오래된 순',
+      pd.overdue.count === 2 &&
+        pd.overdue.tasks.map((x) => x.title).join() === 'T1,T2' &&
+        pd.overdue.tasks[0].dueDate === dm5 &&
+        pd.overdue.tasks[0].assignee?.name === 'smoke-member',
+      JSON.stringify(pd.overdue),
+    );
+    check(
+      '이번 주 마감 예정 1건 (오늘 마감, 지연·30일 뒤·완료 제외)',
+      pd.dueThisWeek === 1,
+      String(pd.dueThisWeek),
+    );
+    check(
+      '담당자별 미완료: member 3, manager 1, 미배정 1 (동점이면 미배정 마지막)',
+      JSON.stringify(pd.byAssignee.map((a) => [a.name, a.open])) ===
+        JSON.stringify([
+          ['smoke-member', 3],
+          ['smoke-manager', 1],
+          ['미배정', 1],
+        ]),
+      JSON.stringify(pd.byAssignee),
+    );
+    check(
+      '비멤버 대시보드 (403)',
+      (await call('GET', `/projects/${dpid}/dashboard`, { token: t('outsider') })).status === 403,
+    );
+
+    const od = (await call('GET', '/dashboard', { token: t('member') })).body;
+    check(
+      '내 전체 요약: 소속 프로젝트만 합산(진행률·프로젝트별)',
+      od.progress.total === 8 &&
+        od.progress.done === 3 &&
+        od.progress.percent === 37.5 &&
+        // 이 스모크의 앞 단계에서 만든 다른 프로젝트(작업 0건)에도 속해 있을 수 있으므로 이름으로 찾는다.
+        od.projects.find((p) => p.name === 'smoke-dash')?.overdue === 2 &&
+        od.projects.filter((p) => p.name !== 'smoke-dash').every((p) => p.total === 0),
+      JSON.stringify(od.projects),
+    );
+    check(
+      '내 전체 요약: 내 미완료 3건, 지연 목록에 프로젝트 이름',
+      od.myOpen === 3 && od.overdue.count === 2 && od.overdue.tasks[0].projectName === 'smoke-dash',
+    );
+    check(
+      '내 전체 요약: 소속 없는 사용자는 빈 요약',
+      (await call('GET', '/dashboard', { token: t('outsider') })).body.projects.length === 0,
+    );
+    const adm = (await call('GET', '/dashboard', { token: t('admin') })).body;
+    check(
+      'admin 전체 요약에는 모든 진행 중 프로젝트가 포함',
+      adm.projects.some((p) => p.name === 'smoke-dash'),
+    );
+
+    await call('PATCH', `/projects/${dpid}`, { token: t('manager'), body: { status: 'archived' } });
+    check(
+      '보관된 프로젝트는 전체 요약에서 제외되지만 프로젝트 대시보드는 열림',
+      !(await call('GET', '/dashboard', { token: t('member') })).body.projects.some(
+        (p) => p.name === 'smoke-dash',
+      ) &&
+        (await call('GET', `/projects/${dpid}/dashboard`, { token: t('member') })).status === 200,
+    );
+    await call('DELETE', `/projects/${dpid}`, { token: t('admin') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유 manager 는 삭제 불가 (403)',

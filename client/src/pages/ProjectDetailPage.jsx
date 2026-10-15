@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useProjectRealtime } from '../hooks/useProjectRealtime.js';
 import UserSearch from '../components/project/UserSearch.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
+import ProjectDashboard from '../components/dashboard/ProjectDashboard.jsx';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -188,6 +189,8 @@ export default function ProjectDetailPage() {
           </div>
         )}
       </div>
+
+      <ProjectDashboard projectId={project.id} />
 
       <TaskSection project={project} archived={archived} />
     </>
