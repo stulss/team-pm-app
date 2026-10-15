@@ -83,7 +83,9 @@ export const authRepo = {
     });
   },
   async findRefreshToken(tokenHash) {
-    return store.tokens.find((t) => t.token_hash === tokenHash) ?? null;
+    const t = store.tokens.find((x) => x.token_hash === tokenHash);
+    if (!t) return null;
+    return { ...t, revoked_ago_ms: t.revoked_at ? Date.now() - t.revoked_at.getTime() : null };
   },
   async revokeRefreshToken(id) {
     const t = store.tokens.find((x) => x.id === id);

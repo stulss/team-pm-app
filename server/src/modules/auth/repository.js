@@ -9,7 +9,12 @@ export async function insertRefreshToken({ userId, tokenHash, expiresAt }) {
 }
 
 export async function findRefreshToken(tokenHash) {
-  const { rows } = await query('SELECT * FROM refresh_tokens WHERE token_hash = $1', [tokenHash]);
+  // revoked_ago_ms 는 DB 시계 기준으로 계산한다. 서버(Node)와 DB 시계가 어긋나도 유예 시간 판정이 틀리지 않게 하기 위함.
+  const { rows } = await query(
+    `SELECT *, (EXTRACT(EPOCH FROM (now() - revoked_at)) * 1000)::float8 AS revoked_ago_ms
+     FROM refresh_tokens WHERE token_hash = $1`,
+    [tokenHash],
+  );
   return rows[0] ?? null;
 }
 

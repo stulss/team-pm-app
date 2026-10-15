@@ -64,6 +64,7 @@
 | 프론트/API 도메인 구성 | M1.5 전 | **결정: 단일 Vercel 프로젝트, 동일 오리진** (쿠키 문제 없음) |
 | 요금제 | M1.5 | **결정: 무료 플랜 범위에서 사용** (Vercel Hobby, Supabase Free, Redis 무료). 한도 초과 시 기능을 줄이거나 다시 결정 |
 | Redis 서비스 선택 (Vercel Marketplace, 무료 플랜) | M1.5 | 미정 — Marketplace 무료 옵션 중 선택 |
+| Supabase dev/prod 분리 | M1.5 | **현재: Vercel 연동 프로젝트 1개를 Development/Preview/Production 이 공유.** 실사용 전에 prod 분리 여부 결정 (무료 플랜은 프로젝트 수 제한 있음) |
 | 첫 가입자 자동 Admin vs 초대 전용 | M1 전 | 현재 설계: 자동 Admin |
 | 칸반 컬럼 4개 고정 | M4 전 | 현재 설계: 고정 |
 | 이메일 알림 필요 여부 | M7 전 | 현재 설계: 앱 내 알림만 |

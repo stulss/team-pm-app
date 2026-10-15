@@ -56,7 +56,8 @@ Vercel 프로젝트 설정에 Production / Preview 를 나눠 등록한다. 비�
 
 | 이름 | 설명 | 비고 |
 |---|---|---|
-| `DATABASE_URL` | Supabase **Transaction pooler** 연결 문자열 | 비밀 |
+| `DATABASE_URL` | Supabase **Transaction pooler** 연결 문자열 | 비밀. Vercel-Supabase 연동이 주입하는 `POSTGRES_URL` 을 fallback 으로 사용(복사 불필요) |
+| `DIRECT_URL` | Supabase Session pooler(5432). 마이그레이션 전용 | 비밀. fallback: `POSTGRES_URL_NON_POOLING` |
 | `JWT_ACCESS_SECRET` | Access JWT 서명 키 | 비밀 |
 | `JWT_REFRESH_SECRET` | Refresh JWT 서명 키 | 비밀 |
 | `REDIS_URL` | Socket.io adapter용 Redis | Marketplace 연동 시 자동 주입될 수 있음 |

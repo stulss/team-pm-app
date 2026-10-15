@@ -7,7 +7,7 @@
     "dev": "node --watch --env-file=.env src/index.js",
     "start": "node src/index.js",
     "test": "vitest run",
-    "migrate": "node-pg-migrate -m db/migrations --envPath .env -d DIRECT_URL"
+    "migrate": "node --env-file=.env ../node_modules/node-pg-migrate/bin/node-pg-migrate.js -m db/migrations -d DIRECT_URL"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

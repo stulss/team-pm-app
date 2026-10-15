@@ -62,7 +62,7 @@ export async function refresh(rawToken) {
 
   if (record.revoked_at) {
     // 폐기된 토큰의 재사용 = 토큰 탈취 가능성. 유예 시간이 지났다면 해당 사용자의 모든 세션을 끊는다.
-    if (Date.now() - new Date(record.revoked_at).getTime() > REUSE_GRACE_MS) {
+    if (record.revoked_ago_ms > REUSE_GRACE_MS) {
       await tokens.revokeAllForUser(record.user_id);
     }
     throw invalidRefresh();
