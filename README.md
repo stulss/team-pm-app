@@ -2,7 +2,7 @@
 
 2~10명 규모의 원격 팀이 프로젝트와 작업을 칸반 보드로 함께 관리하는 웹앱.
 
-> 상태: 설계 완료, 구현 전. 코드는 M0(기반 세팅)부터 시작한다.
+> 상태: M0(기반 세팅) 코드 작성 완료, 배포 검증 대기.
 
 ## 스택
 
@@ -26,11 +26,22 @@ React(Vite) · Node.js + Express · Supabase(관리형 PostgreSQL, DB 전용) ·
 2. **2차 중간점검** — 칸반, 실시간, 댓글 (MVP 완성)
 3. **최종본** — 알림, 대시보드, 보안·테스트, 프로덕션 배포
 
-## 개발 환경 (M0 이후 채움)
+## 개발 환경
+
+요구 사항: Node 22 이상, Supabase(dev) 프로젝트 또는 로컬 Postgres(`docker compose up -d`).
 
 ```
 npm install
-npm run dev     # client + server
+cp server/.env.example server/.env   # DATABASE_URL 등 입력
+npm run dev                           # server(4000) + client(5173, /api 프록시)
 ```
 
-필요한 환경변수는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) §3 참고.
+| 명령 | 설명 |
+|---|---|
+| `npm run dev` | client + server 동시 실행 |
+| `npm test` | 서버 테스트 |
+| `npm run lint` / `npm run format:check` | 정적 검사 |
+| `npm run build` | 클라이언트 빌드 |
+| `npm run migrate -w server -- up` | 마이그레이션 적용(`DIRECT_URL` 사용) |
+
+환경변수와 배포는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) 참고.
