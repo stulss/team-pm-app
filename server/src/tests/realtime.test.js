@@ -32,6 +32,11 @@ vi.mock('../modules/comments/repository.js', async () => ({
   ...(await import('./helpers/memoryRepos.js')).commentsRepo,
 }));
 
+vi.mock('../modules/notifications/repository.js', async () => ({
+  ...(await vi.importActual('../modules/notifications/repository.js')),
+  ...(await import('./helpers/memoryRepos.js')).notificationsRepo,
+}));
+
 const { app } = await import('../app.js');
 const { attachSockets } = await import('../sockets/index.js');
 const { registerIo } = await import('../sockets/emitter.js');
@@ -317,5 +322,39 @@ describe('댓글 이벤트', () => {
       (await rest('post', `/tasks/${task.id}/comments`, 'outsider', { body: 'x' })).status,
     ).toBe(403);
     await quiet;
+  });
+});
+
+describe('알림 푸시', () => {
+  it('배정되면 담당자의 개인 방으로 notification:new 가 간다 (프로젝트 방 입장 없이)', async () => {
+    const got = next(sockets.member2, 'notification:new');
+    const quiet = silent(sockets.outsider, 'notification:new');
+    const res = await rest('post', `/projects/${pid}/tasks`, 'manager', {
+      title: '배정',
+      assigneeId: people.member2.id,
+    });
+    const payload = await got;
+    expect(payload.notification).toMatchObject({
+      type: 'task_assigned',
+      taskId: res.body.id,
+      projectId: pid,
+      isRead: false,
+      actor: { id: people.manager.id },
+    });
+    await quiet;
+  });
+
+  it('댓글 알림도 푸시되고, 본인에게는 가지 않는다', async () => {
+    const task = (
+      await rest('post', `/projects/${pid}/tasks`, 'manager', {
+        title: '댓글 알림',
+        assigneeId: people.member.id,
+      })
+    ).body;
+    const got = next(sockets.member, 'notification:new');
+    const selfQuiet = silent(sockets.member2, 'notification:new');
+    await rest('post', `/tasks/${task.id}/comments`, 'member2', { body: '확인' });
+    expect((await got).notification).toMatchObject({ type: 'comment_added', taskId: task.id });
+    await selfQuiet;
   });
 });

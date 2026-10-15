@@ -12,6 +12,25 @@ const schema = z.object({
   CLIENT_ORIGIN: z.string().optional(),
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 chars'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 chars'),
+  // Vercel Cron 이 보내는 Authorization: Bearer <CRON_SECRET> 검증용. 없으면 cron 엔드포인트는 비활성.
+  CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 chars').optional(),
+  // "오늘/내일" 마감 판정에 쓰는 시간대
+  APP_TIMEZONE: z
+    .string()
+    .default('Asia/Seoul')
+    .refine((tz) => {
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'APP_TIMEZONE must be a valid IANA time zone'),
+  // 'false' 로 두면 새 가입을 막는다(첫 계정은 항상 허용). 팀 구성이 끝난 뒤 닫는 용도.
+  ALLOW_REGISTRATION: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 // Vercel-Supabase 연동은 POSTGRES_URL(Transaction pooler 6543), POSTGRES_URL_NON_POOLING(5432)을 주입한다.

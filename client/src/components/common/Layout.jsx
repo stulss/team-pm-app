@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useUserRealtime } from '../../hooks/useUserRealtime.js';
+import NotificationBell from './NotificationBell.jsx';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -27,6 +28,7 @@ export default function Layout() {
           {user.role === 'admin' && <NavLink to="/admin/users">사용자 관리</NavLink>}
         </nav>
         <div className="topbar-user">
+          <NotificationBell />
           <span>{user.name}</span>
           <span className={`badge badge-${user.role}`}>{user.role}</span>
           <button type="button" className="secondary" onClick={onLogout}>

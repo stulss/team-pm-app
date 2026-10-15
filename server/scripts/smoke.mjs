@@ -723,6 +723,186 @@ try {
         .rowCount === 1,
   );
 
+  // --- 알림
+  const np = await call('POST', '/projects', {
+    token: t('manager'),
+    body: { name: 'smoke-notif', memberIds: [people.member.id, people.manager2.id] },
+  });
+  const npid = np.body.id;
+  const nmk = (who, body) =>
+    call('POST', `/projects/${npid}/tasks`, {
+      token: t(who),
+      body: { title: 'smoke 알림 작업', ...body },
+    });
+  const nlist = (who, qs = '') => call('GET', `/notifications${qs}`, { token: t(who) });
+  const ncount = async (who) =>
+    (await call('GET', '/notifications/unread-count', { token: t(who) })).body.count;
+
+  const assigned = await nmk('manager', { assigneeId: people.member.id });
+  const n1 = await nlist('member');
+  check(
+    '배정 알림 생성 (task_assigned) + 작업·프로젝트·배정자 정보',
+    n1.body.data.length === 1 &&
+      n1.body.data[0].type === 'task_assigned' &&
+      n1.body.data[0].taskId === assigned.body.id &&
+      n1.body.data[0].projectId === npid &&
+      n1.body.data[0].actor?.name === 'smoke-manager' &&
+      n1.body.data[0].isRead === false,
+    JSON.stringify(n1.body),
+  );
+  check(
+    '본인에게 배정하면 알림 없음',
+    await (async () => {
+      const before = (await nlist('manager')).body.meta.total;
+      await nmk('manager', { assigneeId: people.manager.id });
+      return (await nlist('manager')).body.meta.total === before;
+    })(),
+  );
+  check(
+    '담당자 변경 시 새 담당자에게만 알림',
+    await (async () => {
+      await call('PATCH', `/tasks/${assigned.body.id}`, {
+        token: t('manager'),
+        body: { assigneeId: people.manager2.id },
+      });
+      return (await nlist('manager2')).body.data.some((n) => n.taskId === assigned.body.id);
+    })(),
+  );
+
+  await call('POST', `/tasks/${assigned.body.id}/comments`, {
+    token: t('manager2'),
+    body: { body: '알림 테스트 댓글' },
+  });
+  const withComment = await nlist('manager');
+  check(
+    '댓글 알림: 작업 작성자에게 (comment_added), 댓글 작성자 본인은 제외',
+    withComment.body.data.some(
+      (n) => n.type === 'comment_added' && n.taskId === assigned.body.id,
+    ) && !(await nlist('manager2')).body.data.some((n) => n.type === 'comment_added'),
+  );
+
+  check('unread-count', (await ncount('member')) === 1);
+  const first = (await nlist('member')).body.data[0];
+  check(
+    '다른 사용자는 남의 알림을 읽음 처리할 수 없음 (404)',
+    (await call('PATCH', `/notifications/${first.id}/read`, { token: t('manager2') })).status ===
+      404,
+  );
+  check(
+    '읽음 처리 (204) → unread-count 0',
+    (await call('PATCH', `/notifications/${first.id}/read`, { token: t('member') })).status ===
+      204 && (await ncount('member')) === 0,
+  );
+  check(
+    '?unread=true 는 안 읽은 것만',
+    (await nlist('member', '?unread=true')).body.data.length === 0,
+  );
+  check(
+    'read-all 은 본인 것만 변경',
+    await (async () => {
+      const before = await ncount('manager2');
+      const res = await call('POST', '/notifications/read-all', { token: t('manager2') });
+      return (
+        before >= 1 &&
+        res.body.updated === before &&
+        (await ncount('manager2')) === 0 &&
+        (await ncount('manager')) >= 1
+      );
+    })(),
+  );
+
+  // 마감 알림 (Cron): 서버와 같은 시간대(Asia/Seoul)의 오늘을 DB 에서 구한다.
+  if (process.env.CRON_SECRET) {
+    const today = (await db.query("SELECT (now() AT TIME ZONE 'Asia/Seoul')::date::text AS d"))
+      .rows[0].d;
+    const shift = (n) =>
+      db.query('SELECT ($1::date + $2::int)::text AS d', [today, n]).then((r) => r.rows[0].d);
+    const [d0, d1, d2, dm1] = [today, await shift(1), await shift(2), await shift(-1)];
+    const mk = async (title, body) => (await nmk('manager', { title, ...body })).body;
+    const tToday = await mk('smoke 오늘 마감', { assigneeId: people.member.id, dueDate: d0 });
+    const tTomorrow = await mk('smoke 내일 마감', { assigneeId: people.member.id, dueDate: d1 });
+    await mk('smoke 모레 마감', { assigneeId: people.member.id, dueDate: d2 });
+    const tLate = await mk('smoke 지난 마감', { assigneeId: people.manager2.id, dueDate: dm1 });
+    await mk('smoke 완료 지연', { assigneeId: people.member.id, dueDate: dm1, status: 'done' });
+    await mk('smoke 미배정 지연', { dueDate: dm1 });
+    await call('POST', '/notifications/read-all', { token: t('member') });
+
+    // Cron 엔드포인트는 /api/v1 밖(/api/cron)에 있고 Authorization: Bearer <CRON_SECRET> 으로 인증한다.
+    const cron = async (secret = process.env.CRON_SECRET) => {
+      const res = await fetch(BASE.replace('/api/v1', '') + '/api/cron/daily', {
+        headers: {
+          ...(secret && { authorization: `Bearer ${secret}` }),
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    check('cron: 비밀 없이 호출하면 401', (await cron(null)).status === 401);
+    check('cron: 잘못된 비밀은 401', (await cron('wrong-secret-wrong-secret')).status === 401);
+    const ran = await cron();
+    check(
+      'cron 실행: 임박 2건(오늘·내일) + 지연 1건',
+      ran.status === 200 && ran.body.dueSoon >= 2 && ran.body.overdue >= 1,
+      JSON.stringify(ran.body),
+    );
+    const dueList = (await nlist('member')).body.data;
+    check(
+      '오늘/내일 마감 작업의 담당자에게 due_soon 알림 (모레는 없음)',
+      dueList.some(
+        (n) => n.type === 'due_soon' && n.taskId === tToday.id && n.message.includes('오늘'),
+      ) &&
+        dueList.some(
+          (n) => n.type === 'due_soon' && n.taskId === tTomorrow.id && n.message.includes('내일'),
+        ) &&
+        // 모레·완료·미배정 작업은 임박 알림이 없어야 한다 (배정 알림에는 제목이 들어 있으므로 종류로 구분)
+        dueList.filter((n) => n.type === 'due_soon').length === 2,
+      JSON.stringify(dueList.filter((n) => n.type === 'due_soon').map((n) => n.message)),
+    );
+    check(
+      '지난 마감 작업의 담당자에게 task_overdue 알림',
+      (await nlist('manager2')).body.data.some(
+        (n) => n.type === 'task_overdue' && n.taskId === tLate.id,
+      ),
+    );
+    const again = await cron();
+    check(
+      '두 번째 실행은 같은 작업을 다시 알리지 않음 (중복 방지)',
+      again.body.dueSoon === 0 && again.body.overdue === 0,
+      JSON.stringify(again.body),
+    );
+    await call('PATCH', `/tasks/${tTomorrow.id}`, { token: t('manager'), body: { dueDate: d0 } });
+    check('마감일을 바꾸면 임박 알림이 다시 가능', (await cron()).body.dueSoon === 1);
+    await db.query(
+      "UPDATE notifications SET created_at = now() - interval '100 days' WHERE task_id = $1 AND type = 'due_soon'",
+      [tToday.id],
+    );
+    check('90일 지난 알림은 cron 이 정리', (await cron()).body.notificationsDeleted >= 1);
+  }
+
+  check(
+    '작업 삭제 시 알림 CASCADE',
+    await (async () => {
+      await call('DELETE', `/tasks/${assigned.body.id}`, { token: t('manager') });
+      return (
+        (await db.query('SELECT 1 FROM notifications WHERE task_id = $1', [assigned.body.id]))
+          .rowCount === 0
+      );
+    })(),
+  );
+  await call('DELETE', `/projects/${npid}`, { token: t('admin') });
+  check(
+    'notifications 인덱스 + RLS',
+    (
+      await db.query(
+        "SELECT 1 FROM pg_indexes WHERE tablename = 'notifications' AND indexname = 'notifications_user_read_created_idx'",
+      )
+    ).rowCount === 1 &&
+      (await db.query("SELECT 1 FROM pg_class WHERE relname = 'notifications' AND relrowsecurity"))
+        .rowCount === 1,
+  );
+
   // --- 삭제 + CASCADE
   check(
     '소유 manager 는 삭제 불가 (403)',

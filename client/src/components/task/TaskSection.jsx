@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { listProjectTasks, updateTask } from '../../api/tasks.js';
+import { useSearchParams } from 'react-router';
+import { getTask, listProjectTasks, updateTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { useDebounced } from '../../hooks/useDebounced.js';
 import {
@@ -29,6 +30,17 @@ export default function TaskSection({ project, archived }) {
   const [q, setQ] = useState('');
   const [modal, setModal] = useState(null); // null | { task? }
   const debouncedQ = useDebounced(q.trim());
+
+  // 알림 링크(?task=<id>)로 들어오면 해당 작업을 연다.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedId = searchParams.get('task');
+  const linked = useQuery({
+    queryKey: ['task', linkedId],
+    queryFn: () => getTask(linkedId),
+    enabled: Boolean(linkedId),
+    retry: false,
+  });
+  const closeLinked = () => setSearchParams({}, { replace: true });
 
   const changeView = (next) => {
     setView(next);
@@ -149,6 +161,15 @@ export default function TaskSection({ project, archived }) {
         />
       )}
 
+      {linked.data && !modal && (
+        <TaskModal
+          projectId={project.id}
+          members={project.members}
+          task={linked.data}
+          readOnly={archived}
+          onClose={closeLinked}
+        />
+      )}
       {modal && (
         <TaskModal
           projectId={project.id}

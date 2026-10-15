@@ -5,7 +5,15 @@ import crypto from 'node:crypto';
 import { badRequest, conflict } from '../../utils/errors.js';
 import { positionBetween } from '../../utils/position.js';
 
-export const store = { users: [], tokens: [], projects: [], members: [], tasks: [], comments: [] };
+export const store = {
+  users: [],
+  tokens: [],
+  projects: [],
+  members: [],
+  tasks: [],
+  comments: [],
+  notifications: [],
+};
 
 export function reset() {
   store.users = [];
@@ -14,6 +22,7 @@ export function reset() {
   store.members = [];
   store.tasks = [];
   store.comments = [];
+  store.notifications = [];
 }
 
 const pub = (u) => ({
@@ -104,7 +113,9 @@ export const authRepo = {
       if (t.user_id === userId && !t.revoked_at) t.revoked_at = new Date();
     }
   },
-  async deleteExpired() {},
+  async deleteExpired() {
+    return 0;
+  },
 };
 
 export const projectsRepo = {
@@ -269,6 +280,7 @@ export const tasksRepo = {
       position: nextPosition(input.projectId, input.status),
       completed_at: input.status === 'done' ? new Date() : null,
       due_notified_at: null,
+      overdue_notified_at: null,
       created_at: now,
       updated_at: now,
     };
@@ -284,6 +296,7 @@ export const tasksRepo = {
     if (patch.dueDate !== undefined) {
       t.due_date = patch.dueDate;
       t.due_notified_at = null;
+      t.overdue_notified_at = null;
     }
     if (patch.status !== undefined && patch.status !== current.status) {
       t.position = nextPosition(t.project_id, patch.status);
@@ -344,6 +357,7 @@ export const tasksRepo = {
   async deleteTask(id) {
     const before = store.tasks.length;
     store.comments = store.comments.filter((c) => c.task_id !== id);
+    store.notifications = store.notifications.filter((n) => n.task_id !== id);
     store.tasks = store.tasks.filter((t) => t.id !== id);
     return store.tasks.length < before;
   },
@@ -397,5 +411,100 @@ export const commentsRepo = {
     if (!c) return false;
     c.deleted_at = new Date();
     return true;
+  },
+};
+
+const addDays = (isoDate, n) => {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+const withNotificationNames = (n) => ({
+  ...n,
+  project_id: store.tasks.find((t) => t.id === n.task_id)?.project_id,
+  actor_name: store.users.find((u) => u.id === n.actor_id)?.name ?? null,
+});
+
+export const notificationsRepo = {
+  async insertMany(rows) {
+    return rows.map((r, i) => {
+      const row = {
+        id: crypto.randomUUID(),
+        user_id: r.userId,
+        type: r.type,
+        task_id: r.taskId,
+        actor_id: r.actorId ?? null,
+        message: r.message,
+        is_read: false,
+        created_at: new Date(Date.now() + store.notifications.length + i),
+      };
+      store.notifications.push(row);
+      return withNotificationNames(row);
+    });
+  },
+  async list(userId, { unread, limit, offset }) {
+    const rows = store.notifications
+      .filter((n) => n.user_id === userId && (!unread || !n.is_read))
+      .sort((a, b) => b.created_at - a.created_at);
+    return {
+      rows: rows.slice(offset, offset + limit).map(withNotificationNames),
+      total: rows.length,
+    };
+  },
+  async unreadCount(userId) {
+    return store.notifications.filter((n) => n.user_id === userId && !n.is_read).length;
+  },
+  async markRead(id, userId) {
+    const n = store.notifications.find((x) => x.id === id && x.user_id === userId);
+    if (!n) return false;
+    n.is_read = true;
+    return true;
+  },
+  async markAllRead(userId) {
+    const unread = store.notifications.filter((n) => n.user_id === userId && !n.is_read);
+    unread.forEach((n) => {
+      n.is_read = true;
+    });
+    return unread.length;
+  },
+  async deleteOlderThan(days) {
+    const cutoff = Date.now() - days * 86_400_000;
+    const before = store.notifications.length;
+    store.notifications = store.notifications.filter((n) => n.created_at.getTime() >= cutoff);
+    return before - store.notifications.length;
+  },
+  async filterNotifiable(projectId, userIds) {
+    return userIds.filter(
+      (id) =>
+        store.users.some((u) => u.id === id && u.is_active) &&
+        store.members.some((m) => m.project_id === projectId && m.user_id === id),
+    );
+  },
+  async claimDueTasks(client, kind, today) {
+    const column = kind === 'overdue' ? 'overdue_notified_at' : 'due_notified_at';
+    const claimed = store.tasks.filter((t) => {
+      const project = store.projects.find((p) => p.id === t.project_id);
+      const assignee = store.users.find((u) => u.id === t.assignee_id);
+      const due = t.due_date;
+      return (
+        t.status !== 'done' &&
+        !t[column] &&
+        due &&
+        (kind === 'overdue' ? due < today : due >= today && due <= addDays(today, 1)) &&
+        project?.status === 'active' &&
+        assignee?.is_active &&
+        store.members.some((m) => m.project_id === t.project_id && m.user_id === t.assignee_id)
+      );
+    });
+    claimed.forEach((t) => {
+      t[column] = new Date();
+    });
+    return claimed.map((t) => ({
+      id: t.id,
+      title: t.title,
+      assignee_id: t.assignee_id,
+      due_date: t.due_date,
+    }));
   },
 };

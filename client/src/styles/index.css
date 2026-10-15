@@ -565,3 +565,75 @@ button.linklike.small {
   padding: 0.1rem 0.35rem;
   font-size: 0.85rem;
 }
+
+.bell {
+  position: relative;
+}
+
+.bell-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bell-badge {
+  min-width: 1.2rem;
+  padding: 0 0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.2rem;
+  text-align: center;
+  color: #fff;
+  background: var(--error);
+  border-radius: 999px;
+}
+
+.bell-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 20;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.bell-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+button.bell-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+button.bell-item:hover {
+  background: var(--bg);
+}
+
+button.bell-item.unread {
+  font-weight: 600;
+  background: var(--bg);
+  border-color: var(--border);
+  border-left: 3px solid var(--primary);
+}

@@ -152,7 +152,8 @@ export async function updateTask(id, patch, current) {
   for (const [key, column] of Object.entries(PATCHABLE)) {
     if (patch[key] !== undefined) set(column, patch[key]);
   }
-  if (patch.dueDate !== undefined) sets.push('due_notified_at = NULL');
+  if (patch.dueDate !== undefined)
+    sets.push('due_notified_at = NULL', 'overdue_notified_at = NULL');
 
   if (patch.status !== undefined && patch.status !== current.status) {
     set('status', patch.status);

@@ -5,6 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireTaskAccess } from '../../middleware/requireTaskAccess.js';
 import { requireCommentAccess } from '../../middleware/requireCommentAccess.js';
 import { emitToProject } from '../../sockets/emitter.js';
+import { notifyCommentAdded } from '../notifications/service.js';
 import * as service from './service.js';
 
 const body = z.object({
@@ -30,6 +31,7 @@ taskCommentsRouter.post('/', requireTaskAccess(), validate(body), async (req, re
     taskId: req.task.id,
     comment,
   });
+  await notifyCommentAdded({ task: req.task, actor: req.user });
   res.status(201).json(comment);
 });
 

@@ -10,3 +10,4 @@ export const updateTask = (id, body) => http.patch(`/tasks/${id}`, body).then(da
 export const deleteTask = (id) => http.delete(`/tasks/${id}`);
 export const listMyTasks = (params) => http.get('/tasks/mine', { params }).then(data);
 export const moveTask = (id, body) => http.patch(`/tasks/${id}/move`, body).then(data);
+export const getTask = (id) => http.get(`/tasks/${id}`).then(data);

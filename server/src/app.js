@@ -10,6 +10,8 @@ import { usersRouter } from './modules/users/routes.js';
 import { projectsRouter } from './modules/projects/routes.js';
 import { projectTasksRouter, tasksRouter } from './modules/tasks/routes.js';
 import { commentsRouter, taskCommentsRouter } from './modules/comments/routes.js';
+import { notificationsRouter } from './modules/notifications/routes.js';
+import { cronRouter } from './modules/cron/routes.js';
 
 export const app = express();
 
@@ -49,7 +51,9 @@ api.use('/projects/:id/tasks', projectTasksRouter);
 api.use('/tasks/:id/comments', taskCommentsRouter);
 api.use('/tasks', tasksRouter);
 api.use('/comments', commentsRouter);
+api.use('/notifications', notificationsRouter);
 
 app.use('/api/v1', api);
+app.use('/api/cron', cronRouter);
 app.use(notFound);
 app.use(errorHandler);

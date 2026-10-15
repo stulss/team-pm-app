@@ -6,6 +6,7 @@ import { requireProjectMember } from '../../middleware/requireProjectMember.js';
 import { requireTaskAccess } from '../../middleware/requireTaskAccess.js';
 import { STATUSES } from './repository.js';
 import { emitToProject } from '../../sockets/emitter.js';
+import { notifyTaskAssigned } from '../notifications/service.js';
 import * as service from './service.js';
 
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -83,6 +84,7 @@ projectTasksRouter.get(
 projectTasksRouter.post('/', requireProjectMember(), validate(createBody), async (req, res) => {
   const task = await service.create(req.project, req.user, req.body);
   await emitToProject(req, req.project.id, 'task:created', { projectId: req.project.id, task });
+  await notifyTaskAssigned({ task, actor: req.user });
   res.status(201).json(task);
 });
 
@@ -102,6 +104,10 @@ tasksRouter.get('/:id', requireTaskAccess(), (req, res) => {
 tasksRouter.patch('/:id', requireTaskAccess(), validate(patchBody), async (req, res) => {
   const task = await service.update(req.task, req.project, req.body);
   await emitToProject(req, req.project.id, 'task:updated', { projectId: req.project.id, task });
+  // 담당자가 새로 지정/변경된 경우에만 알린다.
+  if (task.assignee?.id !== (req.task.assignee_id ?? undefined)) {
+    await notifyTaskAssigned({ task, actor: req.user });
+  }
   res.json(task);
 });
 

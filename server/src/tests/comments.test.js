@@ -29,6 +29,11 @@ vi.mock('../modules/comments/repository.js', async () => ({
   ...(await import('./helpers/memoryRepos.js')).commentsRepo,
 }));
 
+vi.mock('../modules/notifications/repository.js', async () => ({
+  ...(await vi.importActual('../modules/notifications/repository.js')),
+  ...(await import('./helpers/memoryRepos.js')).notificationsRepo,
+}));
+
 const { app } = await import('../app.js');
 
 // admin(비멤버), manager(소유자), manager2(멤버), member, member2, outsider
