@@ -72,6 +72,8 @@ Vercel 프로젝트 설정에 Production / Preview 를 나눠 등록한다. 비�
 
 규칙: `service_role` 키와 `DATABASE_URL` 은 클라이언트 번들에 절대 넣지 않는다. dev와 prod는 서로 다른 Supabase 프로젝트와 시크릿을 쓴다. Preview 배포는 dev DB를 쓴다.
 
+> **자동 배포**: Vercel 프로젝트는 GitHub `stulss/team-pm-app` 과 연결돼 있고 Production 브랜치는 `main` 이다. `main` 에 푸시하면 Production 이 자동 배포되고, 다른 브랜치는 Preview 가 만들어진다. **DB 마이그레이션은 자동 적용되지 않으므로, 새 마이그레이션이 포함된 변경은 코드를 푸시하기 전에 먼저 적용한다.**
+
 ## 5. 단계별 배포
 
 | 시점 | 배포 내용 | 확인 |
