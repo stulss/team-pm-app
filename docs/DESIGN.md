@@ -233,6 +233,8 @@ erDiagram
 | POST | `/projects/:id/members` | 멤버 추가 | Admin, 소유 Manager |
 | DELETE | `/projects/:id/members/:userId` | 멤버 제거 | Admin, 소유 Manager |
 
+> 구현 규칙: 멤버 추가 body 는 `{ userId }`(활성 사용자만, 이미 멤버면 409 `ALREADY_MEMBER`). 소유자는 제거할 수 없다(409 `OWNER_CANNOT_BE_REMOVED`). 비멤버는 403, 없는 프로젝트는 404. 프로젝트 생성자는 항상 소유자이자 멤버다. 소유 Manager 가 Member 로 강등되면 관리 권한을 잃는다. 삭제는 Admin 만(소유 Manager 도 불가), 일반적인 정리는 `status=archived`.
+
 #### Tasks
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|

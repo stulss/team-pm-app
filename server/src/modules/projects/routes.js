@@ -1,0 +1,85 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { authenticate, requireRole } from '../../middleware/auth.js';
+import { validate } from '../../middleware/validate.js';
+import {
+  requireProjectManager,
+  requireProjectMember,
+} from '../../middleware/requireProjectMember.js';
+import * as service from './service.js';
+
+const name = z.string().trim().min(1, '프로젝트 이름을 입력해 주세요.').max(100);
+const description = z.string().trim().max(2000);
+
+const listQuery = z.object({
+  status: z.enum(['active', 'archived']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+const createBody = z.object({
+  name,
+  description: description.optional(),
+  memberIds: z.array(z.uuid()).max(50).default([]),
+});
+const patchBody = z
+  .object({
+    name: name.optional(),
+    description: description.optional(),
+    status: z.enum(['active', 'archived']).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' });
+const addMemberBody = z.object({ userId: z.uuid('올바르지 않은 사용자 ID 입니다.') });
+const memberParams = z.object({ id: z.uuid(), userId: z.uuid() });
+
+export const projectsRouter = Router();
+projectsRouter.use(authenticate);
+
+projectsRouter.get('/', validate(listQuery, 'query'), async (req, res) => {
+  res.json(await service.list(req.user, req.query));
+});
+
+projectsRouter.post(
+  '/',
+  requireRole('admin', 'manager'),
+  validate(createBody),
+  async (req, res) => {
+    res.status(201).json(await service.create(req.user, req.body));
+  },
+);
+
+projectsRouter.get('/:id', requireProjectMember(), async (req, res) => {
+  res.json(await service.detail(req.project));
+});
+
+projectsRouter.patch('/:id', requireProjectManager(), validate(patchBody), async (req, res) => {
+  res.json(await service.update(req.project, req.body));
+});
+
+// 삭제(하드 삭제, CASCADE)는 Admin 만. 일반적인 정리는 status=archived 로 한다.
+projectsRouter.delete('/:id', requireRole('admin'), requireProjectManager(), async (req, res) => {
+  await service.remove(req.project);
+  res.status(204).end();
+});
+
+projectsRouter.get('/:id/members', requireProjectMember(), async (req, res) => {
+  res.json({ data: await service.listMembers(req.project) });
+});
+
+projectsRouter.post(
+  '/:id/members',
+  requireProjectManager(),
+  validate(addMemberBody),
+  async (req, res) => {
+    res.status(201).json({ user: await service.addMember(req.project, req.body.userId) });
+  },
+);
+
+projectsRouter.delete(
+  '/:id/members/:userId',
+  validate(memberParams, 'params'),
+  requireProjectManager(),
+  async (req, res) => {
+    await service.removeMember(req.project, req.params.userId);
+    res.status(204).end();
+  },
+);

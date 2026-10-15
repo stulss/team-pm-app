@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 
-const BCRYPT_COST = 12;
+// 테스트에서는 속도를 위해 낮춘다. 운영/개발은 12.
+const BCRYPT_COST = process.env.NODE_ENV === 'test' ? 4 : 12;
 
 export const hashPassword = (plain) => bcrypt.hash(plain, BCRYPT_COST);
 export const verifyPassword = (plain, hash) => bcrypt.compare(plain, hash);

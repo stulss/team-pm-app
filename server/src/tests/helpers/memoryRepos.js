@@ -3,11 +3,13 @@
 // SQL 자체는 검증하지 못한다 — 실제 DB 가 연결되면 통합 테스트로 보강한다.
 import crypto from 'node:crypto';
 
-export const store = { users: [], tokens: [] };
+export const store = { users: [], tokens: [], projects: [], members: [] };
 
 export function reset() {
   store.users = [];
   store.tokens = [];
+  store.projects = [];
+  store.members = [];
 }
 
 const pub = (u) => ({
@@ -99,4 +101,98 @@ export const authRepo = {
     }
   },
   async deleteExpired() {},
+};
+
+export const projectsRepo = {
+  async listForUser(user, { status, limit, offset }) {
+    let rows = store.projects.filter(
+      (p) =>
+        (user.role === 'admin' ||
+          store.members.some((m) => m.project_id === p.id && m.user_id === user.id)) &&
+        (!status || p.status === status),
+    );
+    rows = [...rows].sort((a, b) => b.created_at - a.created_at);
+    const withExtras = rows.map((p) => ({
+      ...p,
+      owner_name: store.users.find((u) => u.id === p.owner_id)?.name,
+      member_count: store.members.filter((m) => m.project_id === p.id).length,
+    }));
+    return { rows: withExtras.slice(offset, offset + limit), total: rows.length };
+  },
+  async findById(id) {
+    return store.projects.find((p) => p.id === id) ?? null;
+  },
+  async isMember(projectId, userId) {
+    return store.members.some((m) => m.project_id === projectId && m.user_id === userId);
+  },
+  async insertProject(client, { name, description, ownerId }) {
+    const row = {
+      id: crypto.randomUUID(),
+      name,
+      description: description ?? null,
+      owner_id: ownerId,
+      status: 'active',
+      created_at: new Date(Date.now() + store.projects.length), // 생성 순서 보장
+      updated_at: new Date(),
+    };
+    store.projects.push(row);
+    return row;
+  },
+  async addMembers(client, projectId, userIds) {
+    for (const userId of userIds) {
+      if (!store.members.some((m) => m.project_id === projectId && m.user_id === userId)) {
+        store.members.push({ project_id: projectId, user_id: userId, joined_at: new Date() });
+      }
+    }
+  },
+  async updateProject(id, patch) {
+    const p = store.projects.find((x) => x.id === id);
+    if (!p) return null;
+    for (const key of ['name', 'description', 'status']) {
+      if (patch[key] !== undefined) p[key] = patch[key];
+    }
+    p.updated_at = new Date();
+    return p;
+  },
+  async deleteProject(id) {
+    const before = store.projects.length;
+    store.projects = store.projects.filter((p) => p.id !== id);
+    store.members = store.members.filter((m) => m.project_id !== id);
+    return store.projects.length < before;
+  },
+  async listMembers(projectId) {
+    const project = store.projects.find((p) => p.id === projectId);
+    return store.members
+      .filter((m) => m.project_id === projectId)
+      .map((m) => {
+        const u = store.users.find((x) => x.id === m.user_id);
+        return {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          is_active: u.is_active,
+          joined_at: m.joined_at,
+          is_owner: u.id === project.owner_id,
+        };
+      })
+      .sort((a, b) => Number(b.is_owner) - Number(a.is_owner));
+  },
+  async addMember(projectId, userId) {
+    if (store.members.some((m) => m.project_id === projectId && m.user_id === userId)) {
+      return false;
+    }
+    store.members.push({ project_id: projectId, user_id: userId, joined_at: new Date() });
+    return true;
+  },
+  async removeMember(projectId, userId) {
+    const before = store.members.length;
+    store.members = store.members.filter(
+      (m) => !(m.project_id === projectId && m.user_id === userId),
+    );
+    return store.members.length < before;
+  },
+  async filterActiveUserIds(ids) {
+    return ids.filter((id) => store.users.some((u) => u.id === id && u.is_active));
+  },
 };

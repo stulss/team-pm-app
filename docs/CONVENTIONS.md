@@ -42,7 +42,9 @@
 
 ## 6. 테스트
 
-- 서버: vitest + supertest 통합 테스트. 권한(403)·검증(400) 케이스를 기능마다 포함한다.
+- 서버: vitest + supertest 테스트(메모리 저장소). 권한(403)·검증(400) 케이스를 기능마다 포함한다.
+- SQL 동작(조인·FK·CASCADE·동시 요청)은 메모리 테스트로 검증되지 않는다. 실제 DB 를 쓰는 `npm run smoke -w server` 에 항목을 추가한다(로컬 또는 `BASE_URL`/`VERCEL_BYPASS` 로 배포본).
+- 화면 흐름은 `npm run e2e`(설치된 Chrome 을 구동하는 playwright-core)에 단계를 추가한다. 스모크·e2e 가 만드는 데이터는 `@example.test` 이메일로 한정하고 종료 시 삭제한다.
 - 클라이언트: 핵심 컴포넌트 위주. 최종 단계에서 핵심 흐름 E2E(Playwright, 선택).
 - 테스트용 DB는 개발용 Supabase 프로젝트와 분리한다(로컬 postgres 또는 별도 스키마).
 

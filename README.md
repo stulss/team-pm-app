@@ -39,7 +39,9 @@ npm run dev                           # server(4000) + client(5173, /api 프록�
 | 명령 | 설명 |
 |---|---|
 | `npm run dev` | client + server 동시 실행 |
-| `npm test` | 서버 테스트 |
+| `npm test` | 서버 테스트(메모리 저장소) |
+| `npm run smoke -w server` | 실제 서버+DB 스모크(서버를 먼저 띄울 것) |
+| `npm run e2e` | 브라우저 e2e(서버·클라이언트를 먼저 띄울 것, Chrome 필요) |
 | `npm run lint` / `npm run format:check` | 정적 검사 |
 | `npm run build` | 클라이언트 빌드 |
 | `npm run migrate -w server -- up` | 마이그레이션 적용(`DIRECT_URL` 사용) |

@@ -7,6 +7,7 @@ import { query } from './config/db.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { authRouter } from './modules/auth/routes.js';
 import { usersRouter } from './modules/users/routes.js';
+import { projectsRouter } from './modules/projects/routes.js';
 
 export const app = express();
 
@@ -41,6 +42,7 @@ api.get('/health', async (req, res) => {
 
 api.use('/auth', authRouter);
 api.use('/users', usersRouter);
+api.use('/projects', projectsRouter);
 
 app.use('/api/v1', api);
 app.use(notFound);
