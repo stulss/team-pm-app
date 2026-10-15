@@ -26,6 +26,8 @@
 - [x] **M2** 프로젝트·멤버 — 비멤버 403 (단위 66개 + 실DB 스모크 31항목 + 브라우저 e2e 16단계, 로컬·Preview 모두 통과)
 - [x] **M3** 작업 CRUD — 생성·수정·삭제·필터 (단위 120개 + 실DB 스모크 + 브라우저 e2e 23단계, 로컬·Preview 모두 통과)
 - [ ] **M3.5** 1차 배포·스모크 테스트
+  - [x] Production 배포 완료: https://team-pm-app-sand.vercel.app (`/spike` 제거, 소켓은 JWT 인증 필수). 계정 없이 가능한 읽기 전용 점검 통과
+  - [ ] 첫 admin 가입(사용자 직접) → 배포본 전체 스모크(`BASE_URL=https://team-pm-app-sand.vercel.app npm run smoke -w server`, `npm run e2e`)
 
 **점검 전 확인 (배포본 기준)**
 - [ ] 가입 → 로그인 → 새로고침 후 세션 유지
