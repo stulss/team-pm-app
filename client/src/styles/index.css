@@ -511,3 +511,57 @@ td.overdue {
   border-left: 3px solid #b54708;
   border-radius: 6px;
 }
+
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.comments h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.comment-meta .spacer {
+  flex: 1;
+}
+
+.comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+button.linklike.small {
+  width: auto;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85rem;
+}

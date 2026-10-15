@@ -20,10 +20,13 @@ export const toTask = (row) =>
     completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    commentCount: row.comment_count ?? 0,
   };
 
 const SELECT = `
-  SELECT t.*, a.name AS assignee_name, p.name AS project_name
+  SELECT t.*, a.name AS assignee_name, p.name AS project_name,
+         (SELECT count(*)::int FROM comments c
+           WHERE c.task_id = t.id AND c.deleted_at IS NULL) AS comment_count
   FROM tasks t
   LEFT JOIN users a ON a.id = t.assignee_id
   JOIN projects p ON p.id = t.project_id`;

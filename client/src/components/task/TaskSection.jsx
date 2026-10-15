@@ -217,6 +217,9 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
                     <button type="button" className="linklike title" onClick={() => onOpenTask(t)}>
                       {t.title}
                     </button>
+                    {t.commentCount > 0 && (
+                      <span className="muted small"> 댓글 {t.commentCount}</span>
+                    )}
                   </td>
                   <td>
                     <select

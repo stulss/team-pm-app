@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { badRequest, conflict } from '../../utils/errors.js';
 import { positionBetween } from '../../utils/position.js';
 
-export const store = { users: [], tokens: [], projects: [], members: [], tasks: [] };
+export const store = { users: [], tokens: [], projects: [], members: [], tasks: [], comments: [] };
 
 export function reset() {
   store.users = [];
@@ -13,6 +13,7 @@ export function reset() {
   store.projects = [];
   store.members = [];
   store.tasks = [];
+  store.comments = [];
 }
 
 const pub = (u) => ({
@@ -159,6 +160,8 @@ export const projectsRepo = {
   },
   async deleteProject(id) {
     const before = store.projects.length;
+    const gone = new Set(store.tasks.filter((t) => t.project_id === id).map((t) => t.id));
+    store.comments = store.comments.filter((c) => !gone.has(c.task_id));
     store.tasks = store.tasks.filter((t) => t.project_id !== id);
     store.projects = store.projects.filter((p) => p.id !== id);
     store.members = store.members.filter((m) => m.project_id !== id);
@@ -206,6 +209,7 @@ const withNames = (t) => ({
   ...t,
   assignee_name: store.users.find((u) => u.id === t.assignee_id)?.name ?? null,
   project_name: store.projects.find((p) => p.id === t.project_id)?.name,
+  comment_count: store.comments.filter((c) => c.task_id === t.id && !c.deleted_at).length,
 });
 const matches = (t, f, meId) =>
   (!f.status || t.status === f.status) &&
@@ -339,6 +343,7 @@ export const tasksRepo = {
   },
   async deleteTask(id) {
     const before = store.tasks.length;
+    store.comments = store.comments.filter((c) => c.task_id !== id);
     store.tasks = store.tasks.filter((t) => t.id !== id);
     return store.tasks.length < before;
   },
@@ -346,5 +351,51 @@ export const tasksRepo = {
     for (const t of store.tasks) {
       if (t.project_id === projectId && t.assignee_id === userId) t.assignee_id = null;
     }
+  },
+};
+
+const withAuthor = (c) => ({
+  ...c,
+  author_name: store.users.find((u) => u.id === c.author_id)?.name,
+  project_id: store.tasks.find((t) => t.id === c.task_id)?.project_id,
+});
+
+export const commentsRepo = {
+  async findById(id) {
+    const c = store.comments.find((x) => x.id === id);
+    return c ? withAuthor(c) : null;
+  },
+  async listByTask(taskId) {
+    return store.comments
+      .filter((c) => c.task_id === taskId)
+      .sort((a, b) => a.created_at - b.created_at)
+      .map(withAuthor);
+  },
+  async insertComment({ taskId, authorId, body }) {
+    const now = new Date(Date.now() + store.comments.length);
+    const row = {
+      id: crypto.randomUUID(),
+      task_id: taskId,
+      author_id: authorId,
+      body,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+    store.comments.push(row);
+    return withAuthor(row);
+  },
+  async updateBody(id, body) {
+    const c = store.comments.find((x) => x.id === id && !x.deleted_at);
+    if (!c) return null;
+    c.body = body;
+    c.updated_at = new Date(c.created_at.getTime() + 5000);
+    return withAuthor(c);
+  },
+  async softDelete(id) {
+    const c = store.comments.find((x) => x.id === id && !x.deleted_at);
+    if (!c) return false;
+    c.deleted_at = new Date();
+    return true;
   },
 };

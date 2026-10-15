@@ -556,6 +556,173 @@ try {
         .rowCount === 1,
   );
 
+  // --- 댓글
+  const cp = await call('POST', '/projects', {
+    token: t('manager'),
+    body: { name: 'smoke-comments', memberIds: [people.member.id, people.manager2.id] },
+  });
+  const cpid = cp.body.id;
+  const ctask = (
+    await call('POST', `/projects/${cpid}/tasks`, {
+      token: t('manager'),
+      body: { title: 'smoke 댓글 작업' },
+    })
+  ).body;
+  const cm = (who, body, id = ctask.id) =>
+    call('POST', `/tasks/${id}/comments`, { token: t(who), body: { body } });
+  const c1 = await cm('member', '첫 댓글 <b>태그</b>');
+  check(
+    '댓글 작성 (201) + 작성자/본문 그대로',
+    c1.status === 201 &&
+      c1.body.author.name === 'smoke-member' &&
+      c1.body.body === '첫 댓글 <b>태그</b>' &&
+      c1.body.edited === false,
+    JSON.stringify(c1.body),
+  );
+  const c2 = await cm('manager', '두 번째');
+  const c3 = await cm('manager2', '세 번째');
+  check('비멤버 댓글 작성 불가 (403)', (await cm('outsider', 'x')).status === 403);
+  check('빈 댓글 (400)', (await cm('member', '   ')).status === 400);
+  check('5001자 댓글 (400)', (await cm('member', 'a'.repeat(5001))).status === 400);
+
+  const clist = await call('GET', `/tasks/${ctask.id}/comments`, { token: t('member') });
+  check(
+    '댓글 목록은 오래된 순',
+    clist.body.data.map((c) => c.body).join('|') === '첫 댓글 <b>태그</b>|두 번째|세 번째',
+    JSON.stringify(clist.body.data.map((c) => c.body)),
+  );
+  check(
+    '비멤버 댓글 목록 (403)',
+    (await call('GET', `/tasks/${ctask.id}/comments`, { token: t('outsider') })).status === 403,
+  );
+
+  const withCount = await call('GET', `/tasks/${ctask.id}`, { token: t('member') });
+  check(
+    '작업의 commentCount = 3',
+    withCount.body.commentCount === 3,
+    String(withCount.body.commentCount),
+  );
+  const boardCount = await call('GET', `/projects/${cpid}/tasks?groupBy=status`, {
+    token: t('member'),
+  });
+  check('보드/목록 응답에도 commentCount', boardCount.body.columns.todo[0].commentCount === 3);
+  const mineCount = await call('GET', `/projects/${cpid}/tasks`, { token: t('member') });
+  check('목록 응답에도 commentCount', mineCount.body.data[0].commentCount === 3);
+
+  const commentEdited = await call('PATCH', `/comments/${c1.body.id}`, {
+    token: t('member'),
+    body: { body: '고친 댓글' },
+  });
+  check(
+    '작성자 수정 (200) + edited=true',
+    commentEdited.status === 200 &&
+      commentEdited.body.body === '고친 댓글' &&
+      commentEdited.body.edited === true,
+    JSON.stringify(commentEdited.body),
+  );
+  check(
+    '남의 댓글은 admin 도 수정 불가 (403)',
+    (await call('PATCH', `/comments/${c2.body.id}`, { token: t('admin'), body: { body: 'x' } }))
+      .status === 403,
+  );
+  check(
+    '다른 member 수정 불가 (403)',
+    (await call('PATCH', `/comments/${c2.body.id}`, { token: t('member'), body: { body: 'x' } }))
+      .status === 403,
+  );
+
+  check(
+    '다른 member 삭제 불가 (403)',
+    (await call('DELETE', `/comments/${c2.body.id}`, { token: t('member') })).status === 403,
+  );
+  check(
+    '작성자 삭제 (204)',
+    (await call('DELETE', `/comments/${c1.body.id}`, { token: t('member') })).status === 204,
+  );
+  check(
+    '프로젝트 멤버인 manager 가 남의 댓글 삭제 (204)',
+    (await call('DELETE', `/comments/${c3.body.id}`, { token: t('manager') })).status === 204,
+  );
+  check(
+    '이미 삭제된 댓글 (404)',
+    (await call('DELETE', `/comments/${c1.body.id}`, { token: t('member') })).status === 404,
+  );
+  check(
+    '삭제된 댓글 수정 불가 (404)',
+    (await call('PATCH', `/comments/${c1.body.id}`, { token: t('member'), body: { body: 'x' } }))
+      .status === 404,
+  );
+
+  const afterDelete = await call('GET', `/tasks/${ctask.id}/comments`, { token: t('member') });
+  const masked = afterDelete.body.data.find((c) => c.id === c1.body.id);
+  check(
+    '삭제된 댓글은 목록에 남고 본문이 가려짐',
+    masked?.deleted === true &&
+      masked.body === '삭제된 댓글' &&
+      !JSON.stringify(afterDelete.body).includes('고친 댓글'),
+    JSON.stringify(masked),
+  );
+  check(
+    'commentCount 는 삭제된 것을 제외 (1)',
+    (await call('GET', `/tasks/${ctask.id}`, { token: t('member') })).body.commentCount === 1,
+  );
+  check(
+    '소프트 삭제: 행은 DB 에 남아 있음',
+    (
+      await db.query('SELECT 1 FROM comments WHERE id = $1 AND deleted_at IS NOT NULL', [
+        c1.body.id,
+      ])
+    ).rowCount === 1,
+  );
+
+  check(
+    '작성자 사용자 삭제는 FK RESTRICT 로 막힘',
+    await (async () => {
+      try {
+        await db.query('DELETE FROM users WHERE id = $1', [people.member.id]);
+        return false;
+      } catch (e) {
+        return e.code === '23503';
+      }
+    })(),
+  );
+
+  await call('PATCH', `/projects/${cpid}`, { token: t('manager'), body: { status: 'archived' } });
+  check('보관된 프로젝트에서 댓글 작성 불가 (409)', (await cm('member', 'x')).status === 409);
+  check(
+    '보관된 프로젝트에서 댓글 삭제 불가 (409)',
+    (await call('DELETE', `/comments/${c2.body.id}`, { token: t('manager') })).status === 409,
+  );
+  await call('PATCH', `/projects/${cpid}`, { token: t('manager'), body: { status: 'active' } });
+
+  await call('DELETE', `/tasks/${ctask.id}`, { token: t('manager') });
+  check(
+    '작업 삭제 시 댓글 CASCADE',
+    (await db.query('SELECT 1 FROM comments WHERE task_id = $1', [ctask.id])).rowCount === 0,
+  );
+  const ctask2 = (
+    await call('POST', `/projects/${cpid}/tasks`, {
+      token: t('manager'),
+      body: { title: 'smoke 댓글 작업 2' },
+    })
+  ).body;
+  await cm('member', '프로젝트 삭제 시 함께 지워질 댓글', ctask2.id);
+  await call('DELETE', `/projects/${cpid}`, { token: t('admin') });
+  check(
+    '프로젝트 삭제 시 댓글 CASCADE',
+    (await db.query('SELECT 1 FROM comments WHERE task_id = $1', [ctask2.id])).rowCount === 0,
+  );
+  check(
+    'comments 인덱스 + RLS',
+    (
+      await db.query(
+        "SELECT 1 FROM pg_indexes WHERE tablename = 'comments' AND indexname = 'comments_task_created_idx'",
+      )
+    ).rowCount === 1 &&
+      (await db.query("SELECT 1 FROM pg_class WHERE relname = 'comments' AND relrowsecurity"))
+        .rowCount === 1,
+  );
+
   // --- 삭제 + CASCADE
   check(
     '소유 manager 는 삭제 불가 (403)',

@@ -429,6 +429,66 @@ try {
     await rtManager.getByRole('dialog').getByRole('button', { name: '삭제' }).click();
     await pollUntil(async () => (await card(rtMember, '실시간 작업').count()) === 0, '삭제 반영');
   });
+  await step('댓글: 한쪽이 쓰면 열려 있는 다른 사용자 화면에 실시간으로 나타남', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await card(rtManager, '둘째').click();
+    await card(rtMember, '둘째').click();
+    const mDlg = rtManager.getByRole('dialog');
+    const uDlg = rtMember.getByRole('dialog');
+    await mDlg.getByLabel('새 댓글').fill('시안 확인 부탁드립니다');
+    await mDlg.getByRole('button', { name: '댓글 등록' }).click();
+    await mDlg.getByText('시안 확인 부탁드립니다').waitFor();
+    await uDlg.getByText('시안 확인 부탁드립니다').waitFor({ timeout: 5000 });
+
+    await uDlg.getByLabel('새 댓글').fill('확인했어요 <b>굵게</b>');
+    await uDlg.getByRole('button', { name: '댓글 등록' }).click();
+    await mDlg.getByText('확인했어요 <b>굵게</b>').waitFor({ timeout: 5000 });
+    // 사용자 입력은 HTML 로 해석되지 않고 문자 그대로 보여야 한다.
+    if ((await mDlg.locator('.comment-body b').count()) !== 0) {
+      throw new Error('댓글의 HTML 이 해석됨 (XSS 위험)');
+    }
+  });
+  await step(
+    '댓글: 수정은 작성자만, 수정/삭제 결과가 상대 화면에 반영(수정됨·삭제된 댓글)',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const mDlg = rtManager.getByRole('dialog');
+      const uDlg = rtMember.getByRole('dialog');
+      const byText = (dlg, text) => dlg.locator('li.comment', { hasText: text });
+
+      // member 는 manager 의 댓글을 수정/삭제할 수 없고, 자기 댓글만 수정할 수 있다.
+      const managersInMemberView = byText(uDlg, '시안 확인 부탁드립니다');
+      for (const name of ['수정', '삭제']) {
+        if ((await managersInMemberView.getByRole('button', { name, exact: true }).count()) !== 0) {
+          throw new Error(`member 에게 남의 댓글의 '${name}' 버튼이 보임`);
+        }
+      }
+      await byText(uDlg, '확인했어요').getByRole('button', { name: '수정', exact: true }).click();
+      await uDlg.getByLabel('댓글 수정').fill('확인 완료했습니다');
+      await uDlg.getByRole('button', { name: '저장', exact: true }).last().click();
+      const edited = byText(mDlg, '확인 완료했습니다');
+      await edited.waitFor({ timeout: 5000 });
+      await edited.getByText('(수정됨)').waitFor();
+
+      // manager 는 남의 댓글도 삭제할 수 있다 → 양쪽에서 "삭제된 댓글" 로 가려진다.
+      rtManager.once('dialog', (d) => d.accept());
+      await edited.getByRole('button', { name: '삭제', exact: true }).click();
+      await mDlg.getByText('삭제된 댓글').waitFor();
+      await uDlg.getByText('삭제된 댓글').waitFor({ timeout: 5000 });
+      if ((await uDlg.getByText('확인 완료했습니다').count()) !== 0) {
+        throw new Error('삭제된 댓글의 본문이 남아 있음');
+      }
+    },
+  );
+  await step('댓글: 카드의 댓글 수 배지가 두 화면에 반영됨 (삭제된 댓글 제외)', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    for (const p of [rtManager, rtMember]) {
+      await p.getByRole('dialog').getByRole('button', { name: '닫기', exact: true }).click();
+      await p.getByRole('dialog').waitFor({ state: 'detached' });
+    }
+    await card(rtManager, '둘째').getByText('댓글 1').waitFor();
+    await card(rtMember, '둘째').getByText('댓글 1').waitFor({ timeout: 5000 });
+  });
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');
     await rtManager

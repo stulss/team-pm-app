@@ -11,6 +11,7 @@ import {
   canDeleteTask,
 } from '../../constants/task.js';
 import Modal from '../common/Modal.jsx';
+import CommentSection from './CommentSection.jsx';
 
 // task 가 있으면 수정, 없으면 생성. members 는 담당자 후보(프로젝트 멤버).
 export default function TaskModal({ projectId, members, task, readOnly = false, onClose }) {
@@ -155,6 +156,7 @@ export default function TaskModal({ projectId, members, task, readOnly = false, 
           </div>
         </div>
       </form>
+      {editing && <CommentSection taskId={task.id} readOnly={readOnly} />}
     </Modal>
   );
 }

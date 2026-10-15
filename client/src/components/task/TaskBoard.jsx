@@ -47,6 +47,7 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
       <div className="task-card-meta">
         <span className={`badge badge-p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
         {task.assignee && <span className="muted small">{task.assignee.name}</span>}
+        {task.commentCount > 0 && <span className="muted small">댓글 {task.commentCount}</span>}
         {task.dueDate && (
           <span className={isOverdue(task) ? 'overdue small' : 'muted small'}>{task.dueDate}</span>
         )}

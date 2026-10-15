@@ -27,6 +27,11 @@ vi.mock('../modules/tasks/repository.js', async () => ({
   ...(await import('./helpers/memoryRepos.js')).tasksRepo,
 }));
 
+vi.mock('../modules/comments/repository.js', async () => ({
+  ...(await vi.importActual('../modules/comments/repository.js')),
+  ...(await import('./helpers/memoryRepos.js')).commentsRepo,
+}));
+
 const { app } = await import('../app.js');
 const { attachSockets } = await import('../sockets/index.js');
 const { registerIo } = await import('../sockets/emitter.js');
@@ -268,5 +273,49 @@ describe('프로젝트·멤버 이벤트와 접근 회수', () => {
     const closed = next(sockets.member, 'disconnect');
     await rest('patch', `/users/${people.member.id}/role`, 'admin', { role: 'manager' });
     await closed;
+  });
+});
+
+describe('댓글 이벤트', () => {
+  beforeEach(async () => {
+    await join(sockets.member, pid);
+    await join(sockets.member2, pid);
+  });
+
+  it('comment:created / updated / deleted 가 프로젝트 방에 전달된다', async () => {
+    const task = (await rest('post', `/projects/${pid}/tasks`, 'manager', { title: '댓글 대상' }))
+      .body;
+
+    const created = next(sockets.member2, 'comment:created');
+    const self = silent(sockets.member, 'comment:created');
+    const res = await rest(
+      'post',
+      `/tasks/${task.id}/comments`,
+      'member',
+      { body: '안녕' },
+      sockets.member.id,
+    );
+    expect(res.status).toBe(201);
+    const payload = await created;
+    expect(payload).toMatchObject({ projectId: pid, taskId: task.id });
+    expect(payload.comment).toMatchObject({ id: res.body.id, body: '안녕' });
+    await self;
+
+    const updated = next(sockets.member2, 'comment:updated');
+    await rest('patch', `/comments/${res.body.id}`, 'member', { body: '고침' }, sockets.member.id);
+    expect((await updated).comment).toMatchObject({ body: '고침', edited: true });
+
+    const deleted = next(sockets.member2, 'comment:deleted');
+    await rest('delete', `/comments/${res.body.id}`, 'manager', null, sockets.manager?.id);
+    expect(await deleted).toEqual({ projectId: pid, taskId: task.id, commentId: res.body.id });
+  });
+
+  it('비멤버가 쓰려다 실패하면 이벤트가 없다', async () => {
+    const task = (await rest('post', `/projects/${pid}/tasks`, 'manager', { title: '대상' })).body;
+    const quiet = silent(sockets.member2, 'comment:created');
+    expect(
+      (await rest('post', `/tasks/${task.id}/comments`, 'outsider', { body: 'x' })).status,
+    ).toBe(403);
+    await quiet;
   });
 });

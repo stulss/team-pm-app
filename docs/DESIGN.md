@@ -258,6 +258,8 @@ erDiagram
 | PATCH | `/comments/:id` | 수정 | 작성자 |
 | DELETE | `/comments/:id` | 삭제 | 작성자/Admin/Manager |
 
+> 구현 규칙(M6): 권한표의 "댓글 수정: Admin/Manager 모두"와 API 표의 "수정: 작성자"가 달랐고, **수정은 작성자만**으로 확정했다(남의 글을 고치지 않는다). 삭제는 작성자·Admin·Manager(프로젝트 멤버). 삭제는 소프트 삭제이며 응답에서는 `body: "삭제된 댓글"`, `deleted: true` 로 가리고 목록에는 남긴다. 수정된 댓글은 `edited: true`. 댓글은 최대 5000자, 앞뒤 공백 제거, 본문은 문자열로만 저장·렌더링한다(HTML 해석 안 함). 보관된 프로젝트에서는 작성·수정·삭제가 409. 작업 응답에는 삭제되지 않은 댓글 수 `commentCount` 가 포함된다. 변경은 `comment:created/updated/deleted` 로 프로젝트 방에 전달된다.
+
 #### Notifications
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|
