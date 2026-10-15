@@ -1,37 +1,33 @@
-import { useEffect, useState } from 'react';
-import SocketSpike from './SocketSpike.jsx';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
+import { BrowserRouter, Route, Routes } from 'react-router';
+import { AuthProvider } from './context/AuthContext.jsx';
+import { ProtectedRoute, PublicOnlyRoute, RoleRoute } from './routes/guards.jsx';
+import LoginPage from './pages/LoginPage.jsx';
+import RegisterPage from './pages/RegisterPage.jsx';
+import HomePage from './pages/HomePage.jsx';
+import AdminUsersPage from './pages/AdminUsersPage.jsx';
+import SpikePage from './pages/SpikePage.jsx';
 
 export default function App() {
-  const [health, setHealth] = useState({ state: 'loading' });
-
-  useEffect(() => {
-    fetch(`${API_BASE}/health`)
-      .then(async (res) => setHealth({ state: res.ok ? 'ok' : 'error', body: await res.json() }))
-      .catch((err) => setHealth({ state: 'error', body: { message: err.message } }));
-  }, []);
-
   return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 640,
-        margin: '2rem auto',
-        padding: '0 1rem',
-      }}
-    >
-      <h1>Team PM</h1>
-      <section>
-        <h2>서버 상태</h2>
-        <p>
-          {health.state === 'loading' && '확인 중…'}
-          {health.state === 'ok' && '정상 (DB 연결됨)'}
-          {health.state === 'error' && '오류'}
-        </p>
-        {health.body && <pre>{JSON.stringify(health.body, null, 2)}</pre>}
-      </section>
-      <SocketSpike />
-    </main>
+    <BrowserRouter>
+      <AuthProvider>
+        <main className="page">
+          <Routes>
+            <Route element={<PublicOnlyRoute />}>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+            </Route>
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/spike" element={<SpikePage />} />
+              <Route element={<RoleRoute roles={['admin']} />}>
+                <Route path="/admin/users" element={<AdminUsersPage />} />
+              </Route>
+            </Route>
+            <Route path="*" element={<p className="center muted">페이지를 찾을 수 없습니다.</p>} />
+          </Routes>
+        </main>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

@@ -10,6 +10,8 @@ const schema = z.object({
   // Socket.io Redis adapter. 없으면 단일 인스턴스 모드(로컬 개발).
   REDIS_URL: z.string().optional(),
   CLIENT_ORIGIN: z.string().optional(),
+  JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 chars'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 chars'),
 });
 
 const parsed = schema.safeParse(process.env);

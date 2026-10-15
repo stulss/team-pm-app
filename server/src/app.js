@@ -5,10 +5,14 @@ import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import { query } from './config/db.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import { authRouter } from './modules/auth/routes.js';
+import { usersRouter } from './modules/users/routes.js';
 
 export const app = express();
 
 app.disable('x-powered-by');
+// Vercel 프록시 뒤에서 req.ip(레이트리밋 키)가 실제 클라이언트 IP 가 되도록 한다.
+app.set('trust proxy', 1);
 app.use(helmet());
 // 동일 오리진 배포가 기본. CLIENT_ORIGIN 이 있을 때만 CORS 허용(로컬 개발 등).
 if (env.CLIENT_ORIGIN) {
@@ -28,6 +32,9 @@ api.get('/health', async (req, res) => {
     res.status(503).json({ status: 'error', db: 'down' });
   }
 });
+
+api.use('/auth', authRouter);
+api.use('/users', usersRouter);
 
 app.use('/api/v1', api);
 app.use(notFound);

@@ -210,7 +210,7 @@ erDiagram
 | POST | `/auth/register` | 회원가입 | 공개 |
 | POST | `/auth/login` | 로그인 | 공개 |
 | POST | `/auth/refresh` | 토큰 재발급 (쿠키) | 공개 |
-| POST | `/auth/logout` | 로그아웃(refresh 폐기) | 로그인 |
+| POST | `/auth/logout` | 로그아웃(refresh 폐기). 쿠키 기반이라 access 토큰이 만료돼도 가능 | 공개(쿠키) |
 | GET | `/auth/me` | 내 정보 | 로그인 |
 
 #### Users
