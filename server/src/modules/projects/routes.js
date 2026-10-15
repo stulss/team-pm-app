@@ -6,6 +6,7 @@ import {
   requireProjectManager,
   requireProjectMember,
 } from '../../middleware/requireProjectMember.js';
+import { emitToProject, emitToUser, removeUserFromProjectRoom } from '../../sockets/emitter.js';
 import * as service from './service.js';
 
 const name = z.string().trim().min(1, '프로젝트 이름을 입력해 주세요.').max(100);
@@ -52,12 +53,15 @@ projectsRouter.get('/:id', requireProjectMember(), async (req, res) => {
 });
 
 projectsRouter.patch('/:id', requireProjectManager(), validate(patchBody), async (req, res) => {
-  res.json(await service.update(req.project, req.body));
+  const project = await service.update(req.project, req.body);
+  await emitToProject(req, project.id, 'project:updated', { projectId: project.id, project });
+  res.json(project);
 });
 
 // 삭제(하드 삭제, CASCADE)는 Admin 만. 일반적인 정리는 status=archived 로 한다.
 projectsRouter.delete('/:id', requireRole('admin'), requireProjectManager(), async (req, res) => {
   await service.remove(req.project);
+  await emitToProject(req, req.project.id, 'project:deleted', { projectId: req.project.id });
   res.status(204).end();
 });
 
@@ -70,7 +74,11 @@ projectsRouter.post(
   requireProjectManager(),
   validate(addMemberBody),
   async (req, res) => {
-    res.status(201).json({ user: await service.addMember(req.project, req.body.userId) });
+    const user = await service.addMember(req.project, req.body.userId);
+    const payload = { projectId: req.project.id, user };
+    await emitToProject(req, req.project.id, 'member:added', payload);
+    await emitToUser(user.id, 'member:added', payload); // 새 멤버의 프로젝트 목록 갱신용
+    res.status(201).json({ user });
   },
 );
 
@@ -80,6 +88,11 @@ projectsRouter.delete(
   requireProjectManager(),
   async (req, res) => {
     await service.removeMember(req.project, req.params.userId);
+    const payload = { projectId: req.project.id, user: { id: req.params.userId } };
+    // 제거되는 사용자도 이벤트를 받은 뒤(목록 갱신) 방에서 내보낸다.
+    await emitToProject(req, req.project.id, 'member:removed', payload);
+    await emitToUser(req.params.userId, 'member:removed', payload);
+    await removeUserFromProjectRoom(req.params.userId, req.project.id);
     res.status(204).end();
   },
 );

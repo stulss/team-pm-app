@@ -378,9 +378,17 @@ erDiagram
 | S→C | `task:moved` | `{ taskId, status, position, movedBy }` | 칸반 이동 |
 | S→C | `task:deleted` | `{ taskId }` | 삭제 |
 | S→C | `comment:created` / `comment:updated` / `comment:deleted` | `{ taskId, comment }` | 댓글 변경 |
-| S→C | `member:added` / `member:removed` | `{ projectId, user }` | 멤버 변경 |
+| S→C | `member:added` / `member:removed` | `{ projectId, user }` | 멤버 변경. 프로젝트 방과 해당 사용자의 개인 방(`user:{id}`)에 모두 전송 |
+| S→C | `project:updated` / `project:deleted` | `{ projectId, project? }` | 프로젝트 수정·보관·삭제 (구현에서 추가) |
 | S→C | `notification:new` | `{ notification }` | 개인 알림 푸시 |
 | S→C | `presence:update` (선택) | `{ projectId, onlineUserIds }` | 접속자 표시 |
+
+**구현 규칙(M5)**
+- 소켓 연결은 `auth.token` 에 유효한 access JWT 가 있고 활성 사용자일 때만 허용한다(REST 와 같은 규칙). 연결되면 `user:{id}` 방에 자동 입장한다.
+- `project:join` 은 매번 사용자 활성 여부와 멤버십(Admin 은 전체)을 DB 에서 다시 확인하고 ack 로 `{ ok }` 또는 `{ ok:false, error }` 를 돌려준다.
+- 변경 요청에 `X-Socket-Id` 헤더를 실으면 그 소켓은 이벤트에서 제외된다. 이벤트는 DB 커밋 이후 REST 핸들러가 발행하며, 발행 실패가 REST 응답을 깨뜨리지 않는다.
+- 접근 회수: 멤버가 제거되면 `member:removed` 를 보낸 뒤 해당 사용자의 소켓을 프로젝트 방에서 내보낸다. 사용자를 비활성화하거나 역할을 바꾸면 그 사용자의 소켓 연결을 끊는다(재연결 시 권한 재검증).
+- 클라이언트는 이벤트를 받으면 해당 쿼리를 다시 가져오고(invalidate), 연결/재연결 때마다 방에 다시 입장하고 전부 다시 가져와 유실을 보정한다. 2초 넘게 끊기면 안내를 띄운다. Redis 어댑터 연결이 실패하면 단일 인스턴스 모드로 계속 동작한다.
 
 **동기화 원칙**
 1. 변경은 **REST로만** 수행 → 서버가 DB 커밋 후 `io.to('project:ID').emit(...)` (요청자 소켓 제외 가능: `X-Socket-Id` 헤더)

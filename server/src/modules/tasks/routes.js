@@ -5,6 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireProjectMember } from '../../middleware/requireProjectMember.js';
 import { requireTaskAccess } from '../../middleware/requireTaskAccess.js';
 import { STATUSES } from './repository.js';
+import { emitToProject } from '../../sockets/emitter.js';
 import * as service from './service.js';
 
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -80,7 +81,9 @@ projectTasksRouter.get(
 );
 
 projectTasksRouter.post('/', requireProjectMember(), validate(createBody), async (req, res) => {
-  res.status(201).json(await service.create(req.project, req.user, req.body));
+  const task = await service.create(req.project, req.user, req.body);
+  await emitToProject(req, req.project.id, 'task:created', { projectId: req.project.id, task });
+  res.status(201).json(task);
 });
 
 // /tasks
@@ -97,14 +100,29 @@ tasksRouter.get('/:id', requireTaskAccess(), (req, res) => {
 });
 
 tasksRouter.patch('/:id', requireTaskAccess(), validate(patchBody), async (req, res) => {
-  res.json(await service.update(req.task, req.project, req.body));
+  const task = await service.update(req.task, req.project, req.body);
+  await emitToProject(req, req.project.id, 'task:updated', { projectId: req.project.id, task });
+  res.json(task);
 });
 
 tasksRouter.patch('/:id/move', requireTaskAccess(), validate(moveBody), async (req, res) => {
-  res.json(await service.move(req.task, req.project, req.body));
+  const task = await service.move(req.task, req.project, req.body);
+  await emitToProject(req, req.project.id, 'task:moved', {
+    projectId: req.project.id,
+    taskId: task.id,
+    status: task.status,
+    position: task.position,
+    movedBy: req.user.id,
+    task,
+  });
+  res.json(task);
 });
 
 tasksRouter.delete('/:id', requireTaskAccess(), async (req, res) => {
   await service.remove(req.task, req.project, req.user);
+  await emitToProject(req, req.project.id, 'task:deleted', {
+    projectId: req.project.id,
+    taskId: req.task.id,
+  });
   res.status(204).end();
 });

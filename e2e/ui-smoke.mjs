@@ -384,6 +384,62 @@ try {
     await outsider.getByRole('heading', { name: '접근 권한이 없습니다' }).waitFor();
   });
 
+  // ---- 실시간: 서로 다른 두 브라우저(사용자)가 같은 프로젝트 보드를 본다
+  const rtManager = await newPage();
+  const rtMember = await newPage();
+  let rtReady = false;
+  await step('실시간 준비: 두 사용자가 같은 프로젝트 보드를 열어 둠', async () => {
+    await login(rtManager, 'manager');
+    await login(rtMember, 'member');
+    for (const p of [rtManager, rtMember]) {
+      await p.goto(projectUrl);
+      await p.getByRole('tab', { name: '보드' }).click();
+      await column(p, 'todo').locator('[data-task-id]', { hasText: '둘째' }).waitFor();
+    }
+    rtReady = true;
+  });
+  await step('실시간: 한쪽에서 카드를 옮기면 다른 사용자 화면에 새로고침 없이 반영', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    // 소켓이 방에 입장할 시간을 준다 (입장 전에 일어난 변경은 재조회로 보정되지만, 지연 측정을 위해)
+    await new Promise((r) => setTimeout(r, 800));
+    const start = { t: 0 };
+    const seen = column(rtMember, 'review')
+      .locator('[data-task-id]', { hasText: '둘째' })
+      .waitFor({ timeout: 5000 });
+    await drag(rtManager, card(rtManager, '둘째'), column(rtManager, 'review'));
+    start.t = Date.now();
+    await seen;
+    const elapsed = Date.now() - start.t;
+    console.log(`      (드롭 후 상대 화면 반영까지 ${elapsed}ms)`);
+    if (elapsed > 2000) throw new Error(`반영이 너무 느림: ${elapsed}ms`);
+    if (
+      (await column(rtMember, 'todo').locator('[data-task-id]', { hasText: '둘째' }).count()) !== 0
+    ) {
+      throw new Error('이전 컬럼에 카드가 남아 있음');
+    }
+  });
+  await step('실시간: 한쪽에서 만든 작업이 다른 화면에 나타나고, 삭제하면 사라짐', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await addTask(rtManager, '실시간 작업');
+    await column(rtMember, 'todo')
+      .locator('[data-task-id]', { hasText: '실시간 작업' })
+      .waitFor({ timeout: 5000 });
+    rtManager.once('dialog', (d) => d.accept());
+    await rtManager.locator('[data-task-id]').filter({ hasText: '실시간 작업' }).click();
+    await rtManager.getByRole('dialog').getByRole('button', { name: '삭제' }).click();
+    await pollUntil(async () => (await card(rtMember, '실시간 작업').count()) === 0, '삭제 반영');
+  });
+  await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await rtManager
+      .locator('li', { hasText: 'ui-member' })
+      .getByRole('button', { name: '제거' })
+      .click();
+    await rtMember
+      .getByRole('heading', { name: '접근 권한이 없습니다' })
+      .waitFor({ timeout: 5000 });
+  });
+
   // ---- admin
   const admin = await newPage();
   await step('admin: 사용자 관리에서 역할 변경 (member → manager)', async () => {

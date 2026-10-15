@@ -500,3 +500,14 @@ td.overdue {
   margin: auto;
   text-align: center;
 }
+
+.notice {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid #b54708;
+  border-radius: 6px;
+}

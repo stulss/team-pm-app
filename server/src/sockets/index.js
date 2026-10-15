@@ -4,6 +4,8 @@ import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { env } from '../config/env.js';
 import { authenticateSocket } from './auth.js';
+import { userRoom } from './emitter.js';
+import { registerRoomHandlers } from './rooms.js';
 
 // 인스턴스 식별자 — 로그에서 어느 인스턴스인지 구분하는 용도.
 export const instanceId = randomUUID().slice(0, 8);
@@ -17,21 +19,27 @@ export async function attachSockets(httpServer) {
   });
 
   if (env.REDIS_URL) {
-    const pub = createClient({ url: env.REDIS_URL });
-    const sub = pub.duplicate();
-    pub.on('error', (e) => console.error('redis pub error', e.message));
-    sub.on('error', (e) => console.error('redis sub error', e.message));
-    await Promise.all([pub.connect(), sub.connect()]);
-    io.adapter(createAdapter(pub, sub));
-    console.log(`[socket] redis adapter on (instance ${instanceId})`);
+    try {
+      const pub = createClient({ url: env.REDIS_URL });
+      const sub = pub.duplicate();
+      pub.on('error', (e) => console.error('redis pub error', e.message));
+      sub.on('error', (e) => console.error('redis sub error', e.message));
+      await Promise.all([pub.connect(), sub.connect()]);
+      io.adapter(createAdapter(pub, sub));
+      console.log(`[socket] redis adapter on (instance ${instanceId})`);
+    } catch (err) {
+      // Redis 장애로 실시간 전체가 꺼지지 않게 한다. 다중 인스턴스 간 전달만 포기하고 이 인스턴스 안에서는 동작한다.
+      console.error(`[socket] redis adapter failed, single instance mode: ${err.message}`);
+    }
   } else {
     console.warn(`[socket] REDIS_URL not set — single instance mode (instance ${instanceId})`);
   }
 
   io.use(authenticateSocket);
   io.on('connection', (socket) => {
-    // 개인 알림 룸. 프로젝트 룸 입장(멤버십 검증)과 이벤트는 M5 에서 추가한다.
-    socket.join(`user:${socket.data.user.id}`);
+    // 개인 룸: 알림(M7)과 권한 회수(연결 끊기)에 쓴다. 프로젝트 룸은 멤버십 검증 후 입장한다.
+    socket.join(userRoom(socket.data.user.id));
+    registerRoomHandlers(socket);
   });
 
   return io;

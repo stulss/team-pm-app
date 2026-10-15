@@ -11,6 +11,7 @@ import {
 } from '../api/projects.js';
 import { errorMessage } from '../api/http.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useProjectRealtime } from '../hooks/useProjectRealtime.js';
 import UserSearch from '../components/project/UserSearch.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
 
@@ -20,6 +21,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const { offline } = useProjectRealtime(id);
 
   const key = ['project', id];
   const {
@@ -86,6 +88,12 @@ export default function ProjectDetailPage() {
       <p>
         <Link to="/">← 프로젝트</Link>
       </p>
+      {offline && (
+        <p role="status" className="notice">
+          실시간 연결이 끊겼습니다. 다시 연결하는 중입니다… 변경 사항은 연결되면 자동으로
+          반영됩니다.
+        </p>
+      )}
 
       <div className="card">
         {editing ? (

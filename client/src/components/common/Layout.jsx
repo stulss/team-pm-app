@@ -1,11 +1,13 @@
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { useUserRealtime } from '../../hooks/useUserRealtime.js';
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  useUserRealtime();
 
   const onLogout = async () => {
     await logout();

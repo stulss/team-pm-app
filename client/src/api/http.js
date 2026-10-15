@@ -7,6 +7,13 @@ let accessToken = null;
 export const setAccessToken = (token) => {
   accessToken = token;
 };
+export const getAccessToken = () => accessToken;
+
+// 변경 요청에 현재 소켓 ID 를 실어 보내면, 서버가 그 소켓에는 실시간 이벤트를 다시 보내지 않는다.
+let socketIdGetter = () => undefined;
+export const setSocketIdGetter = (fn) => {
+  socketIdGetter = fn;
+};
 
 let onSessionExpired = () => {};
 export const setOnSessionExpired = (fn) => {
@@ -17,6 +24,8 @@ export const http = axios.create({ baseURL: API_BASE, withCredentials: true });
 
 http.interceptors.request.use((config) => {
   if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+  const socketId = socketIdGetter();
+  if (socketId) config.headers['X-Socket-Id'] = socketId;
   return config;
 });
 

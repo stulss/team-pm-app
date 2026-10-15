@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { http, refreshSession, setAccessToken, setOnSessionExpired } from '../api/http.js';
+import { connectSocket, disconnectSocket } from '../socket/index.js';
 
 const AuthContext = createContext(null);
 
@@ -24,6 +25,12 @@ export function AuthProvider({ children }) {
     setOnSessionExpired(clearSession);
     refreshSession().then(applySession).catch(clearSession);
   }, [applySession, clearSession]);
+
+  // 로그인 중에는 실시간 소켓을 연결하고, 로그아웃하면 끊는다.
+  useEffect(() => {
+    if (status === 'authed') connectSocket();
+    else if (status === 'anon') disconnectSocket();
+  }, [status]);
 
   const value = useMemo(
     () => ({

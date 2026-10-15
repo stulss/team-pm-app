@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { setRefreshCookie } from '../auth/routes.js';
+import { disconnectUser } from '../../sockets/emitter.js';
 import * as service from './service.js';
 
 const listQuery = z.object({
@@ -42,7 +43,10 @@ usersRouter.patch(
   validate(idParam, 'params'),
   validate(roleBody),
   async (req, res) => {
-    res.json({ user: await service.changeRole(req.params.id, req.body.role) });
+    const user = await service.changeRole(req.params.id, req.body.role);
+    // 역할이 바뀌면 소켓 연결을 끊어, 재연결 시 프로젝트 방 입장 권한을 다시 검증받게 한다.
+    await disconnectUser(user.id);
+    res.json({ user });
   },
 );
 
@@ -52,6 +56,8 @@ usersRouter.patch(
   validate(idParam, 'params'),
   validate(statusBody),
   async (req, res) => {
-    res.json({ user: await service.changeStatus(req.params.id, req.body.isActive) });
+    const user = await service.changeStatus(req.params.id, req.body.isActive);
+    if (!user.isActive) await disconnectUser(user.id); // 비활성화되면 실시간 연결도 즉시 종료
+    res.json({ user });
   },
 );
