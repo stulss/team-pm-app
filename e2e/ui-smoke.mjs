@@ -53,6 +53,23 @@ const apiRegister = async (k) => {
   if (res.status !== 201) throw new Error(`register ${k}: ${res.status}`);
 };
 
+const apiHeaders = (token) => ({
+  'content-type': 'application/json',
+  ...(token && { authorization: `Bearer ${token}` }),
+  ...(process.env.VERCEL_BYPASS && { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS }),
+});
+const apiCall = async (method, path, token, body) => {
+  const res = await fetch(`${BASE}/api/v1${path}`, {
+    method,
+    headers: apiHeaders(token),
+    body: body && JSON.stringify(body),
+  });
+  return { status: res.status, body: res.status === 204 ? null : await res.json() };
+};
+const apiLogin = async (k) =>
+  (await apiCall('POST', '/auth/login', null, { email: emailOf(k), password: PASSWORD })).body
+    .accessToken;
+
 await db.connect();
 const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED });
 const newPage = async () => {
@@ -488,6 +505,28 @@ try {
     }
     await card(rtManager, '둘째').getByText('댓글 1').waitFor();
     await card(rtMember, '둘째').getByText('댓글 1').waitFor({ timeout: 5000 });
+  });
+  await step('실시간: 연결이 끊긴 동안 생긴 변경은 재연결 후 다시 불러와 보정됨', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    const [adminToken, managerToken] = [await apiLogin('admin'), await apiLogin('manager')];
+    const memberId = (await db.query('SELECT id FROM users WHERE email = $1', [emailOf('member')]))
+      .rows[0].id;
+    const projectId = projectUrl.split('/').pop();
+
+    // 역할 변경 API 는 해당 사용자의 소켓 연결을 끊는다(같은 역할로 보내도 동일). 끊긴 직후 작업을 만든다.
+    const forced = await apiCall('PATCH', `/users/${memberId}/role`, adminToken, {
+      role: 'member',
+    });
+    if (forced.status !== 200) throw new Error(`역할 변경 실패: ${forced.status}`);
+    const created = await apiCall('POST', `/projects/${projectId}/tasks`, managerToken, {
+      title: '끊긴 동안 생성',
+    });
+    if (created.status !== 201) throw new Error(`작업 생성 실패: ${created.status}`);
+
+    // 이벤트는 놓쳤지만, 재연결되면 전체를 다시 불러와 나타나야 한다.
+    await column(rtMember, 'todo')
+      .locator('[data-task-id]', { hasText: '끊긴 동안 생성' })
+      .waitFor({ timeout: 15000 });
   });
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');

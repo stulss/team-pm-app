@@ -15,6 +15,12 @@ export function connectSocket() {
   });
   setSocketIdGetter(() => (socket?.connected ? socket.id : undefined));
 
+  // 서버가 연결을 끊은 경우(역할 변경·권한 회수 등, reason: 'io server disconnect')에는
+  // socket.io 가 자동 재연결하지 않는다. 직접 다시 연결해 권한을 다시 검증받고, 연결되면 구독 훅이 재조회한다.
+  socket.on('disconnect', (reason) => {
+    if (reason === 'io server disconnect') setTimeout(() => socket?.connect(), 500);
+  });
+
   // 미들웨어가 거부한 연결(access 토큰 만료)은 자동 재시도되지 않는다 → 토큰을 갱신하고 직접 다시 연결한다.
   socket.on('connect_error', async (err) => {
     if (err.message !== 'UNAUTHORIZED') return;
