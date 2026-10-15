@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { authenticate, requireRole } from '../../middleware/auth.js';
+import { authenticate } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import {
   requireProjectManager,
@@ -29,7 +29,14 @@ const patchBody = z
     status: z.enum(['active', 'archived']).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' });
-const addMemberBody = z.object({ userId: z.uuid('올바르지 않은 사용자 ID 입니다.') });
+const addMemberBody = z
+  .object({
+    userId: z.uuid('올바르지 않은 사용자 ID 입니다.').optional(),
+    email: z.string().trim().max(254).pipe(z.email('올바른 이메일 형식이 아닙니다.')).optional(),
+  })
+  .refine((v) => Boolean(v.userId) !== Boolean(v.email), {
+    message: 'userId 또는 email 중 하나만 보내 주세요.',
+  });
 const memberParams = z.object({ id: z.uuid(), userId: z.uuid() });
 
 export const projectsRouter = Router();
@@ -39,14 +46,10 @@ projectsRouter.get('/', validate(listQuery, 'query'), async (req, res) => {
   res.json(await service.list(req.user, req.query));
 });
 
-projectsRouter.post(
-  '/',
-  requireRole('admin', 'manager'),
-  validate(createBody),
-  async (req, res) => {
-    res.status(201).json(await service.create(req.user, req.body));
-  },
-);
+// 로그인한 누구나 프로젝트를 만들 수 있고, 만든 사람이 소유자(관리자)가 된다.
+projectsRouter.post('/', validate(createBody), async (req, res) => {
+  res.status(201).json(await service.create(req.user, req.body));
+});
 
 projectsRouter.get('/:id', requireProjectMember(), async (req, res) => {
   res.json(await service.detail(req.project));
@@ -58,8 +61,8 @@ projectsRouter.patch('/:id', requireProjectManager(), validate(patchBody), async
   res.json(project);
 });
 
-// 삭제(하드 삭제, CASCADE)는 Admin 만. 일반적인 정리는 status=archived 로 한다.
-projectsRouter.delete('/:id', requireRole('admin'), requireProjectManager(), async (req, res) => {
+// 삭제(하드 삭제, CASCADE)는 Admin 과 프로젝트 소유자. 되돌릴 수 있는 정리는 status=archived 로 한다.
+projectsRouter.delete('/:id', requireProjectManager(), async (req, res) => {
   await service.remove(req.project);
   await emitToProject(req, req.project.id, 'project:deleted', { projectId: req.project.id });
   res.status(204).end();
@@ -74,7 +77,7 @@ projectsRouter.post(
   requireProjectManager(),
   validate(addMemberBody),
   async (req, res) => {
-    const user = await service.addMember(req.project, req.body.userId);
+    const user = await service.addMember(req.project, req.body);
     const payload = { projectId: req.project.id, user };
     await emitToProject(req, req.project.id, 'member:added', payload);
     await emitToUser(user.id, 'member:added', payload); // 새 멤버의 프로젝트 목록 갱신용

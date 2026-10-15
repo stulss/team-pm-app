@@ -219,6 +219,11 @@ describe('DELETE /comments/:id', () => {
     }
   });
 
+  it('시스템 역할이 member 여도 프로젝트 소유자는 남의 댓글을 삭제할 수 있다', async () => {
+    store.users.find((u) => u.id === people.manager.id).role = 'member';
+    expect((await del('manager', comment.id)).status).toBe(204);
+  });
+
   it('다른 Member 와 비멤버는 403', async () => {
     expect((await del('member2', comment.id)).status).toBe(403);
     expect((await del('outsider', comment.id)).status).toBe(403);

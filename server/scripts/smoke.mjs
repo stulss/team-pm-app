@@ -77,9 +77,44 @@ try {
     '생성자는 소유자이자 멤버',
     created.body.members?.some((m) => m.id === people.manager.id && m.isOwner),
   );
+  // 공개 가입 사용자(member)도 프로젝트를 만들고, 이메일로 초대하고, 직접 삭제한다
+  const own = await call('POST', '/projects', {
+    token: t('member'),
+    body: { name: 'smoke-own' },
+  });
   check(
-    'member 는 프로젝트 생성 불가 (403)',
-    (await call('POST', '/projects', { token: t('member'), body: { name: 'x' } })).status === 403,
+    'member 도 프로젝트 생성 (201), 본인이 소유자',
+    own.status === 201 && own.body.ownerId === people.member.id,
+    JSON.stringify(own.body),
+  );
+  const inviteUrl = `/projects/${own.body.id}/members`;
+  check(
+    '이메일로 멤버 초대 (201, 대소문자 무시)',
+    (
+      await call('POST', inviteUrl, {
+        token: t('member'),
+        body: { email: emailOf('outsider').toUpperCase() },
+      })
+    ).status === 201,
+  );
+  check(
+    '없는 이메일 초대 (404), 중복 초대 (409)',
+    (await call('POST', inviteUrl, { token: t('member'), body: { email: 'none@example.test' } }))
+      .status === 404 &&
+      (await call('POST', inviteUrl, { token: t('member'), body: { email: emailOf('outsider') } }))
+        .status === 409,
+  );
+  check(
+    '소유자가 아닌 멤버는 초대·삭제 불가 (403)',
+    (await call('POST', inviteUrl, { token: t('outsider'), body: { email: emailOf('admin') } }))
+      .status === 403 &&
+      (await call('DELETE', `/projects/${own.body.id}`, { token: t('outsider') })).status === 403,
+  );
+  check(
+    '소유자(member)가 직접 삭제 (204) + 멤버 CASCADE',
+    (await call('DELETE', `/projects/${own.body.id}`, { token: t('member') })).status === 204 &&
+      (await db.query('SELECT 1 FROM project_members WHERE project_id = $1', [own.body.id]))
+        .rowCount === 0,
   );
   const ghost = await call('POST', '/projects', {
     token: t('manager'),
@@ -1007,12 +1042,21 @@ try {
 
   // --- 삭제 + CASCADE
   check(
-    '소유 manager 는 삭제 불가 (403)',
-    (await call('DELETE', `/projects/${pid}`, { token: t('manager') })).status === 403,
+    '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',
+    (await call('DELETE', `/projects/${pid}`, { token: t('member') })).status === 403 &&
+      (await call('DELETE', `/projects/${pid}`, { token: t('manager2') })).status === 403,
   );
   check(
-    'admin 삭제 (204)',
-    (await call('DELETE', `/projects/${pid}`, { token: t('admin') })).status === 204,
+    '소유자 삭제 (204)',
+    (await call('DELETE', `/projects/${pid}`, { token: t('manager') })).status === 204,
+  );
+  const adminOwned = await call('POST', '/projects', {
+    token: t('manager'),
+    body: { name: 'smoke-admin-delete' },
+  });
+  check(
+    'admin 은 남의 프로젝트도 삭제 (204)',
+    (await call('DELETE', `/projects/${adminOwned.body.id}`, { token: t('admin') })).status === 204,
   );
   const leftover = await db.query('SELECT 1 FROM project_members WHERE project_id = $1', [pid]);
   check('삭제 시 project_members CASCADE', leftover.rowCount === 0);

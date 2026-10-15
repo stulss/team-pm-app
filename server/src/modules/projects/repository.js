@@ -69,6 +69,21 @@ export async function isMember(projectId, userId) {
   return rowCount === 1;
 }
 
+export async function countOwned(userId) {
+  const { rows } = await query('SELECT count(*)::int AS n FROM projects WHERE owner_id = $1', [
+    userId,
+  ]);
+  return rows[0].n;
+}
+
+export async function countMembers(projectId) {
+  const { rows } = await query(
+    'SELECT count(*)::int AS n FROM project_members WHERE project_id = $1',
+    [projectId],
+  );
+  return rows[0].n;
+}
+
 export async function insertProject(client, { name, description, ownerId }) {
   const { rows } = await client.query(
     'INSERT INTO projects (name, description, owner_id) VALUES ($1, $2, $3) RETURNING *',

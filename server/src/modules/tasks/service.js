@@ -3,6 +3,7 @@ import { badRequest, conflict, forbidden } from '../../utils/errors.js';
 import * as projectsRepo from '../projects/repository.js';
 import * as usersRepo from '../users/repository.js';
 import * as repo from './repository.js';
+import { env } from '../../config/env.js';
 
 export const toResponse = repo.toTask;
 
@@ -25,9 +26,12 @@ async function assertAssignable(projectId, assigneeId) {
   }
 }
 
-// Admin/Manager 는 모두, Member 는 본인이 만든 작업만 삭제할 수 있다.
-export const canDelete = (user, task) =>
-  user.role === 'admin' || user.role === 'manager' || task.created_by === user.id;
+// Admin/Manager/프로젝트 소유자는 모두, 그 외는 본인이 만든 작업만 삭제할 수 있다.
+export const canDelete = (user, task, project) =>
+  user.role === 'admin' ||
+  user.role === 'manager' ||
+  project.owner_id === user.id ||
+  task.created_by === user.id;
 
 export async function listForProject(project, user, query) {
   const { page, limit, groupBy, ...filters } = query;
@@ -55,6 +59,12 @@ export async function listMine(user, query) {
 
 export async function create(project, user, body) {
   assertWritable(project);
+  if ((await repo.countByProject(project.id)) >= env.MAX_TASKS_PER_PROJECT) {
+    throw conflict(
+      'LIMIT_REACHED',
+      `작업은 프로젝트당 최대 ${env.MAX_TASKS_PER_PROJECT}개까지 만들 수 있습니다.`,
+    );
+  }
   await assertAssignable(project.id, body.assigneeId);
   const task = await repo.insertTask({ ...body, projectId: project.id, createdBy: user.id });
   return repo.toTask(task);
@@ -80,6 +90,6 @@ export async function move(task, project, { status, beforeTaskId, afterTaskId })
 
 export async function remove(task, project, user) {
   assertWritable(project);
-  if (!canDelete(user, task)) throw forbidden('이 작업을 삭제할 권한이 없습니다.');
+  if (!canDelete(user, task, project)) throw forbidden('이 작업을 삭제할 권한이 없습니다.');
   await repo.deleteTask(task.id);
 }

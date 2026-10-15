@@ -419,12 +419,11 @@ try {
 
   // ---- member
   const member = await newPage();
-  await step('member: 프로젝트가 보이고, 생성/수정/멤버 추가 UI 가 없음', async () => {
+  await step('member: 프로젝트가 보이고, 남의 프로젝트에는 수정/멤버 추가 UI 가 없음', async () => {
     await login(member, 'member');
     await member.getByRole('link', { name: `ui-${run}-개편` }).waitFor();
-    if ((await member.getByRole('button', { name: '새 프로젝트' }).count()) !== 0) {
-      throw new Error('member 에게 새 프로젝트 버튼이 보임');
-    }
+    // 공개 가입 사용자도 자기 프로젝트를 만들 수 있다
+    await member.getByRole('button', { name: '새 프로젝트' }).waitFor();
     await member.getByRole('link', { name: `ui-${run}-개편` }).click();
     await member.getByRole('heading', { name: /멤버 \(2\)/ }).waitFor();
     for (const name of ['수정', '보관', '삭제']) {
@@ -434,6 +433,9 @@ try {
     }
     if ((await member.getByPlaceholder('이름 또는 이메일로 검색').count()) !== 0) {
       throw new Error('member 에게 멤버 추가 UI 가 보임');
+    }
+    if ((await member.getByLabel('초대할 멤버 이메일').count()) !== 0) {
+      throw new Error('소유자가 아닌 member 에게 이메일 초대 UI 가 보임');
     }
   });
   await step('member: 작업을 만들 수 있고, 남이 만든 작업에는 삭제 버튼이 없음', async () => {
@@ -474,6 +476,37 @@ try {
     await login(outsider, 'outsider');
     await outsider.goto(projectUrl);
     await outsider.getByRole('heading', { name: '접근 권한이 없습니다' }).waitFor();
+  });
+  await step('공개 가입 사용자: 직접 프로젝트를 만들고 이메일로 초대·삭제까지 한다', async () => {
+    const selfName = `ui-${run}-셀프`;
+    await outsider.goto(`${BASE}/`);
+    await outsider.getByRole('button', { name: '새 프로젝트' }).click();
+    await outsider.getByLabel('이름').fill(selfName);
+    await outsider.getByRole('button', { name: '만들기' }).click();
+    await outsider.getByRole('heading', { name: selfName }).waitFor();
+    // 일반 사용자는 사용자 목록 검색이 없고 이메일로만 초대한다
+    if ((await outsider.getByPlaceholder('이름 또는 이메일로 검색').count()) !== 0) {
+      throw new Error('일반 사용자에게 사용자 목록 검색 UI 가 보임');
+    }
+    await outsider.getByLabel('초대할 멤버 이메일').fill('nobody-' + emailOf('x'));
+    await outsider.getByRole('button', { name: '추가', exact: true }).click();
+    await outsider.getByRole('alert').filter({ hasText: '찾을 수 없습니다' }).waitFor();
+    await outsider.getByLabel('초대할 멤버 이메일').fill(emailOf('member'));
+    await outsider.getByRole('button', { name: '추가', exact: true }).click();
+    await outsider.getByRole('heading', { name: /멤버 \(2\)/ }).waitFor();
+
+    // 초대받은 사람 화면에 프로젝트가 나타난다
+    await member.goto(`${BASE}/`);
+    await member.getByRole('link', { name: selfName }).waitFor();
+
+    await outsider.once('dialog', (d) => d.accept());
+    await outsider.getByRole('button', { name: '삭제', exact: true }).click();
+    await outsider.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
+    await member.reload();
+    await member.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
+    if ((await member.getByRole('link', { name: selfName }).count()) !== 0) {
+      throw new Error('삭제된 프로젝트가 초대받은 사용자에게 남아 있음');
+    }
   });
 
   // ---- 실시간: 서로 다른 두 브라우저(사용자)가 같은 프로젝트 보드를 본다

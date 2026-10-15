@@ -335,6 +335,21 @@ describe('DELETE /tasks/:id', () => {
     expect(store.tasks).toHaveLength(0);
   });
 
+  it('시스템 역할이 member 여도 프로젝트 소유자는 남이 만든 작업을 삭제할 수 있다', async () => {
+    store.users.find((u) => u.id === people.manager.id).role = 'member';
+    const id = (await createTask('member')).body.id;
+    expect((await delTask('manager', id)).status).toBe(204);
+  });
+
+  it('프로젝트당 작업 수 상한(1000)에 닿으면 409 LIMIT_REACHED', async () => {
+    for (let i = 0; i < 1000; i++) {
+      store.tasks.push({ id: crypto.randomUUID(), project_id: pid, status: 'todo', position: i });
+    }
+    const res = await createTask('member');
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('LIMIT_REACHED');
+  });
+
   it('비멤버는 Manager 여도 403', async () => {
     const id = (await createTask('member')).body.id;
     store.users.find((u) => u.id === people.outsider.id).role = 'manager';

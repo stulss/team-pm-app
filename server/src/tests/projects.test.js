@@ -80,10 +80,29 @@ describe('POST /projects', () => {
     expect((await createProject('admin')).status).toBe(201);
   });
 
-  it('Member 는 403', async () => {
+  it('Member 도 프로젝트를 만들 수 있고 소유자가 된다 (공개 가입)', async () => {
     const res = await createProject('member');
-    expect(res.status).toBe(403);
-    expect(store.projects).toHaveLength(0);
+    expect(res.status).toBe(201);
+    expect(res.body.ownerId).toBe(people.member.id);
+    const patched = await request(app)
+      .patch(`/api/v1/projects/${res.body.id}`)
+      .set(as('member'))
+      .send({ name: '내 프로젝트' });
+    expect(patched.status).toBe(200);
+  });
+
+  it('사용자당 프로젝트 수 상한(20)에 닿으면 409 LIMIT_REACHED, Admin 은 제한 없음', async () => {
+    for (let i = 0; i < 20; i++) {
+      store.projects.push({ id: crypto.randomUUID(), owner_id: people.member.id, name: `p${i}` });
+    }
+    const res = await createProject('member');
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('LIMIT_REACHED');
+    expect((await createProject('outsider')).status).toBe(201); // 다른 사용자는 영향 없음
+    for (let i = 0; i < 20; i++) {
+      store.projects.push({ id: crypto.randomUUID(), owner_id: people.admin.id, name: `a${i}` });
+    }
+    expect((await createProject('admin')).status).toBe(201);
   });
 
   it('인증 없이는 401', async () => {
@@ -203,9 +222,9 @@ describe('PATCH /projects/:id', () => {
     expect(store.projects[0].name).toBe('웹사이트 리뉴얼');
   });
 
-  it('소유자가 Manager 에서 Member 로 강등되면 관리 권한을 잃는다', async () => {
+  it('소유자는 시스템 역할이 Member 로 바뀌어도 자기 프로젝트를 관리한다', async () => {
     setRole('manager', 'member');
-    expect((await patch('manager', { name: 'x' })).status).toBe(403);
+    expect((await patch('manager', { name: 'x' })).status).toBe(200);
   });
 
   it('빈 변경/잘못된 status 는 400', async () => {
@@ -221,14 +240,19 @@ describe('DELETE /projects/:id', () => {
   });
   const del = (who) => request(app).delete(`/api/v1/projects/${id}`).set(as(who));
 
-  it('Admin 만 삭제할 수 있다 (소유 Manager 도 403)', async () => {
-    expect((await del('manager')).status).toBe(403);
+  it('소유자와 Admin 만 삭제할 수 있다 (멤버·다른 Manager 는 403)', async () => {
     expect((await del('member')).status).toBe(403);
+    expect((await del('manager2')).status).toBe(403);
     expect(store.projects).toHaveLength(1);
 
-    expect((await del('admin')).status).toBe(204);
+    expect((await del('manager')).status).toBe(204);
     expect(store.projects).toHaveLength(0);
     expect(store.members).toHaveLength(0);
+  });
+
+  it('Admin 도 삭제할 수 있다', async () => {
+    expect((await del('admin')).status).toBe(204);
+    expect(store.projects).toHaveLength(0);
   });
 });
 
@@ -250,6 +274,28 @@ describe('멤버 관리', () => {
     expect(res.body.user.id).toBe(people.outsider.id);
 
     expect((await request(app).get(`/api/v1/projects/${id}`).set(as('outsider'))).status).toBe(200);
+  });
+
+  it('이메일로 추가할 수 있다 (대소문자 무시). 없는 이메일은 404, userId 와 email 동시 지정은 400', async () => {
+    const addBy = (body) =>
+      request(app).post(`/api/v1/projects/${id}/members`).set(as('manager')).send(body);
+    expect((await addBy({ email: 'nobody@example.com' })).status).toBe(404);
+    expect((await addBy({ email: 'bad' })).status).toBe(400);
+    expect((await addBy({ email: 'a@example.com', userId: people.outsider.id })).status).toBe(400);
+    expect((await addBy({})).status).toBe(400);
+    const ok = await addBy({ email: 'OUTSIDER@example.com' });
+    expect(ok.status).toBe(201);
+    expect(ok.body.user.id).toBe(people.outsider.id);
+    expect((await addBy({ email: 'outsider@example.com' })).status).toBe(409);
+  });
+
+  it('프로젝트 멤버 수 상한(50)에 닿으면 409 LIMIT_REACHED', async () => {
+    for (let i = 0; i < 48; i++) {
+      store.members.push({ project_id: id, user_id: crypto.randomUUID(), joined_at: new Date() });
+    }
+    const res = await add('manager', people.outsider.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('LIMIT_REACHED');
   });
 
   it('Member 와 멤버가 아닌 Manager 는 추가/제거할 수 없다', async () => {

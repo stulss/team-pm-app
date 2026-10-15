@@ -122,6 +122,12 @@ export const authRepo = {
 };
 
 export const projectsRepo = {
+  async countOwned(userId) {
+    return store.projects.filter((p) => p.owner_id === userId).length;
+  },
+  async countMembers(projectId) {
+    return store.members.filter((m) => m.project_id === projectId).length;
+  },
   async listForUser(user, { status, limit, offset }) {
     let rows = store.projects.filter(
       (p) =>
@@ -245,6 +251,9 @@ const nextPosition = (projectId, status) =>
   ) + STEP;
 
 export const tasksRepo = {
+  async countByProject(projectId) {
+    return store.tasks.filter((t) => t.project_id === projectId).length;
+  },
   async findById(id) {
     const t = store.tasks.find((x) => x.id === id);
     return t ? withNames(t) : null;

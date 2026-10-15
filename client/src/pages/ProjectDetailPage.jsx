@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addProjectMember,
   canManageProject,
+  canSearchUsers,
   deleteProject,
   getProject,
   removeProjectMember,
@@ -13,6 +14,7 @@ import { errorMessage } from '../api/http.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useProjectRealtime } from '../hooks/useProjectRealtime.js';
 import UserSearch from '../components/project/UserSearch.jsx';
+import MemberEmailAdd from '../components/project/MemberEmailAdd.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
 import ProjectDashboard from '../components/dashboard/ProjectDashboard.jsx';
 
@@ -48,7 +50,7 @@ export default function ProjectDetailPage() {
     },
   });
   const addMember = useMutation({
-    mutationFn: (userId) => addProjectMember(id, userId),
+    mutationFn: (body) => addProjectMember(id, body),
     onSuccess: refresh,
   });
   const removeMember = useMutation({
@@ -123,24 +125,22 @@ export default function ProjectDetailPage() {
                   >
                     {archived ? '보관 해제' : '보관'}
                   </button>
-                  {user.role === 'admin' && (
-                    <button
-                      type="button"
-                      className="danger"
-                      disabled={remove.isPending}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
-                          )
-                        ) {
-                          remove.mutate();
-                        }
-                      }}
-                    >
-                      삭제
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={remove.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+                        )
+                      ) {
+                        remove.mutate();
+                      }
+                    }}
+                  >
+                    삭제
+                  </button>
                 </div>
               )}
             </div>
@@ -181,10 +181,16 @@ export default function ProjectDetailPage() {
         {canManage && (
           <div>
             <span className="field-label">멤버 추가</span>
-            <UserSearch
-              excludeIds={project.members.map((m) => m.id)}
+            {canSearchUsers(user) && (
+              <UserSearch
+                excludeIds={project.members.map((m) => m.id)}
+                disabled={addMember.isPending}
+                onPick={(u) => addMember.mutate({ userId: u.id })}
+              />
+            )}
+            <MemberEmailAdd
               disabled={addMember.isPending}
-              onPick={(u) => addMember.mutate(u.id)}
+              onAdd={(email) => addMember.mutate({ email })}
             />
           </div>
         )}

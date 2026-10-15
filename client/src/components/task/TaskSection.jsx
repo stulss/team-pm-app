@@ -164,6 +164,7 @@ export default function TaskSection({ project, archived }) {
       {linked.data && !modal && (
         <TaskModal
           projectId={project.id}
+          ownerId={project.ownerId}
           members={project.members}
           task={linked.data}
           readOnly={archived}
@@ -173,6 +174,7 @@ export default function TaskSection({ project, archived }) {
       {modal && (
         <TaskModal
           projectId={project.id}
+          ownerId={project.ownerId}
           members={project.members}
           task={modal.task}
           readOnly={archived}

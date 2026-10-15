@@ -9,7 +9,7 @@ const formatTime = (iso) =>
 
 // 작업 모달의 댓글 영역. 본문은 항상 텍스트로 렌더링한다(HTML 로 해석하지 않음).
 // 다른 사용자의 변경은 프로젝트 화면의 실시간 구독이 ['comments', taskId] 를 갱신해 반영된다.
-export default function CommentSection({ taskId, readOnly = false }) {
+export default function CommentSection({ taskId, ownerId, readOnly = false }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const key = ['comments', taskId];
@@ -49,7 +49,10 @@ export default function CommentSection({ taskId, readOnly = false }) {
   const canDelete = (c) =>
     !readOnly &&
     !c.deleted &&
-    (c.author.id === user.id || user.role === 'admin' || user.role === 'manager');
+    (c.author.id === user.id ||
+      user.role === 'admin' ||
+      user.role === 'manager' ||
+      ownerId === user.id);
 
   return (
     <section className="comments" aria-label="댓글">

@@ -52,6 +52,7 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 | `CRON_SECRET` | Cron 엔드포인트 검증(16자 이상). 없으면 엔드포인트 비활성(503) | 비밀. Vercel Cron 이 `Authorization: Bearer` 로 보냄 |
 | `APP_TIMEZONE` | "오늘/내일" 마감 판정 시간대 | 기본 `Asia/Seoul` |
 | `ALLOW_REGISTRATION` | `false` 면 새 가입을 막음(첫 계정은 허용) | 기본 `true`. **팀 구성이 끝나면 `false` 권장** |
+| `MAX_PROJECTS_PER_USER` / `MAX_MEMBERS_PER_PROJECT` / `MAX_TASKS_PER_PROJECT` | 공개 가입 시 무료 DB 용량을 지키는 사용량 상한(초과 시 409 `LIMIT_REACHED`) | 기본 20 / 50 / 1000. Admin 은 프로젝트 수 제한 없음 |
 | `DB_SSL_VERIFY` | DB TLS 서버 인증서 검증 | 기본 `true`. 인증서 문제로 접속이 안 될 때만 비상용 `false` |
 | `LOG_LEVEL` | 로그 수준 | 기본 `info` |
 | `CLIENT_ORIGIN` | CORS 화이트리스트 | 동일 오리진이므로 보통 비워 둠 |
@@ -113,4 +114,4 @@ BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라�
 - **환경 분리 없음**: Production·Preview·로컬이 하나의 Supabase 프로젝트·Redis 를 공유한다. 실제 팀이 쓰기 시작하면 개발용 Supabase 프로젝트를 분리하는 것이 안전하다(무료 플랜 프로젝트 수 제한 확인).
 - **Hobby 제한**: Cron 하루 1회(±59분), 함수 실행 300초(소켓은 재연결로 흡수), 팀 사용·상업적 이용은 약관상 제한될 수 있으니 확인.
 - **Redis 무료 한도**: 연결 수(여러 서버 인스턴스가 각각 연결)와 명령 수가 한도에 닿을 수 있다. 사용자 10명 규모에서는 문제가 없었지만 사용량을 가끔 확인한다.
-- **첫 가입자 자동 Admin**: 첫 계정만 admin 이고 이후는 member 다. 공개 서비스로 계속 운영하려면 `ALLOW_REGISTRATION=false` 로 닫고 관리자가 계정을 안내하거나, 초대 코드 방식(범위 밖)으로 확장한다.
+- **공개 가입 운영**: 누구나 가입하고 자기 프로젝트를 만들 수 있다(첫 계정만 admin). 무료 DB 용량은 사용량 상한과 가입 레이트리밋으로만 지킨다. 이메일 인증·비밀번호 복구·신고/차단 기능은 없으니, 악용이 보이면 `ALLOW_REGISTRATION=false` 로 가입을 닫거나 Admin 화면에서 해당 계정을 비활성화한다.

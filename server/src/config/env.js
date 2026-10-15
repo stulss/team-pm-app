@@ -36,6 +36,10 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  // 공개 가입을 열어 두므로 무료 DB 용량을 지키기 위한 사용량 상한(Admin 은 프로젝트 수 제한 없음).
+  MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(20),
+  MAX_MEMBERS_PER_PROJECT: z.coerce.number().int().positive().default(50),
+  MAX_TASKS_PER_PROJECT: z.coerce.number().int().positive().default(1000),
 });
 
 // Vercel-Supabase 연동은 POSTGRES_URL(Transaction pooler 6543), POSTGRES_URL_NON_POOLING(5432)을 주입한다.

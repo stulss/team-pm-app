@@ -15,6 +15,9 @@ export const todayString = () => new Date().toLocaleDateString('sv-SE');
 export const isOverdue = (task) =>
   Boolean(task.dueDate) && task.status !== 'done' && task.dueDate < todayString();
 
-// 화면 표시용. 서버가 최종 검사를 한다. (Admin/Manager 는 모두, Member 는 본인이 만든 작업만)
-export const canDeleteTask = (user, task) =>
-  user.role === 'admin' || user.role === 'manager' || task.createdBy === user.id;
+// 화면 표시용. 서버가 최종 검사를 한다. (Admin/Manager/프로젝트 소유자는 모두, 그 외는 본인이 만든 작업만)
+export const canDeleteTask = (user, task, ownerId) =>
+  user.role === 'admin' ||
+  user.role === 'manager' ||
+  ownerId === user.id ||
+  task.createdBy === user.id;

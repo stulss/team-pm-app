@@ -99,6 +99,13 @@ export async function listAssignedTo(user, filters, { limit, offset }) {
   return { rows, total: count.rows[0].total };
 }
 
+export async function countByProject(projectId) {
+  const { rows } = await query('SELECT count(*)::int AS n FROM tasks WHERE project_id = $1', [
+    projectId,
+  ]);
+  return rows[0].n;
+}
+
 export async function insertTask({
   projectId,
   title,

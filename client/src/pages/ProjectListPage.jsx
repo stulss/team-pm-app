@@ -3,15 +3,12 @@ import { Link, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { listProjects } from '../api/projects.js';
 import { errorMessage } from '../api/http.js';
-import { useAuth } from '../context/AuthContext.jsx';
 import CreateProjectForm from '../components/project/CreateProjectForm.jsx';
 
 export default function ProjectListPage() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [status, setStatus] = useState('active');
   const [creating, setCreating] = useState(false);
-  const canCreate = user.role === 'admin' || user.role === 'manager';
 
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['projects', { status }],
@@ -22,7 +19,7 @@ export default function ProjectListPage() {
     <>
       <div className="row between">
         <h1>프로젝트</h1>
-        {canCreate && !creating && (
+        {!creating && (
           <button type="button" onClick={() => setCreating(true)}>
             새 프로젝트
           </button>
@@ -63,9 +60,7 @@ export default function ProjectListPage() {
       {data && data.data.length === 0 && (
         <p className="muted">
           {status === 'active'
-            ? canCreate
-              ? '아직 프로젝트가 없습니다. 새 프로젝트를 만들어 보세요.'
-              : '참여 중인 프로젝트가 없습니다. 프로젝트 관리자에게 초대를 요청하세요.'
+            ? '아직 프로젝트가 없습니다. 새 프로젝트를 만들거나, 다른 프로젝트 소유자에게 이메일로 초대를 요청해 보세요.'
             : '보관된 프로젝트가 없습니다.'}
         </p>
       )}

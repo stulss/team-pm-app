@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { createProject } from '../../api/projects.js';
+import { canSearchUsers, createProject } from '../../api/projects.js';
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import UserSearch from './UserSearch.jsx';
@@ -45,29 +45,34 @@ export default function CreateProjectForm({ onDone, onCancel }) {
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
-      <div>
-        <span className="field-label">멤버</span>
-        <ul className="chips">
-          <li className="chip">{user.name} (나, 소유자)</li>
-          {members.map((m) => (
-            <li key={m.id} className="chip">
-              {m.name}
-              <button
-                type="button"
-                aria-label={`${m.name} 제거`}
-                className="chip-x"
-                onClick={() => setMembers((list) => list.filter((x) => x.id !== m.id))}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-        <UserSearch
-          excludeIds={[user.id, ...members.map((m) => m.id)]}
-          onPick={(u) => setMembers((list) => [...list, u])}
-        />
-      </div>
+      {canSearchUsers(user) && (
+        <div>
+          <span className="field-label">멤버</span>
+          <ul className="chips">
+            <li className="chip">{user.name} (나, 소유자)</li>
+            {members.map((m) => (
+              <li key={m.id} className="chip">
+                {m.name}
+                <button
+                  type="button"
+                  aria-label={`${m.name} 제거`}
+                  className="chip-x"
+                  onClick={() => setMembers((list) => list.filter((x) => x.id !== m.id))}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+          <UserSearch
+            excludeIds={[user.id, ...members.map((m) => m.id)]}
+            onPick={(u) => setMembers((list) => [...list, u])}
+          />
+        </div>
+      )}
+      {!canSearchUsers(user) && (
+        <p className="muted small">멤버는 프로젝트를 만든 뒤 이메일로 초대할 수 있습니다.</p>
+      )}
       {mutation.isError && (
         <p role="alert" className="error">
           {errorMessage(mutation.error, '프로젝트를 만들지 못했습니다.')}
