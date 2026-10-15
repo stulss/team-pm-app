@@ -4,6 +4,7 @@ import { emitToUser } from '../../sockets/emitter.js';
 import { notFound } from '../../utils/errors.js';
 import * as authRepo from '../auth/repository.js';
 import * as repo from './repository.js';
+import { logger } from '../../utils/logger.js';
 
 // 알림 생성은 부가 기능이다. 실패해도 원래 요청(작업 수정, 댓글 작성 등)을 깨뜨리지 않는다.
 async function push(inserted) {
@@ -18,7 +19,7 @@ async function createAndPush(rows) {
   try {
     await push(await repo.insertMany(rows));
   } catch (err) {
-    console.error('[notification] create failed', err.message);
+    logger.error({ err: err.message }, 'notification create failed');
   }
 }
 
@@ -54,7 +55,7 @@ export async function notifyCommentAdded({ task, actor }) {
       })),
     );
   } catch (err) {
-    console.error('[notification] comment notify failed', err.message);
+    logger.error({ err: err.message }, 'comment notification failed');
   }
 }
 

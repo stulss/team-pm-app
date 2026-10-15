@@ -35,20 +35,35 @@ describe('GET /users', () => {
     expect((await request(app).get('/api/v1/users')).status).toBe(401);
   });
 
-  it('목록과 페이지 정보를 준다', async () => {
+  it('일반 member 는 사용자 목록을 볼 수 없다 (403) — 공개 가입이 열려 있어도 팀원 정보가 노출되지 않게', async () => {
     const res = await request(app).get('/api/v1/users').set(bearer(member.token));
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).not.toContain('example.com');
+    expect((await request(app).get('/api/v1/users?q=관리').set(bearer(member.token))).status).toBe(
+      403,
+    );
+  });
+
+  it('manager 는 목록을 볼 수 있다 (멤버 초대용)', async () => {
+    store.users.find((u) => u.id === member.id).role = 'manager';
+    const res = await request(app).get('/api/v1/users').set(bearer(member.token));
+    expect(res.status).toBe(200);
+  });
+
+  it('목록과 페이지 정보를 준다', async () => {
+    const res = await request(app).get('/api/v1/users').set(bearer(admin.token));
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
     expect(res.body.meta).toEqual({ page: 1, limit: 20, total: 2 });
   });
 
   it('?q= 로 이름/이메일을 검색한다', async () => {
-    const res = await request(app).get('/api/v1/users?q=민서').set(bearer(member.token));
+    const res = await request(app).get('/api/v1/users?q=민서').set(bearer(admin.token));
     expect(res.body.data.map((u) => u.name)).toEqual(['민서']);
   });
 
   it('잘못된 limit 은 400', async () => {
-    const res = await request(app).get('/api/v1/users?limit=1000').set(bearer(member.token));
+    const res = await request(app).get('/api/v1/users?limit=1000').set(bearer(admin.token));
     expect(res.status).toBe(400);
   });
 });

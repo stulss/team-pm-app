@@ -2,6 +2,7 @@ import { z } from 'zod';
 import * as usersRepo from '../modules/users/repository.js';
 import * as projectsRepo from '../modules/projects/repository.js';
 import { projectRoom } from './emitter.js';
+import { logger } from '../utils/logger.js';
 
 const uuid = z.uuid();
 
@@ -26,7 +27,7 @@ export function registerRoomHandlers(socket) {
       await socket.join(projectRoom(project.id));
       reply({ ok: true });
     } catch (err) {
-      console.error('[socket] project:join failed', err.message);
+      logger.error({ err: err.message }, 'socket project:join failed');
       reply({ ok: false, error: 'INTERNAL_ERROR' });
     }
   });

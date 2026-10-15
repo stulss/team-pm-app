@@ -25,9 +25,15 @@ const meBody = z
 export const usersRouter = Router();
 usersRouter.use(authenticate);
 
-usersRouter.get('/', validate(listQuery, 'query'), async (req, res) => {
-  res.json(await service.list(req.query));
-});
+// 사용자 목록은 멤버 초대·관리용이라 Admin/Manager 만 본다. (공개 가입이 열려 있어도 일반 계정이 팀원의 이름·이메일을 볼 수 없게)
+usersRouter.get(
+  '/',
+  requireRole('admin', 'manager'),
+  validate(listQuery, 'query'),
+  async (req, res) => {
+    res.json(await service.list(req.query));
+  },
+);
 
 // '/me' 는 '/:id' 보다 먼저 선언해야 한다.
 usersRouter.patch('/me', validate(meBody), async (req, res) => {

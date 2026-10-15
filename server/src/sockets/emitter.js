@@ -1,3 +1,5 @@
+import { logger } from '../utils/logger.js';
+
 // REST 서비스/라우트에서 호출하는 emit 헬퍼.
 // 변경은 REST 로만 일어나고, 소켓은 DB 커밋 이후의 푸시 전용이다.
 // Redis adapter 덕분에 REST 를 처리한 인스턴스와 소켓이 붙은 인스턴스가 달라도 전달된다.
@@ -15,7 +17,7 @@ async function withIo(fn) {
     const io = await ioPromise;
     if (io) await fn(io);
   } catch (err) {
-    console.error('[socket] emit failed', err.message);
+    logger.error({ err: err.message }, 'socket emit failed');
   }
 }
 

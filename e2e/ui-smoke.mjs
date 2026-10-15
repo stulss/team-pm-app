@@ -664,6 +664,58 @@ try {
       .waitFor({ timeout: 5000 });
   });
 
+  // ---- 모바일: 좁은 화면(폭 375px)에서 가로 스크롤 없이 쓸 수 있어야 한다
+  const mobile = await newPage();
+  await mobile.setViewportSize({ width: 375, height: 800 });
+  const horizontalOverflow = async (p) =>
+    Number(await p.evaluate('document.documentElement.scrollWidth - window.innerWidth'));
+  await step('모바일(375px): 주요 화면에 페이지 가로 스크롤이 없음', async () => {
+    await login(mobile, 'manager');
+    const checks = [
+      ['프로젝트 목록', `${BASE}/`, mobile.getByRole('heading', { name: '프로젝트', exact: true })],
+      ['프로젝트 상세', projectUrl, mobile.getByRole('heading', { name: `ui-${run}-개편` })],
+      ['대시보드', `${BASE}/dashboard`, mobile.getByRole('heading', { name: '대시보드' })],
+      ['내 작업', `${BASE}/tasks/mine`, mobile.getByRole('heading', { name: '내 작업' })],
+    ];
+    for (const [name, url, marker] of checks) {
+      await mobile.goto(url);
+      await marker.waitFor();
+      const overflow = await horizontalOverflow(mobile);
+      if (overflow > 1) throw new Error(`${name}: 가로로 ${overflow}px 넘침`);
+    }
+  });
+  await step('모바일(375px): 작업 모달과 알림 패널이 화면 안에 들어옴', async () => {
+    await mobile.goto(projectUrl);
+    await mobile.getByRole('tab', { name: '보드' }).click();
+    await card(mobile, '알림 작업').waitFor();
+    await card(mobile, '알림 작업').click();
+    const dialog = mobile.getByRole('dialog', { name: '작업 수정' });
+    await dialog.waitFor();
+    const box = await dialog.boundingBox();
+    if (box.x < 0 || box.x + box.width > 375.5)
+      throw new Error(`모달이 화면을 벗어남: ${JSON.stringify(box)}`);
+    if ((await horizontalOverflow(mobile)) > 1) throw new Error('모달을 열면 가로 스크롤이 생김');
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await dialog.waitFor({ state: 'detached' });
+
+    await mobile.locator('.bell-button').click();
+    const panel = mobile.getByRole('dialog', { name: '알림 목록' });
+    await panel.waitFor();
+    const pbox = await panel.boundingBox();
+    if (pbox.x < 0 || pbox.x + pbox.width > 375.5)
+      throw new Error(`알림 패널이 화면을 벗어남: ${JSON.stringify(pbox)}`);
+    await mobile.keyboard.press('Escape');
+  });
+  await step('모바일(375px): 보드는 자체 가로 스크롤로 컬럼을 모두 볼 수 있음', async () => {
+    const info = await mobile.evaluate(`(() => {
+      const b = document.querySelector('.board');
+      return { client: b.clientWidth, scroll: b.scrollWidth };
+    })()`);
+    if (info.scroll <= info.client)
+      throw new Error('보드가 좁은 화면에서 스크롤되지 않음(컬럼이 잘리거나 압축됨)');
+    if ((await horizontalOverflow(mobile)) > 1) throw new Error('보드 때문에 페이지가 가로로 넘침');
+  });
+
   // ---- admin
   const admin = await newPage();
   await step('admin: 사용자 관리에서 역할 변경 (member → manager)', async () => {

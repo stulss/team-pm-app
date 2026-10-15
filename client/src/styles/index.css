@@ -742,3 +742,64 @@ button.bell-item.unread {
   flex-direction: column;
   gap: 0.3rem;
 }
+
+/* ---- 모바일 (폭 640px 이하) ---- */
+@media (max-width: 640px) {
+  .page {
+    padding: 1rem 12px 2rem;
+  }
+
+  .page.narrow {
+    padding-top: 1.5rem;
+  }
+
+  .card {
+    padding: 1rem;
+  }
+
+  h1 {
+    font-size: 1.2rem;
+  }
+
+  .topbar {
+    padding: 0.5rem 12px;
+  }
+
+  .topbar nav {
+    gap: 0.6rem;
+  }
+
+  /* 알림 패널은 벨 위치와 상관없이 화면 안에 가득 차게 고정한다. */
+  .bell-panel {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 3.5rem;
+    width: auto;
+    max-height: 75vh;
+  }
+
+  .board {
+    grid-template-columns: repeat(4, minmax(200px, 1fr));
+  }
+
+  .bar-row {
+    grid-template-columns: 4.5rem 1fr 1.8rem;
+  }
+
+  .modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .modal-body {
+    padding: 1rem;
+  }
+
+  /* 터치하기 쉽도록 입력 요소를 조금 키운다. (iOS 는 16px 미만이면 포커스 시 확대된다) */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

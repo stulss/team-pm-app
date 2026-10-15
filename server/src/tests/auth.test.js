@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { store, reset } from './helpers/memoryRepos.js';
 import { PASSWORD, bearer, cookieHeader, cookieOf, register } from './helpers/setup.js';
@@ -19,6 +19,7 @@ vi.mock(
 
 const { app } = await import('../app.js');
 const { sha256 } = await import('../utils/crypto.js');
+const { env } = await import('../config/env.js');
 
 beforeEach(() => {
   reset();
@@ -203,5 +204,37 @@ describe('POST /auth/logout', () => {
 
   it('쿠키가 없어도 204 이다', async () => {
     expect((await request(app).post('/api/v1/auth/logout')).status).toBe(204);
+  });
+});
+
+describe('ALLOW_REGISTRATION', () => {
+  afterEach(() => {
+    env.ALLOW_REGISTRATION = true;
+  });
+
+  it('false 이면 첫 계정은 만들 수 있지만 이후 가입은 403 REGISTRATION_CLOSED', async () => {
+    env.ALLOW_REGISTRATION = false;
+    const first = await register(app);
+    expect(first.res.status).toBe(201);
+    expect(first.res.body.user.role).toBe('admin');
+
+    const second = await register(app, { email: 'later@example.com' });
+    expect(second.res.status).toBe(403);
+    expect(second.res.body.error.code).toBe('REGISTRATION_CLOSED');
+    expect(store.users).toHaveLength(1);
+  });
+
+  it('닫혀 있어도 기존 사용자의 로그인은 된다', async () => {
+    await register(app);
+    env.ALLOW_REGISTRATION = false;
+    const res = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email: 'jiho@example.com', password: PASSWORD });
+    expect(res.status).toBe(200);
+  });
+
+  it('true(기본)이면 누구나 가입할 수 있다', async () => {
+    await register(app);
+    expect((await register(app, { email: 'open@example.com' })).res.status).toBe(201);
   });
 });

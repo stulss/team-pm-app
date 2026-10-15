@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { authenticateSocket } from './auth.js';
 import { userRoom } from './emitter.js';
 import { registerRoomHandlers } from './rooms.js';
+import { logger } from '../utils/logger.js';
 
 // 인스턴스 식별자 — 로그에서 어느 인스턴스인지 구분하는 용도.
 export const instanceId = randomUUID().slice(0, 8);
@@ -22,17 +23,20 @@ export async function attachSockets(httpServer) {
     try {
       const pub = createClient({ url: env.REDIS_URL });
       const sub = pub.duplicate();
-      pub.on('error', (e) => console.error('redis pub error', e.message));
-      sub.on('error', (e) => console.error('redis sub error', e.message));
+      pub.on('error', (e) => logger.error({ err: e.message }, 'redis pub error'));
+      sub.on('error', (e) => logger.error({ err: e.message }, 'redis sub error'));
       await Promise.all([pub.connect(), sub.connect()]);
       io.adapter(createAdapter(pub, sub));
-      console.log(`[socket] redis adapter on (instance ${instanceId})`);
+      logger.info({ instanceId }, 'socket redis adapter on');
     } catch (err) {
       // Redis 장애로 실시간 전체가 꺼지지 않게 한다. 다중 인스턴스 간 전달만 포기하고 이 인스턴스 안에서는 동작한다.
-      console.error(`[socket] redis adapter failed, single instance mode: ${err.message}`);
+      logger.error(
+        { err: err.message, instanceId },
+        'socket redis adapter failed, single instance mode',
+      );
     }
   } else {
-    console.warn(`[socket] REDIS_URL not set — single instance mode (instance ${instanceId})`);
+    logger.warn({ instanceId }, 'REDIS_URL not set, socket single instance mode');
   }
 
   io.use(authenticateSocket);

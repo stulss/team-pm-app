@@ -1,5 +1,6 @@
 import { withTransaction } from '../../config/db.js';
-import { conflict, unauthorized } from '../../utils/errors.js';
+import { env } from '../../config/env.js';
+import { AppError, conflict, unauthorized } from '../../utils/errors.js';
 import { DUMMY_HASH, hashPassword, sha256, verifyPassword } from '../../utils/crypto.js';
 import {
   REFRESH_TTL_SECONDS,
@@ -29,6 +30,10 @@ export async function createSession(userId) {
 }
 
 export async function register({ email, password, name }) {
+  // 팀 구성이 끝난 뒤 ALLOW_REGISTRATION=false 로 신규 가입을 닫는다. 첫 계정(관리자)은 항상 만들 수 있다.
+  if (!env.ALLOW_REGISTRATION && (await users.countUsers()) > 0) {
+    throw new AppError(403, 'REGISTRATION_CLOSED', '현재 신규 가입을 받지 않습니다.');
+  }
   const passwordHash = await hashPassword(password);
   let row;
   try {

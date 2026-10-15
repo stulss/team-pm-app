@@ -25,6 +25,11 @@ export async function insertUser(client, { email, passwordHash, name }) {
   return rows[0];
 }
 
+export async function countUsers() {
+  const { rows } = await query('SELECT count(*)::int AS n FROM users');
+  return rows[0].n;
+}
+
 export async function findByEmail(email) {
   const { rows } = await query('SELECT * FROM users WHERE email = $1', [email]);
   return rows[0] ?? null;

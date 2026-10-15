@@ -51,6 +51,9 @@ export const usersRepo = {
     store.users.push(user);
     return pub(user);
   },
+  async countUsers() {
+    return store.users.length;
+  },
   async findByEmail(email) {
     return store.users.find((u) => u.email === email) ?? null;
   },

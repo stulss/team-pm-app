@@ -1,5 +1,7 @@
 import pg from 'pg';
 import { env } from './env.js';
+import { logger } from '../utils/logger.js';
+import { buildSsl } from './ssl.js';
 
 // date 컬럼(마감일)은 JS Date 로 바꾸면 서버 시간대에 따라 하루씩 밀릴 수 있으므로 'YYYY-MM-DD' 문자열 그대로 읽는다.
 pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
@@ -12,10 +14,11 @@ export const pool = new pg.Pool({
   max: env.NODE_ENV === 'production' ? 3 : 5,
   idleTimeoutMillis: 10_000,
   connectionTimeoutMillis: 5_000,
+  ssl: buildSsl(env.DATABASE_URL, env.DB_SSL_VERIFY),
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected idle client error', err);
+  logger.error({ err }, 'unexpected idle db client error');
 });
 
 export const query = (text, params) => pool.query(text, params);

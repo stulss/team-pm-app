@@ -26,6 +26,11 @@ const schema = z.object({
         return false;
       }
     }, 'APP_TIMEZONE must be a valid IANA time zone'),
+  // DB TLS 서버 인증서 검증(기본 켜짐). 인증서 문제로 DB 에 못 붙을 때만 비상용으로 false.
+  DB_SSL_VERIFY: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   // 'false' 로 두면 새 가입을 막는다(첫 계정은 항상 허용). 팀 구성이 끝난 뒤 닫는 용도.
   ALLOW_REGISTRATION: z
     .enum(['true', 'false'])
@@ -35,14 +40,12 @@ const schema = z.object({
 
 // Vercel-Supabase 연동은 POSTGRES_URL(Transaction pooler 6543), POSTGRES_URL_NON_POOLING(5432)을 주입한다.
 // 같은 비밀값을 복사해 두지 않도록 DATABASE_URL / DIRECT_URL 이 없으면 이 값을 사용한다.
-// 연결 문자열의 sslmode=require 는 pg 에서 인증서 검증 실패를 일으킬 수 있고 supa=... 같은 비표준 옵션도 있어,
-// sslmode=no-verify 로 정규화한다. (TODO M9: Supabase CA 인증서로 검증하도록 강화)
+// 연결 문자열의 sslmode/supa/pgbouncer 같은 옵션은 pg 가 TLS 설정을 덮어쓰거나 비표준이라 제거한다.
+// TLS 는 config/ssl.js 가 코드에서 직접 설정한다(내장한 Supabase CA 로 서버 인증서 검증).
 export function normalizeDbUrl(url) {
   if (!url) return url;
   const u = new URL(url);
-  u.searchParams.delete('supa');
-  u.searchParams.delete('pgbouncer');
-  if (!['localhost', '127.0.0.1'].includes(u.hostname)) u.searchParams.set('sslmode', 'no-verify');
+  for (const key of ['sslmode', 'supa', 'pgbouncer']) u.searchParams.delete(key);
   return u.toString();
 }
 
