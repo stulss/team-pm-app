@@ -18,3 +18,7 @@
 - 배포는 Vercel 함수(상시 프로세스 아님)다. 메모리에 룸·캐시·스케줄러 상태를 두지 말고, 스케줄은 Vercel Cron, 소켓은 Redis adapter를 쓴다. DB는 Transaction pooler(prepared statement 비활성).
 - 마일스톤을 끝내면 `docs/ROADMAP.md` 체크리스트를 갱신한다.
 - 문서는 한국어로 작성한다.
+- 현재 상태: 구현 완료(M0~M9), 최종 배포 검증 단계. `main` 푸시 = Production 자동 배포이므로 푸시 전에 사용자 확인을 받고, 새 마이그레이션은 코드보다 먼저 적용한다.
+- 서버 로그는 `utils/logger.js` 를 쓰고 비밀값을 남기지 않는다. 새 SQL 은 `server/scripts/smoke.mjs`(실DB) 로, 화면 흐름은 `e2e/ui-smoke.mjs` 로 검증한다. 운영에 돌릴 때는 가입 한도(시간당 20건/IP)를 고려한다.
+- 보안·운영 문서: `docs/SECURITY.md`, `docs/DEPLOYMENT.md`(운영 절차·백업·한계).
+

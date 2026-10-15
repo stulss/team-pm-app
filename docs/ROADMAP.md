@@ -11,12 +11,12 @@
 | 설계 | 완료 (`DESIGN.md`) |
 | 1차 중간점검 | **점검 준비 완료** (Production 검증 통과) |
 | 2차 중간점검 | **점검 준비 완료** (Production 검증 통과) |
-| 최종본 | 대기 |
+| 최종본 | **구현·Preview 검증 완료** — Production 푸시(자동 배포)와 Production 재검증 대기 |
 
 ## 1차 중간점검 (약 8~9일)
 
-- [ ] **M0** 기반 세팅 — 로컬 기동, lint·테스트·빌드 통과 (코드 완료, 커밋됨)
-- [ ] **M1** 인증·사용자 — 새로고침 후 세션 유지, 배포본에서 쿠키 동작
+- [x] **M0** 기반 세팅 — 로컬 기동, lint·테스트·빌드 통과
+- [x] **M1** 인증·사용자 — 새로고침 후 세션 유지, 배포본에서 쿠키 동작
 - [x] **M1.5** 첫 배포 + WebSocket 스파이크 — Preview 배포에서 `/health`·인증 흐름·스파이크 통과 (Production 배포는 M3.5)
   - [x] Vercel 프로젝트 연결, Supabase 연동, JWT 키 등록, Preview 배포, `/health`·SPA 경로·인증 흐름 검증
   - [x] Redis(Redis Cloud, Vercel Marketplace) 연결, 로컬 2인스턴스 교차 전달 검증(24ms)
@@ -53,13 +53,14 @@
 
 - [x] **M7** 알림 (배정 즉시, 마감 임박 1회 — 하루 1회 스캔) — 단위·소켓 테스트, 실DB 스모크(Cron 포함), 브라우저 e2e(실시간 배지·클릭 시 작업 열림·모두 읽음) 통과. 실DB 검증으로 "CTE 삽입 결과가 같은 쿼리에서 안 보여 푸시가 빠지는" 버그 발견·수정
 - [x] **M8** 대시보드 (수치가 실제 데이터와 일치) — 단위 215개, 실DB 스모크에서 알려진 데이터로 진행률·상태별·지연·이번 주·담당자별 수치를 정확히 대조, 브라우저 e2e 에서 DB 계산값과 화면 수치 일치·실시간 갱신 확인
-- [ ] **M9** 마무리·검증 (보안 헤더, 레이트리밋, E2E)
-- [ ] **M9.5** 최종 배포
+- [x] **M9** 마무리·검증 — 레이트리밋(Redis, 운영에서 11회째 429 확인), 가입 차단 스위치, 사용자 목록 노출 제한, 요청 크기 제한, 구조화 로깅(비밀 0건 확인), DB TLS 인증서 검증, 오류 화면, 모바일 대응(375px e2e), `npm audit` 0건, 보안 점검 문서(`SECURITY.md`). 서버 테스트 244개 · 실DB 스모크 138항목 · e2e 43단계
+- [ ] **M9.5** 최종 배포 — Preview(운영 설정)에서 전체 통과. `main` 푸시로 Production 자동 배포 후 `DEPLOYMENT.md` §6 의 스모크·e2e 재실행 필요
 
 **점검 전 확인 (배포본 기준)**
-- [ ] [PROJECT_GOAL.md](PROJECT_GOAL.md) 의 완성 기준 5개 항목 모두 통과
-- [ ] `DESIGN.md` §5 보안 체크리스트 통과
-- [ ] 프로덕션 환경변수·HTTPS 적용, Supabase 백업 확인
+- [x] [PROJECT_GOAL.md](PROJECT_GOAL.md) 의 완성 기준 5개 항목 모두 통과 (Preview 운영 설정에서 자동화 검증. Production 재검증은 M9.5)
+- [x] `DESIGN.md` §5 보안 체크리스트 통과 — 항목별 근거는 [SECURITY.md](SECURITY.md)
+- [x] 프로덕션 환경변수·HTTPS 적용 (`CRON_SECRET` 등록, HSTS 확인)
+- [ ] Supabase 백업: 플랜별 백업 정책은 대시보드에서 직접 확인해야 함(수동 `pg_dump` 절차는 `DEPLOYMENT.md` §7)
 
 ## 의사결정 대기 목록
 
@@ -70,19 +71,19 @@
 | 배포 대상 | M1.5 전 | **결정: Vercel(프론트+Express 함수) + Supabase** |
 | 프론트/API 도메인 구성 | M1.5 전 | **결정: 단일 Vercel 프로젝트, 동일 오리진** (쿠키 문제 없음) |
 | 요금제 | M1.5 | **결정: 무료 플랜 범위에서 사용** (Vercel Hobby, Supabase Free, Redis 무료). 한도 초과 시 기능을 줄이거나 다시 결정 |
-| Redis 서비스 선택 (Vercel Marketplace, 무료 플랜) | M1.5 | 미정 — Marketplace 무료 옵션 중 선택 |
+| Redis 서비스 선택 (Vercel Marketplace, 무료 플랜) | M1.5 | **결정: Redis Cloud 무료(Marketplace)** — TLS 미지원이 한계(`SECURITY.md`) |
 | Supabase dev/prod 분리 | M1.5 | **현재: Vercel 연동 프로젝트 1개를 Development/Preview/Production 이 공유.** 실사용 전에 prod 분리 여부 결정 (무료 플랜은 프로젝트 수 제한 있음) |
-| 첫 가입자 자동 Admin vs 초대 전용 | M1 전 | 현재 설계: 자동 Admin |
-| 칸반 컬럼 4개 고정 | M4 전 | 현재 설계: 고정 |
-| 이메일 알림 필요 여부 | M7 전 | 현재 설계: 앱 내 알림만 |
-| 단일 팀 가정 유지 여부 | M1 전 | 현재 설계: 단일 팀 |
-| Supabase를 DB 전용으로만 쓸지 | M1 전 | 현재 설계: DB 전용 |
+| 첫 가입자 자동 Admin vs 초대 전용 | M1 전 | **결정: 첫 가입자 자동 Admin 유지 + 팀 구성 후 `ALLOW_REGISTRATION=false` 로 가입을 닫는 스위치**. 초대 코드 방식은 범위 밖 |
+| 칸반 컬럼 4개 고정 | M4 전 | **결정: 4개 고정** |
+| 이메일 알림 필요 여부 | M7 전 | **결정: 앱 내 알림만**(마감 알림은 하루 1회) |
+| 단일 팀 가정 유지 여부 | M1 전 | **결정: 단일 팀** |
+| Supabase를 DB 전용으로만 쓸지 | M1 전 | **결정: DB 전용** (Auth/Realtime/PostgREST 미사용) |
 
 ## 위험 요소
 
 | 위험 | 대응 |
 |---|---|
-| Vercel 함수에서 Socket.io가 기대대로 동작하지 않음(인스턴스 분산, 연결 끊김) | M1.5 스파이크로 먼저 검증. 실패 시 Express만 별도 상시 서버로 분리(`DEPLOYMENT.md` §3) |
+| Vercel 함수에서 Socket.io가 기대대로 동작하지 않음(인스턴스 분산, 연결 끊김) | **해소**: M1.5 스파이크와 이후 e2e 에서 인스턴스 간 전달·재연결 검증(`DEPLOYMENT.md` §2) |
 | 소켓 연결이 함수 최대 실행시간에 끊김 | 재연결(백오프)과 재조회를 기본 흐름으로 구현 |
 | Hobby Cron은 일 1회만 가능 (확인됨) | 마감 알림을 하루 1회 스캔으로 설계(`DESIGN.md` §0, §2.5). 매시간 알림이 필요해지면 Pro 로 변경 |
 | Transaction pooler에서 prepared statement 오류, 연결 수 부족 | `pg` prepared statement 비활성, 풀 크기 작게, 마이그레이션은 별도 연결 |

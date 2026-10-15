@@ -2,7 +2,9 @@
 
 2~10명 규모의 원격 팀이 프로젝트와 작업을 칸반 보드로 함께 관리하는 웹앱.
 
-> 상태: M0(기반 세팅) 완료. 다음은 M1(인증), 첫 배포는 M1 직후.
+> 상태: 구현 완료(M0~M9). 최종 배포 검증 단계. 서비스: https://team-pm-app-sand.vercel.app
+
+주요 기능: 프로젝트·멤버·역할 관리 · 작업 CRUD · **칸반 보드(드래그 앤 드롭)** · **실시간 동기화** · 댓글 · **알림(배정·댓글·마감)** · **대시보드** · 반응형
 
 ## 스택
 
@@ -17,14 +19,15 @@ React(Vite) · Node.js + Express · Supabase(관리형 PostgreSQL, DB 전용) ·
 | [docs/PROJECT_GOAL.md](docs/PROJECT_GOAL.md) | 목표, 대상, 핵심 기능, 완성 기준 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 설계 — 권한, ERD, API, 소켓, 폴더 구조, 마일스톤 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 1차/2차/최종 단계 체크리스트, 의사결정 대기 목록 |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 배포 구성, 환경변수, 스모크 테스트 |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 배포 구성, 환경변수, 스모크 테스트, 운영 절차·백업 |
+| [docs/SECURITY.md](docs/SECURITY.md) | 보안 점검 결과, 검증 중 발견한 문제, 알려진 한계 |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Git·코드·API·테스트 규약, 완료 정의 |
 
 ## 진행 단계
 
-1. **1차 중간점검** — 인증, 프로젝트·멤버, 작업 CRUD, **배포 확인**
-2. **2차 중간점검** — 칸반, 실시간, 댓글 (MVP 완성)
-3. **최종본** — 알림, 대시보드, 보안·테스트, 프로덕션 배포
+1. **1차 중간점검** — 인증, 프로젝트·멤버, 작업 CRUD, **배포 확인** ✅
+2. **2차 중간점검** — 칸반, 실시간, 댓글 (MVP 완성) ✅
+3. **최종본** — 알림, 대시보드, 보안·테스트, 프로덕션 배포 (Preview 검증 완료, Production 재검증 대기)
 
 ## 개발 환경
 

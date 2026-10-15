@@ -3,7 +3,7 @@
 > 대상: 2~10명 규모의 소규모 원격 팀
 > 스택: React(Vite) · Node.js + Express · **Supabase(관리형 PostgreSQL)** · Socket.io · JWT
 > 배포: **Vercel(프론트 + Express 함수, 단일 프로젝트·동일 오리진) + Supabase**, Socket.io 다중 인스턴스용 Redis(Vercel Marketplace)
-> 상태: 설계 단계 (코드 없음)
+> 상태: 구현 완료(M0~M9). 구현 중 확정한 규칙은 각 절의 "구현 규칙" 인용문에 적었다. 보안 점검 결과는 [SECURITY.md](SECURITY.md), 배포·운영은 [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -217,7 +217,7 @@ erDiagram
 #### Users
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|
-| GET | `/users` | 사용자 목록 (멤버 초대용 검색 `?q=`) | 로그인 |
+| GET | `/users` | 사용자 목록 (멤버 초대용 검색 `?q=`) | **Admin, Manager** (공개 가입이 열려 있어도 일반 계정이 팀원 이름·이메일을 볼 수 없게 "로그인"에서 변경) |
 | PATCH | `/users/:id/role` | 역할 변경 | Admin |
 | PATCH | `/users/:id/status` | 활성/비활성 | Admin |
 | PATCH | `/users/me` | 내 프로필(이름/비밀번호) 수정 | 본인 |
