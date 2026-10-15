@@ -23,6 +23,12 @@ app.use(cookieParser());
 
 const api = express.Router();
 
+// 토큰·개인정보가 오가는 API 응답은 어떤 캐시에도 저장되지 않게 한다.
+api.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 api.get('/health', async (req, res) => {
   try {
     await query('select 1');

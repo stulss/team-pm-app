@@ -18,6 +18,7 @@
           (Transaction pooler)   Socket.io adapter
 ```
 
+- 함수 리전은 Supabase(서울, ap-northeast-2)와 맞춰 `icn1` 로 고정한다(`vercel.json` `regions`). 기본값(iad1)이면 쿼리마다 대륙 간 왕복이 생긴다.
 - 프론트와 API가 같은 오리진이므로 `SameSite=Strict` refresh 쿠키가 그대로 동작한다. 도메인을 따로 살 필요 없고 `*.vercel.app` 으로 충분하다.
 - Supabase는 순수 Postgres로만 사용한다. 클라이언트는 Supabase에 직접 접속하지 않는다.
 - Express 앱은 `http.Server` 를 export 해서 Vercel Function으로 실행한다(로컬 개발은 `listen`).
@@ -63,7 +64,7 @@ Vercel 프로젝트 설정에 Production / Preview 를 나눠 등록한다. 비�
 | `REDIS_URL` | Socket.io adapter용 Redis | Marketplace 연동 시 자동 주입될 수 있음 |
 | `CRON_SECRET` | Cron 엔드포인트 검증 | 비밀 |
 | `CLIENT_ORIGIN` | CORS 화이트리스트(동일 오리진이면 최소 설정) | |
-| `NODE_ENV` | `production` | |
+| `NODE_ENV` | `production` | Vercel 이 자동 설정 |
 
 클라이언트: `VITE_API_BASE_URL` (기본 `/api/v1`).
 
