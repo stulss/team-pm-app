@@ -2,6 +2,7 @@
 
 > 대상: 2~10명 규모의 소규모 원격 팀
 > 스택: React(Vite) · Node.js + Express · **Supabase(관리형 PostgreSQL)** · Socket.io · JWT
+> 배포: **Vercel(프론트 + Express 함수, 단일 프로젝트·동일 오리진) + Supabase**, Socket.io 다중 인스턴스용 Redis(Vercel Marketplace)
 > 상태: 설계 단계 (코드 없음)
 
 ---
@@ -16,12 +17,13 @@
 | 상태 | Enum: `todo`, `in_progress`, `review`, `done` | 칸반 컬럼 고정으로 시작 (커스텀 컬럼은 향후 확장) |
 | 인증 | Access JWT(15분, 메모리) + Refresh JWT(7일, httpOnly 쿠키, DB에 해시 저장) | XSS로부터 refresh 보호, 로그아웃/폐기 가능 |
 | 실시간 | REST로 변경 → 서버가 Socket.io `project:{id}` 룸에 브로드캐스트 | 단일 쓰기 경로(REST)로 일관성 유지, 소켓은 푸시 전용 |
-| 마감 임박 알림 | node-cron 으로 매시간 스캔 (24시간 이내, 미완료) | 소규모라 별도 큐 불필요. 중복 방지 컬럼 사용 |
+| 마감 임박 알림 | **Vercel Cron** 이 `/api/cron/*` 를 호출해 매시간 스캔 (24시간 이내, 미완료) | Vercel 함수는 상시 프로세스가 아니라 in-process node-cron 사용 불가. 엔드포인트는 `CRON_SECRET` 으로 보호. 중복 방지 컬럼 사용 |
 | 동시 편집 충돌 | 마지막 쓰기 우선 + `updated_at` 기반 낙관적 체크(선택) | 단순화 |
 | DB 호스팅 | **Supabase Postgres** (순수 Postgres로만 사용) | Express 서버가 `pg`로 직접 연결. Supabase Auth/Realtime/PostgREST는 쓰지 않음 → 스택(자체 JWT, Socket.io) 유지 |
-| DB 접속 | Session pooler(5432) 또는 direct 연결, `DATABASE_URL` | Express·node-cron·Socket.io는 상시 구동 서버라 세션 모드가 적합. 서버리스 배포 시에만 Transaction pooler(6543, prepared statement 비활성) |
+| DB 접속 | **Transaction pooler(6543)**, `DATABASE_URL`, `pg` prepared statement 비활성 | Vercel 함수는 인스턴스가 늘고 줄어 연결 수가 불안정하므로 풀러 경유. 풀 크기는 작게(함수 인스턴스당 소수) 설정 |
 | RLS | 모든 테이블 `ENABLE ROW LEVEL SECURITY`, 정책 없음 | Supabase는 `public` 스키마를 anon key로 PostgREST에 노출함. RLS를 켜고 정책을 두지 않으면 anon/authenticated 직접 접근이 차단되고, 서버(postgres 역할)는 RLS를 우회해 정상 동작 |
-| 서버 수평 확장 | 1차는 단일 인스턴스. 필요 시 Socket.io Redis adapter | 2~10명이면 불필요 |
+| 서버 수평 확장 | **Socket.io Redis adapter 필수** (Vercel Marketplace Redis) | Vercel은 인스턴스를 임의로 늘리고, 소켓 연결은 한 인스턴스에 고정됨. REST 처리 인스턴스와 소켓 보유 인스턴스가 달라도 브로드캐스트가 닿으려면 Redis 경유 필요. 방/접속자 상태를 메모리에 두지 않음 |
+| 소켓 연결 | 클라이언트 `transports: ['websocket']`, 재연결 시 refetch | Socket.io 기본 long-polling은 Vercel에서 동작하지 않음. 함수 최대 실행시간(Hobby 300초)에 연결이 끊기므로 재연결이 정상 흐름 |
 
 ### 역할별 권한 매트릭스
 
@@ -398,6 +400,7 @@ team-pm-app/
 ├─ docs/
 │  └─ DESIGN.md
 ├─ package.json                 # workspaces: ["client", "server"]
+├─ vercel.json                  # 빌드/라우팅(/api → Express 함수), crons
 ├─ docker-compose.yml           # (선택) 오프라인 개발용 로컬 postgres. 기본은 Supabase 개발 프로젝트 사용
 ├─ .env.example
 ├─ .gitignore
@@ -435,7 +438,7 @@ team-pm-app/
 │     │  ├─ rooms.js            # join/leave + 멤버십 검증
 │     │  └─ emitter.js          # service에서 호출하는 emit 헬퍼
 │     ├─ jobs/
-│     │  ├─ scheduler.js        # node-cron 등록
+│     │  ├─ routes.js           # /api/cron/* 핸들러 (CRON_SECRET 검증)
 │     │  └─ dueDateNotifier.js
 │     └─ utils/                 # jwt, hash, position 계산, 에러 클래스
 │     └─ tests/                 # 통합 테스트 (vitest/jest + supertest)
@@ -469,7 +472,7 @@ team-pm-app/
 ```
 
 **주요 라이브러리 제안**
-- 서버: `express`, `pg`, `socket.io`, `jsonwebtoken`, `bcrypt`, `zod`, `helmet`, `cors`, `cookie-parser`, `express-rate-limit`, `node-cron`, `node-pg-migrate`, `pino`
+- 서버: `express`, `pg`, `socket.io`, `jsonwebtoken`, `bcrypt`, `zod`, `helmet`, `cors`, `cookie-parser`, `express-rate-limit`, `@socket.io/redis-adapter` + Redis 클라이언트(`redis`), `node-pg-migrate`, `pino`
 - 클라이언트: `react-router`, `@tanstack/react-query`, `axios`, `socket.io-client`, `@dnd-kit/core`+`sortable`, `react-hook-form`+`zod`, (스타일) Tailwind CSS
 - 테스트: `vitest`, `supertest`, (선택) Playwright E2E
 
@@ -477,13 +480,13 @@ team-pm-app/
 
 ## 4. 구현 순서 (마일스톤)
 
-전체를 3단계(1차 중간점검 → 2차 중간점검 → 최종본)로 나눈다. **배포는 마지막이 아니라 단계마다 수행**하며, 각 점검은 로컬이 아닌 **배포본**으로 확인한다. (Express는 Socket.io/cron 때문에 상시 구동 서버 필요 — 서버리스 부적합. 프론트는 정적 호스팅.)
+전체를 3단계(1차 중간점검 → 2차 중간점검 → 최종본)로 나눈다. **배포는 마지막이 아니라 단계마다 수행**하며, 각 점검은 로컬이 아닌 **배포본**으로 확인한다. (배포는 Vercel 단일 프로젝트: 프론트 정적 + Express를 `/api` 함수로, 같은 오리진. Socket.io는 Vercel 함수의 WebSocket + Redis adapter, cron은 Vercel Cron. 자세한 내용은 `DEPLOYMENT.md`.)
 
 ### 1차 중간점검 (약 8~9일) — 인증 · 프로젝트 · 작업 CRUD, 배포 완료
 
 | M | 목표 | 주요 작업 | 완료 기준 |
 |---|---|---|---|
-| **M0** (0.5~1일) | 기반 세팅 + 빈 껍데기 배포 | 모노레포, **Supabase 프로젝트 생성(dev/prod 분리) 및 `DATABASE_URL` 연결 확인**, env 검증, eslint/prettier, 마이그레이션 도구, `/health`, 호스팅 연결 | 로컬에서 client·server·DB 기동, **배포 URL의 `/health`가 DB 연결과 함께 응답** |
+| **M0** (0.5~1일) | 기반 세팅 + 빈 껍데기 배포 | 모노레포, **Supabase 프로젝트 생성(dev/prod 분리) 및 `DATABASE_URL` 연결 확인**, env 검증, eslint/prettier, 마이그레이션 도구, `/health`, Vercel 프로젝트 연결, Redis 연결, **WebSocket 스파이크**(Express+Socket.io+Redis adapter로 두 클라이언트 간 메시지 전달을 배포본에서 검증), Vercel Cron 요금제 제한 확인 | 로컬에서 client·server·DB 기동, **배포 URL의 `/health`가 DB 연결과 함께 응답**, 스파이크 통과(실패 시 §0 실시간 방식 재검토) |
 | **M1** (2~3일) | 인증·사용자 | users/refresh_tokens 마이그레이션, 가입·로그인·refresh·logout·me, 역할 미들웨어, 클라 로그인/가입 화면, ProtectedRoute, axios 인터셉터 | 새로고침 후 세션 유지, 역할별 라우트 차단. **배포본에서 쿠키 동작 확인** |
 | **M2** (2일) | 프로젝트·멤버 | projects/project_members CRUD, requireProjectMember, 프로젝트 목록/생성 UI, 멤버 관리 UI, Admin 사용자 관리 | Manager가 프로젝트 생성 후 멤버 초대, 비멤버 접근 403 |
 | **M3** (3일) | 작업 CRUD | tasks 마이그레이션/인덱스, 작업 CRUD API, 필터, 작업 모달(담당자·우선순위·마감일), 리스트 뷰 | 작업 생성·수정·삭제·필터 동작 |
@@ -494,7 +497,7 @@ team-pm-app/
 | M | 목표 | 주요 작업 | 완료 기준 |
 |---|---|---|---|
 | **M4** (2~3일) | 칸반 보드 | `/move` API + position 계산(+재정렬), @dnd-kit 보드, 낙관적 업데이트/롤백 | 컬럼 간·내 드래그 시 순서가 새로고침 후에도 유지 |
-| **M5** (2일) | 실시간 동기화 | Socket.io 서버(JWT 인증, 룸), emitter 연동, 클라 이벤트→쿼리 캐시 반영, 재연결 시 refetch | 두 브라우저에서 한쪽 이동이 1초 내 반대쪽 반영. **배포본에서 WebSocket 동작 확인** |
+| **M5** (2일) | 실시간 동기화 | Socket.io 서버(JWT 인증, 룸, Redis adapter), emitter 연동, 클라 이벤트→쿼리 캐시 반영, websocket 전송 고정, 재연결(백오프)·재조회 | 두 브라우저에서 한쪽 이동이 1초 내 반대쪽 반영. **배포본에서 WebSocket 동작 확인** |
 | **M6** (1~2일) | 댓글 | comments API, 작업 모달 댓글 UI, 댓글 실시간 이벤트, 댓글 수 배지 | 댓글 작성/수정/삭제가 양쪽에 즉시 반영 |
 | **M6.5** (0.5일) | **2차 배포·스모크 테스트** | 재배포, 2인 동시 접속 시나리오 점검 | MVP 전체가 배포본에서 동작 → **2차 점검** |
 
@@ -502,14 +505,14 @@ team-pm-app/
 
 | M | 목표 | 주요 작업 | 완료 기준 |
 |---|---|---|---|
-| **M7** (2~3일) | 알림 | notifications API, 할당·댓글 트리거, `notification:new` 푸시, 벨 UI+읽음 처리, cron(마감 임박/지연) | 할당 즉시 알림, 마감 24h 전 1회 알림 |
+| **M7** (2~3일) | 알림 | notifications API, 할당·댓글 트리거, `notification:new` 푸시, 벨 UI+읽음 처리, Vercel Cron(마감 임박/지연) | 할당 즉시 알림, 마감 24h 전 1회 알림 |
 | **M8** (1~2일) | 대시보드 | 집계 쿼리(진행률, 지연, 상태별, 담당자별), 대시보드 UI(카드·차트) | 수치가 실제 데이터와 일치 |
 | **M9** (2~3일) | 마무리·검증 | 입력 검증 보강, 레이트리밋/helmet/CORS, 에러·빈 상태 UI, 반응형, 통합/E2E 테스트, Supabase 백업(PITR 여부는 요금제 확인)·로그 | 핵심 플로우 E2E 통과 |
 | **M9.5** (0.5일) | **최종 배포** | 프로덕션 환경변수·HTTPS 점검, 최종 스모크 테스트 | 프로덕션 확정 → **최종본** |
 
 > 총 예상: 약 3~4주(1인 기준). **M1~M5가 MVP 핵심**이며, M6~M8은 독립적이라 순서 교체 가능(단, 단계 경계를 넘으면 점검 범위가 달라짐).
 >
-> **배포 시 유의**: refresh 쿠키가 `SameSite=Strict`이므로 프론트/API가 서로 다른 사이트(cross-site)면 세션이 끊긴다. 같은 상위 도메인을 쓰거나 프론트 호스트에서 `/api`를 백엔드로 프록시(rewrite)할 것. 배포 대상(Render/Fly.io/Railway 등)은 §7-5에서 결정.
+> **배포 시 유의**: 프론트와 API를 하나의 Vercel 프로젝트(동일 오리진)로 배포하므로 `SameSite=Strict` refresh 쿠키 문제가 생기지 않는다. 대신 함수는 상시 프로세스가 아니므로 메모리 상태(소켓 룸, 캐시, 스케줄러)에 의존하지 않는다.
 
 ---
 
@@ -534,5 +537,5 @@ team-pm-app/
 2. 한 사용자가 여러 팀(워크스페이스)에 속할 필요가 있는지 (현재는 단일 팀 가정)
 3. 이메일 알림이 필요한지 (현재는 앱 내 알림만)
 4. 칸반 컬럼을 4개로 고정해도 되는지
-5. 배포 대상 (Express는 상시 구동 필요 → Render/Fly.io/Railway 등. Vercel은 프론트만 권장)
+5. ~~배포 대상~~ → **결정: Vercel(프론트+Express 함수) + Supabase.** 소켓은 Redis adapter, cron은 Vercel Cron. 스파이크(M0) 실패 시 Express만 별도 상시 서버(Render 등)로 분리하는 안으로 되돌린다
 6. Supabase를 DB로만 쓸지, 추후 Supabase Auth/Realtime으로 대체할 여지를 둘지 (현재 설계는 DB 전용)
