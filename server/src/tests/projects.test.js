@@ -21,6 +21,11 @@ vi.mock('../modules/projects/repository.js', async () => ({
   ...(await import('./helpers/memoryRepos.js')).projectsRepo,
 }));
 
+vi.mock('../modules/tasks/repository.js', async () => ({
+  ...(await vi.importActual('../modules/tasks/repository.js')),
+  ...(await import('./helpers/memoryRepos.js')).tasksRepo,
+}));
+
 const { app } = await import('../app.js');
 
 // 사용자 5명: admin(첫 가입), manager(소유자), manager2(다른 매니저), member(멤버), outsider(비멤버)

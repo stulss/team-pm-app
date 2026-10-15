@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import ProjectListPage from './pages/ProjectListPage.jsx';
 import ProjectDetailPage from './pages/ProjectDetailPage.jsx';
+import MyTasksPage from './pages/MyTasksPage.jsx';
 import AdminUsersPage from './pages/AdminUsersPage.jsx';
 import SpikePage from './pages/SpikePage.jsx';
 
@@ -32,6 +33,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route path="/" element={<ProjectListPage />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
+              <Route path="/tasks/mine" element={<MyTasksPage />} />
               <Route path="/spike" element={<SpikePage />} />
               <Route element={<RoleRoute roles={['admin']} />}>
                 <Route path="/admin/users" element={<AdminUsersPage />} />

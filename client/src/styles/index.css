@@ -358,3 +358,71 @@ td {
 tr.inactive td {
   color: var(--muted);
 }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.filters input[type='search'] {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+td.wrap {
+  white-space: normal;
+  min-width: 12rem;
+}
+
+button.title {
+  font-weight: 600;
+  padding: 0.15rem 0;
+  width: auto;
+}
+
+td.overdue {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.badge-p-urgent {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.badge-p-high {
+  color: #b54708;
+  border-color: #b54708;
+}
+
+.badge-p-low {
+  opacity: 0.8;
+}
+
+.modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+}

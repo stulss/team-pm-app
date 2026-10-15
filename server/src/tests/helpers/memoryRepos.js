@@ -3,13 +3,14 @@
 // SQL 자체는 검증하지 못한다 — 실제 DB 가 연결되면 통합 테스트로 보강한다.
 import crypto from 'node:crypto';
 
-export const store = { users: [], tokens: [], projects: [], members: [] };
+export const store = { users: [], tokens: [], projects: [], members: [], tasks: [] };
 
 export function reset() {
   store.users = [];
   store.tokens = [];
   store.projects = [];
   store.members = [];
+  store.tasks = [];
 }
 
 const pub = (u) => ({
@@ -156,6 +157,7 @@ export const projectsRepo = {
   },
   async deleteProject(id) {
     const before = store.projects.length;
+    store.tasks = store.tasks.filter((t) => t.project_id !== id);
     store.projects = store.projects.filter((p) => p.id !== id);
     store.members = store.members.filter((m) => m.project_id !== id);
     return store.projects.length < before;
@@ -194,5 +196,105 @@ export const projectsRepo = {
   },
   async filterActiveUserIds(ids) {
     return ids.filter((id) => store.users.some((u) => u.id === id && u.is_active));
+  },
+};
+
+const STEP = 1024;
+const withNames = (t) => ({
+  ...t,
+  assignee_name: store.users.find((u) => u.id === t.assignee_id)?.name ?? null,
+  project_name: store.projects.find((p) => p.id === t.project_id)?.name,
+});
+const matches = (t, f, meId) =>
+  (!f.status || t.status === f.status) &&
+  (!f.priority || t.priority === f.priority) &&
+  (!f.dueBefore || (t.due_date && t.due_date <= f.dueBefore)) &&
+  (!f.q ||
+    t.title.toLowerCase().includes(f.q.toLowerCase()) ||
+    (t.description ?? '').toLowerCase().includes(f.q.toLowerCase())) &&
+  (!f.assignee ||
+    (f.assignee === 'unassigned'
+      ? t.assignee_id === null
+      : t.assignee_id === (f.assignee === 'me' ? meId : f.assignee)));
+const nextPosition = (projectId, status) =>
+  Math.max(
+    0,
+    ...store.tasks
+      .filter((t) => t.project_id === projectId && t.status === status)
+      .map((t) => t.position),
+  ) + STEP;
+
+export const tasksRepo = {
+  async findById(id) {
+    const t = store.tasks.find((x) => x.id === id);
+    return t ? withNames(t) : null;
+  },
+  async listByProject(projectId, filters, meId, paging) {
+    let rows = store.tasks.filter((t) => t.project_id === projectId && matches(t, filters, meId));
+    rows = filters.grouped
+      ? rows.sort((a, b) => a.position - b.position)
+      : rows.sort((a, b) => b.created_at - a.created_at);
+    const total = rows.length;
+    if (paging) rows = rows.slice(paging.offset, paging.offset + paging.limit);
+    return { rows: rows.map(withNames), total };
+  },
+  async listAssignedTo(user, filters, { limit, offset }) {
+    const rows = store.tasks.filter(
+      (t) =>
+        t.assignee_id === user.id &&
+        matches(t, { ...filters, assignee: undefined }, user.id) &&
+        (user.role === 'admin' ||
+          store.members.some((m) => m.project_id === t.project_id && m.user_id === user.id)),
+    );
+    return { rows: rows.slice(offset, offset + limit).map(withNames), total: rows.length };
+  },
+  async insertTask(input) {
+    const now = new Date(Date.now() + store.tasks.length);
+    const row = {
+      id: crypto.randomUUID(),
+      project_id: input.projectId,
+      title: input.title,
+      description: input.description ?? null,
+      status: input.status,
+      priority: input.priority,
+      assignee_id: input.assigneeId ?? null,
+      created_by: input.createdBy,
+      due_date: input.dueDate ?? null,
+      position: nextPosition(input.projectId, input.status),
+      completed_at: input.status === 'done' ? new Date() : null,
+      due_notified_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+    store.tasks.push(row);
+    return withNames(row);
+  },
+  async updateTask(id, patch, current) {
+    const t = store.tasks.find((x) => x.id === id);
+    if (patch.title !== undefined) t.title = patch.title;
+    if (patch.description !== undefined) t.description = patch.description;
+    if (patch.priority !== undefined) t.priority = patch.priority;
+    if (patch.assigneeId !== undefined) t.assignee_id = patch.assigneeId;
+    if (patch.dueDate !== undefined) {
+      t.due_date = patch.dueDate;
+      t.due_notified_at = null;
+    }
+    if (patch.status !== undefined && patch.status !== current.status) {
+      t.position = nextPosition(t.project_id, patch.status);
+      t.status = patch.status;
+      t.completed_at = patch.status === 'done' ? new Date() : null;
+    }
+    t.updated_at = new Date();
+    return withNames(t);
+  },
+  async deleteTask(id) {
+    const before = store.tasks.length;
+    store.tasks = store.tasks.filter((t) => t.id !== id);
+    return store.tasks.length < before;
+  },
+  async unassignUserInProject(client, projectId, userId) {
+    for (const t of store.tasks) {
+      if (t.project_id === projectId && t.assignee_id === userId) t.assignee_id = null;
+    }
   },
 };

@@ -132,8 +132,8 @@ export async function addMember(projectId, userId) {
   return rowCount === 1;
 }
 
-export async function removeMember(projectId, userId) {
-  const { rowCount } = await query(
+export async function removeMember(projectId, userId, client = { query }) {
+  const { rowCount } = await client.query(
     'DELETE FROM project_members WHERE project_id = $1 AND user_id = $2',
     [projectId, userId],
   );

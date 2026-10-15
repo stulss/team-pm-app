@@ -2,6 +2,7 @@ import { withTransaction } from '../../config/db.js';
 import { badRequest, conflict, notFound } from '../../utils/errors.js';
 import * as repo from './repository.js';
 import * as usersRepo from '../users/repository.js';
+import * as tasksRepo from '../tasks/repository.js';
 
 // Admin, 또는 해당 프로젝트를 소유한 Manager 만 관리(수정/멤버 관리)할 수 있다.
 export const canManage = (user, project) =>
@@ -64,6 +65,11 @@ export async function removeMember(project, userId) {
   if (userId === project.owner_id) {
     throw conflict('OWNER_CANNOT_BE_REMOVED', '프로젝트 소유자는 제거할 수 없습니다.');
   }
-  const removed = await repo.removeMember(project.id, userId);
+  // 제거되는 멤버에게 배정된 이 프로젝트의 작업은 미배정으로 돌린다(담당자는 항상 프로젝트 멤버여야 하므로).
+  const removed = await withTransaction(async (client) => {
+    const done = await repo.removeMember(project.id, userId, client);
+    if (done) await tasksRepo.unassignUserInProject(client, project.id, userId);
+    return done;
+  });
   if (!removed) throw notFound('프로젝트 멤버가 아닙니다.');
 }

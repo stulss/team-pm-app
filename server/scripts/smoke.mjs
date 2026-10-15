@@ -226,6 +226,214 @@ try {
   }
   check('소유자 사용자 삭제는 FK RESTRICT 로 막힘 (23503)', fkError === '23503', String(fkError));
 
+  // --- 작업
+  const tp = await call('POST', '/projects', {
+    token: t('manager'),
+    body: { name: 'smoke-tasks', memberIds: [people.member.id, people.manager2.id] },
+  });
+  const tpid = tp.body.id;
+  const task = await call('POST', `/projects/${tpid}/tasks`, {
+    token: t('member'),
+    body: {
+      title: 'smoke 작업 1',
+      description: '설명 텍스트',
+      priority: 'high',
+      dueDate: '2026-10-20',
+      assigneeId: people.member.id,
+    },
+  });
+  check('member 가 작업 생성 (201)', task.status === 201, JSON.stringify(task.body));
+  check(
+    '작업 기본값/담당자/마감일 형식',
+    task.body.status === 'todo' &&
+      task.body.priority === 'high' &&
+      task.body.dueDate === '2026-10-20' &&
+      task.body.assignee?.name === 'smoke-member' &&
+      task.body.position === 1024,
+    JSON.stringify(task.body),
+  );
+  const second = await call('POST', `/projects/${tpid}/tasks`, {
+    token: t('manager'),
+    body: { title: 'smoke 작업 2' },
+  });
+  check(
+    '같은 컬럼의 다음 작업은 position 이 커짐',
+    second.body.position === 2048,
+    String(second.body.position),
+  );
+  const tid = task.body.id;
+
+  const bad = (body, token = 'manager') =>
+    call('POST', `/projects/${tpid}/tasks`, { token: t(token), body });
+  check('비멤버 작업 생성 (403)', (await bad({ title: 'x' }, 'outsider')).status === 403);
+  check(
+    '담당자가 프로젝트 멤버가 아니면 400',
+    (await bad({ title: 'x', assigneeId: people.outsider.id })).status === 400,
+  );
+  check('제목 없음 (400)', (await bad({ title: '  ' })).status === 400);
+  check('잘못된 마감일 (400)', (await bad({ title: 'x', dueDate: '2026-13-40' })).status === 400);
+
+  check(
+    '작업 상세 (멤버 200)',
+    (await call('GET', `/tasks/${tid}`, { token: t('member') })).status === 200,
+  );
+  check(
+    '작업 상세 (비멤버 403)',
+    (await call('GET', `/tasks/${tid}`, { token: t('outsider') })).status === 403,
+  );
+  check(
+    '없는 작업 (404)',
+    (await call('GET', `/tasks/${crypto.randomUUID()}`, { token: t('admin') })).status === 404,
+  );
+
+  const edited = await call('PATCH', `/tasks/${tid}`, {
+    token: t('manager2'),
+    body: { title: 'smoke 수정됨', priority: 'urgent', dueDate: null },
+  });
+  check(
+    '멤버가 작업 수정 (제목/우선순위/마감일 해제)',
+    edited.status === 200 &&
+      edited.body.title === 'smoke 수정됨' &&
+      edited.body.priority === 'urgent' &&
+      edited.body.dueDate === null,
+    JSON.stringify(edited.body),
+  );
+  const moved = await call('PATCH', `/tasks/${tid}`, {
+    token: t('member'),
+    body: { status: 'done' },
+  });
+  check(
+    'done 으로 바꾸면 completedAt 설정 + 컬럼 맨 아래',
+    moved.body.status === 'done' && !!moved.body.completedAt && moved.body.position === 1024,
+    JSON.stringify(moved.body),
+  );
+  const reopened = await call('PATCH', `/tasks/${tid}`, {
+    token: t('member'),
+    body: { status: 'todo' },
+  });
+  check(
+    '되돌리면 completedAt 해제 + todo 맨 아래',
+    reopened.body.status === 'todo' &&
+      reopened.body.completedAt === null &&
+      reopened.body.position === 3072,
+    JSON.stringify(reopened.body),
+  );
+  check(
+    '변경할 항목이 없으면 400',
+    (await call('PATCH', `/tasks/${tid}`, { token: t('member'), body: {} })).status === 400,
+  );
+
+  // 필터
+  const q = (qs) => call('GET', `/projects/${tpid}/tasks?${qs}`, { token: t('member') });
+  check(
+    '필터: assignee=me',
+    (await q('assignee=me')).body.data.every((x) => x.assignee?.id === people.member.id),
+  );
+  check(
+    '필터: assignee=unassigned',
+    (await q('assignee=unassigned')).body.data.every((x) => x.assignee === null),
+  );
+  check('필터: priority', (await q('priority=urgent')).body.meta.total === 1);
+  check('필터: q 검색(대소문자 무시)', (await q('q=SMOKE%20수정')).body.meta.total === 1);
+  check('필터: q 의 % 는 와일드카드가 아님', (await q('q=%25')).body.meta.total === 0);
+  check('필터: status', (await q('status=in_progress')).body.meta.total === 0);
+  await call('PATCH', `/tasks/${second.body.id}`, {
+    token: t('manager'),
+    body: { dueDate: '2026-10-01' },
+  });
+  check('필터: due_before', (await q('due_before=2026-10-05')).body.meta.total === 1);
+  check('잘못된 필터 값 (400)', (await q('status=bogus')).status === 400);
+  const grouped = await q('groupBy=status');
+  check(
+    'groupBy=status 는 4개 컬럼',
+    Object.keys(grouped.body.columns).join() === 'todo,in_progress,review,done' &&
+      grouped.body.columns.todo.length === 2,
+  );
+  const page2 = await q('limit=1&page=2');
+  check(
+    '페이지네이션 meta',
+    page2.body.data.length === 1 && page2.body.meta.total === 2 && page2.body.meta.page === 2,
+  );
+
+  // 내 작업
+  const mine = await call('GET', '/tasks/mine', { token: t('member') });
+  check(
+    '내 작업: 내게 배정된 것만 + 프로젝트 이름',
+    mine.body.data.length === 1 &&
+      mine.body.data[0].assignee.id === people.member.id &&
+      mine.body.data[0].projectName === 'smoke-tasks',
+    JSON.stringify(mine.body),
+  );
+  check(
+    '내 작업: 배정 없으면 빈 목록',
+    (await call('GET', '/tasks/mine', { token: t('outsider') })).body.data.length === 0,
+  );
+
+  // 삭제 권한
+  const mTask = await call('POST', `/projects/${tpid}/tasks`, {
+    token: t('member'),
+    body: { title: 'smoke member 작업' },
+  });
+  check(
+    'member 는 남이 만든 작업 삭제 불가 (403)',
+    (await call('DELETE', `/tasks/${second.body.id}`, { token: t('member') })).status === 403,
+  );
+  check(
+    'member 는 본인이 만든 작업 삭제 (204)',
+    (await call('DELETE', `/tasks/${mTask.body.id}`, { token: t('member') })).status === 204,
+  );
+  check(
+    'manager 는 남이 만든 작업도 삭제 (204)',
+    (await call('DELETE', `/tasks/${tid}`, { token: t('manager2') })).status === 204,
+  );
+
+  // 멤버 제거 시 담당 작업 미배정
+  await call('PATCH', `/tasks/${second.body.id}`, {
+    token: t('manager'),
+    body: { assigneeId: people.manager2.id },
+  });
+  await call('DELETE', `/projects/${tpid}/members/${people.manager2.id}`, { token: t('manager') });
+  const afterRemove = await call('GET', `/tasks/${second.body.id}`, { token: t('manager') });
+  check(
+    '멤버 제거 시 그 프로젝트의 담당 작업은 미배정',
+    afterRemove.body.assignee === null,
+    JSON.stringify(afterRemove.body.assignee),
+  );
+
+  // 보관된 프로젝트는 읽기 전용
+  await call('PATCH', `/projects/${tpid}`, { token: t('manager'), body: { status: 'archived' } });
+  const frozen = await bad({ title: 'x' }, 'member');
+  check(
+    '보관된 프로젝트에 작업 생성 불가 (409 PROJECT_ARCHIVED)',
+    frozen.status === 409 && frozen.body.error.code === 'PROJECT_ARCHIVED',
+  );
+  check(
+    '보관된 프로젝트의 작업 수정 불가 (409)',
+    (await call('PATCH', `/tasks/${second.body.id}`, { token: t('manager'), body: { title: 'x' } }))
+      .status === 409,
+  );
+  check(
+    '보관된 프로젝트의 작업은 조회 가능',
+    (await call('GET', `/tasks/${second.body.id}`, { token: t('member') })).status === 200,
+  );
+
+  // 프로젝트 삭제 시 작업 CASCADE
+  await call('DELETE', `/projects/${tpid}`, { token: t('admin') });
+  check(
+    '프로젝트 삭제 시 tasks CASCADE',
+    (await db.query('SELECT 1 FROM tasks WHERE project_id = $1', [tpid])).rowCount === 0,
+  );
+  check(
+    'tasks 인덱스 3개 + RLS',
+    (
+      await db.query(
+        "SELECT 1 FROM pg_indexes WHERE tablename = 'tasks' AND indexname IN ('tasks_project_status_position_idx','tasks_assignee_status_idx','tasks_due_date_open_idx')",
+      )
+    ).rowCount === 3 &&
+      (await db.query("SELECT 1 FROM pg_class WHERE relname = 'tasks' AND relrowsecurity"))
+        .rowCount === 1,
+  );
+
   // --- 삭제 + CASCADE
   check(
     '소유 manager 는 삭제 불가 (403)',

@@ -246,6 +246,8 @@ erDiagram
 | DELETE | `/tasks/:id` | 삭제 | Admin/Manager/작성자 |
 | GET | `/tasks/mine` | 내게 배정된 작업 | 로그인 |
 
+> 구현 규칙(M3): `PATCH /tasks/:id` 는 `status` 변경도 받는다(해당 컬럼 맨 아래로 이동, `completed_at` 갱신). 위치까지 지정하는 이동은 M4 의 `/move`. 목록 필터 `assignee` 는 `me`·`unassigned`·사용자 ID, `groupBy=status` 면 `{ columns }` 로 응답. 담당자는 활성 프로젝트 멤버여야 하며(신규 지정·변경 시 검사), 멤버가 프로젝트에서 제거되면 그 프로젝트에서 배정된 작업은 미배정이 된다. **보관된 프로젝트의 작업은 읽기 전용**(생성·수정·삭제 시 409 `PROJECT_ARCHIVED`). 삭제는 Admin/Manager 는 모두, Member 는 본인이 만든 작업만. `due_date` 는 `YYYY-MM-DD` 문자열로만 다룬다(시간대로 인한 날짜 밀림 방지). `/tasks/mine` 은 접근 가능한 프로젝트의 작업만 보인다.
+
 #### Comments
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|

@@ -1,6 +1,9 @@
 import pg from 'pg';
 import { env } from './env.js';
 
+// date 컬럼(마감일)은 JS Date 로 바꾸면 서버 시간대에 따라 하루씩 밀릴 수 있으므로 'YYYY-MM-DD' 문자열 그대로 읽는다.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+
 // Vercel 함수는 인스턴스가 늘고 줄므로 풀은 작게 유지한다.
 // Transaction pooler 에서는 prepared statement 를 쓰지 않는다
 // (pg 는 query 에 `name` 을 주지 않으면 named statement 를 만들지 않는다 — name 지정 금지).

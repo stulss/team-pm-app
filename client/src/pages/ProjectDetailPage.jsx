@@ -12,6 +12,7 @@ import {
 import { errorMessage } from '../api/http.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import UserSearch from '../components/project/UserSearch.jsx';
+import TaskSection from '../components/task/TaskSection.jsx';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -180,10 +181,7 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      <div className="card">
-        <h2>작업</h2>
-        <p className="muted">작업과 칸반 보드는 다음 단계에서 추가됩니다.</p>
-      </div>
+      <TaskSection project={project} archived={archived} />
     </>
   );
 }
