@@ -5,6 +5,7 @@
 //   HEADED=1 npm run e2e                                          # 브라우저 창을 보면서 실행
 //
 // 생성하는 데이터는 모두 ui-*@example.test / "ui-" 프로젝트이며 종료 시 삭제한다. (DIRECT_URL 필요: server/.env)
+import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 import pg from 'pg';
@@ -51,6 +52,8 @@ const apiRegister = async (k) => {
     body: JSON.stringify({ email: emailOf(k), password: PASSWORD, name: `ui-${k}` }),
   });
   if (res.status !== 201) throw new Error(`register ${k}: ${res.status}`);
+  // 이메일 인증이 켜진 환경(운영)에서는 DB 에서 인증 처리한다.
+  await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [emailOf(k)]);
 };
 
 const apiHeaders = (token) => ({
@@ -111,7 +114,17 @@ try {
     await page.getByLabel('이메일').fill(emailOf('manager'));
     await page.getByLabel(/비밀번호/).fill(PASSWORD);
     await page.getByRole('button', { name: '가입하기' }).click();
-    await page.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
+    // 이메일 인증이 켜져 있으면 "메일을 확인해 주세요" 가 먼저 나온다 → DB 에서 인증 처리 후 로그인
+    const pending = page.getByRole('heading', { name: '이메일을 확인해 주세요' });
+    const home = page.getByRole('heading', { name: '프로젝트', exact: true });
+    await pending.or(home).waitFor();
+    if (await pending.isVisible()) {
+      await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [
+        emailOf('manager'),
+      ]);
+      await login(page, 'manager');
+    }
+    await home.waitFor();
   });
   for (const k of ['admin', 'member', 'outsider']) await apiRegister(k);
   const roles = { admin: 'admin', manager: 'manager', member: 'member', outsider: 'member' };
@@ -508,6 +521,113 @@ try {
       throw new Error('삭제된 프로젝트가 초대받은 사용자에게 남아 있음');
     }
   });
+
+  // ---- 이메일 인증 / 비밀번호 재설정 화면 (링크는 DB 에 토큰을 넣어 흉내 낸다. 메일 발송은 단위 테스트가 검증)
+  await apiRegister('mailuser');
+  const mailer = await newPage();
+  const putToken = async (kind, expiresInMs = 3600_000) => {
+    const token = crypto.randomBytes(32).toString('base64url');
+    await db.query(
+      `INSERT INTO email_tokens (user_id, kind, token_hash, expires_at)
+       SELECT id, $2, $3, now() + ($4 || ' milliseconds')::interval FROM users WHERE email = $1`,
+      [
+        emailOf('mailuser'),
+        kind,
+        crypto.createHash('sha256').update(token).digest('hex'),
+        String(expiresInMs),
+      ],
+    );
+    return token;
+  };
+  await step('이메일 인증 링크: 인증 완료 화면, 같은 링크를 다시 열면 실패 화면', async () => {
+    await db.query('UPDATE users SET email_verified_at = NULL WHERE email = $1', [
+      emailOf('mailuser'),
+    ]);
+    const token = await putToken('verify');
+    await mailer.goto(`${BASE}/verify-email?token=${token}`);
+    await mailer.getByRole('heading', { name: '이메일 인증이 완료되었습니다' }).waitFor();
+    await mailer.goto(`${BASE}/verify-email?token=${token}`);
+    await mailer.getByRole('heading', { name: '인증하지 못했습니다' }).waitFor();
+    await mailer.getByRole('alert').filter({ hasText: '만료되었거나 이미 사용' }).waitFor();
+  });
+  await step('비밀번호 찾기: 이메일을 넣으면 가입 여부와 관계없이 같은 안내', async () => {
+    await mailer.goto(`${BASE}/login`);
+    await mailer.getByRole('link', { name: '비밀번호를 잊으셨나요?' }).click();
+    await mailer.getByLabel('이메일').fill(`nobody-${run}@example.test`);
+    await mailer.getByRole('button', { name: '재설정 링크 보내기' }).click();
+    await mailer.getByRole('heading', { name: '메일을 확인해 주세요' }).waitFor();
+  });
+  await step('비밀번호 재설정: 확인 불일치 오류 → 설정 완료 → 새 비밀번호로만 로그인', async () => {
+    const token = await putToken('reset');
+    await mailer.goto(`${BASE}/reset-password?token=${token}`);
+    await mailer.getByLabel('새 비밀번호 (8자 이상)').fill('N3w-secure-pass');
+    await mailer.getByLabel('새 비밀번호 확인').fill('different-pass-1');
+    await mailer.getByRole('button', { name: '비밀번호 바꾸기' }).click();
+    await mailer.getByRole('alert').filter({ hasText: '서로 다릅니다' }).waitFor();
+    await mailer.getByLabel('새 비밀번호 확인').fill('N3w-secure-pass');
+    await mailer.getByRole('button', { name: '비밀번호 바꾸기' }).click();
+    await mailer.getByRole('heading', { name: '비밀번호를 바꿨습니다' }).waitFor();
+
+    await mailer.goto(`${BASE}/login`);
+    await mailer.getByLabel('이메일').fill(emailOf('mailuser'));
+    await mailer.getByLabel('비밀번호').fill(PASSWORD);
+    await mailer.getByRole('button', { name: '로그인' }).click();
+    await mailer.getByRole('alert').filter({ hasText: '올바르지 않습니다' }).waitFor();
+    await mailer.getByLabel('비밀번호').fill('N3w-secure-pass');
+    await mailer.getByRole('button', { name: '로그인' }).click();
+    await mailer.getByRole('link', { name: '프로젝트', exact: true }).waitFor();
+  });
+  await step('재설정 링크: 만료된 링크는 오류, 링크 없이 열면 안내 화면', async () => {
+    const expired = await putToken('reset', -1000);
+    const fresh = await newPage();
+    await fresh.goto(`${BASE}/reset-password?token=${expired}`);
+    await fresh.getByLabel('새 비밀번호 (8자 이상)').fill('Another-pass-9');
+    await fresh.getByLabel('새 비밀번호 확인').fill('Another-pass-9');
+    await fresh.getByRole('button', { name: '비밀번호 바꾸기' }).click();
+    await fresh.getByRole('alert').filter({ hasText: '만료되었거나 이미 사용' }).waitFor();
+    await fresh.goto(`${BASE}/reset-password`);
+    await fresh.getByRole('heading', { name: '올바르지 않은 링크' }).waitFor();
+  });
+
+  // 이메일 인증이 켜진 환경(운영)에서만 의미가 있다: 인증 전에는 로그인이 막히고 재발송 버튼이 나온다.
+  await step(
+    '이메일 인증 켜짐: 인증 전 로그인은 안내와 재발송 버튼, 인증 후 로그인 성공',
+    async () => {
+      const res = await fetch(`${BASE}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: JSON.stringify({
+          email: emailOf('unverified'),
+          password: PASSWORD,
+          name: 'ui-unverified',
+        }),
+      });
+      const body = await res.json();
+      if (!body.needsVerification) {
+        console.log('      (이 환경은 메일이 꺼져 있어 인증을 요구하지 않음 — 건너뜀)');
+        return;
+      }
+      if (body.accessToken) throw new Error('인증 전인데 세션이 발급됨');
+      const p = await newPage();
+      await p.goto(`${BASE}/login`);
+      await p.getByLabel('이메일').fill(emailOf('unverified'));
+      await p.getByLabel('비밀번호').fill(PASSWORD);
+      await p.getByRole('button', { name: '로그인' }).click();
+      await p.getByRole('alert').filter({ hasText: '이메일 인증이 필요합니다' }).waitFor();
+      await p.getByRole('button', { name: '인증 메일 다시 받기' }).click();
+      await p.getByRole('status').filter({ hasText: '다시 보냈습니다' }).waitFor();
+      await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [
+        emailOf('unverified'),
+      ]);
+      await p.getByRole('button', { name: '로그인' }).click();
+      await p.getByRole('link', { name: '프로젝트', exact: true }).waitFor();
+    },
+  );
 
   // ---- 실시간: 서로 다른 두 브라우저(사용자)가 같은 프로젝트 보드를 본다
   const rtManager = await newPage();

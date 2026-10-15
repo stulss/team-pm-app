@@ -73,6 +73,7 @@
 | 요금제 | M1.5 | **결정: 무료 플랜 범위에서 사용** (Vercel Hobby, Supabase Free, Redis 무료). 한도 초과 시 기능을 줄이거나 다시 결정 |
 | Redis 서비스 선택 (Vercel Marketplace, 무료 플랜) | M1.5 | **결정: Redis Cloud 무료(Marketplace)** — TLS 미지원이 한계(`SECURITY.md`) |
 | Supabase dev/prod 분리 | M1.5 | **현재: Vercel 연동 프로젝트 1개를 Development/Preview/Production 이 공유.** 실사용 전에 prod 분리 여부 결정 (무료 플랜은 프로젝트 수 제한 있음) |
+| 이메일 인증·비밀번호 재설정 | 최종본 이후 | **결정: Brevo 무료 플랜으로 구현**(2026-10-15). 메일 설정이 있을 때만 켜지고, 없으면 기존처럼 동작. 운영 적용에는 사용자의 Brevo 가입·발신자 인증·API 키 등록이 필요 |
 | 첫 가입자 자동 Admin vs 초대 전용 | M1 전 | **결정: 첫 가입자 자동 Admin 유지. 가입은 누구에게나 열어 두는 공개 서비스로 운영**(닫는 스위치 `ALLOW_REGISTRATION=false` 는 남겨 둠). 일반 가입자는 자기 프로젝트를 만들고 이메일로 초대. 초대 코드 방식은 범위 밖 |
 | 칸반 컬럼 4개 고정 | M4 전 | **결정: 4개 고정** |
 | 이메일 알림 필요 여부 | M7 전 | **결정: 앱 내 알림만**(마감 알림은 하루 1회) |

@@ -1,6 +1,6 @@
 import { query } from '../../config/db.js';
 
-const PUBLIC_COLUMNS = 'id, email, name, role, is_active, created_at';
+const PUBLIC_COLUMNS = 'id, email, name, role, is_active, created_at, email_verified_at';
 
 export const toUser = (row) =>
   row && {
@@ -10,6 +10,7 @@ export const toUser = (row) =>
     role: row.role,
     isActive: row.is_active,
     createdAt: row.created_at,
+    emailVerified: Boolean(row.email_verified_at),
   };
 
 // 첫 가입자는 자동 Admin. 동시 가입으로 Admin 이 둘 생기지 않도록 트랜잭션 + advisory lock 안에서 호출한다.
@@ -88,4 +89,11 @@ export async function updateProfile(id, { name, passwordHash }) {
     [id, name ?? null, passwordHash ?? null],
   );
   return rows[0] ?? null;
+}
+
+export async function markEmailVerified(id) {
+  await query(
+    'UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() WHERE id = $1',
+    [id],
+  );
 }

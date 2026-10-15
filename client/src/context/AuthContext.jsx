@@ -40,9 +40,12 @@ export function AuthProvider({ children }) {
         const { data } = await http.post('/auth/login', { email, password });
         applySession(data);
       },
+      // 서버가 이메일 인증을 요구하면 세션 없이 { needsVerification: true } 만 온다.
       async register(input) {
         const { data } = await http.post('/auth/register', input);
+        if (data.needsVerification) return { needsVerification: true };
         applySession(data);
+        return { needsVerification: false };
       },
       async logout() {
         try {

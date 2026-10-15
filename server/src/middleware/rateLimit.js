@@ -86,6 +86,16 @@ export function createLimiters({ skip = defaultSkip, useRedis = true } = {}) {
       store: store('rl:register:'),
       keyGenerator: (req) => ipKeyGenerator(req.ip),
     }),
+    // 인증·재설정 메일 요청: IP + 이메일 기준(메일 폭탄과 발송 한도 소진 방지)
+    mail: rateLimit({
+      ...common,
+      windowMs: 60 * 60 * 1000,
+      limit: 10,
+      skip,
+      store: store('rl:mail:'),
+      keyGenerator: (req) =>
+        `${ipKeyGenerator(req.ip)}:${String(req.body?.email ?? '').toLowerCase()}`,
+    }),
     // 일반 API: IP 기준. 같은 사무실(NAT)의 여러 사용자가 함께 쓸 수 있도록 넉넉하게 둔다.
     api: rateLimit({
       ...common,
@@ -98,4 +108,9 @@ export function createLimiters({ skip = defaultSkip, useRedis = true } = {}) {
   };
 }
 
-export const { login: loginLimiter, register: registerLimiter, api: apiLimiter } = createLimiters();
+export const {
+  login: loginLimiter,
+  register: registerLimiter,
+  mail: mailLimiter,
+  api: apiLimiter,
+} = createLimiters();

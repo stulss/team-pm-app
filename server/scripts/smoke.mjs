@@ -52,7 +52,16 @@ try {
     });
     if (r.status !== 201)
       throw new Error(`register ${k} failed: ${r.status} ${JSON.stringify(r.body)}`);
-    people[k] = { id: r.body.user.id, token: r.body.accessToken };
+    let { accessToken } = r.body;
+    if (r.body.needsVerification) {
+      // 운영처럼 이메일 인증이 켜져 있으면 세션이 없다. 테스트 계정은 DB 에서 인증 처리한 뒤 로그인한다.
+      await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [r.body.user.id]);
+      const login = await call('POST', '/auth/login', {
+        body: { email: emailOf(k), password: 'S3cure!pass' },
+      });
+      accessToken = login.body.accessToken;
+    }
+    people[k] = { id: r.body.user.id, token: accessToken };
   }
   const roles = {
     admin: 'admin',
@@ -1038,6 +1047,124 @@ try {
         (await call('GET', `/projects/${dpid}/dashboard`, { token: t('member') })).status === 200,
     );
     await call('DELETE', `/projects/${dpid}`, { token: t('admin') });
+  }
+
+  // --- 이메일 인증 / 비밀번호 재설정 SQL
+  // 메일 발송 자체는 단위 테스트가 검증한다. 여기서는 토큰 테이블 SQL(일회성·만료·교체·정리)과
+  // 링크 처리 API 를 실제 DB 로 확인한다. 링크 클릭은 DB 에 토큰을 직접 넣어 흉내 낸다.
+  {
+    const { createHash, randomBytes } = await import('node:crypto');
+    const authRepo = await import('../src/modules/auth/repository.js');
+    const hashOf = (t) => createHash('sha256').update(t).digest('hex');
+    const newToken = () => randomBytes(32).toString('base64url');
+    const mailEmail = emailOf('mailflow');
+    const reg = await call('POST', '/auth/register', {
+      body: { email: mailEmail, password: 'S3cure!pass', name: 'smoke-mailflow' },
+    });
+    const uid = reg.body.user.id;
+    const verifiedAt = async () =>
+      (await db.query('SELECT email_verified_at FROM users WHERE id = $1', [uid])).rows[0]
+        .email_verified_at;
+    await db.query('UPDATE users SET email_verified_at = NULL WHERE id = $1', [uid]);
+    const inHour = new Date(Date.now() + 3600_000);
+    const put = (kind, token, expiresAt = inHour) =>
+      authRepo.insertEmailToken({ userId: uid, kind, tokenHash: hashOf(token), expiresAt });
+    const post = (path, body) => call('POST', path, { body });
+
+    // 메일이 켜진 환경에서는 가입 직후 인증 토큰이 이미 발급돼 있다 → 비우고 시작한다.
+    await db.query('DELETE FROM email_tokens WHERE user_id = $1', [uid]);
+    check(
+      '발급 이력이 없으면 쿨다운 조회는 null',
+      (await authRepo.secondsSinceLastEmailToken(uid, 'verify')) === null,
+    );
+    const v1 = newToken();
+    const v2 = newToken();
+    await put('verify', v1);
+    await put('verify', v2);
+    const since = await authRepo.secondsSinceLastEmailToken(uid, 'verify');
+    check(
+      '방금 발급한 토큰의 경과 시간은 몇 초 이내',
+      since !== null && since >= 0 && since < 30,
+      String(since),
+    );
+    check(
+      '새 링크를 발급하면 이전 링크는 무효 (400)',
+      (await post('/auth/verify-email', { token: v1 })).status === 400,
+    );
+    check('인증 전에는 email_verified_at 이 비어 있음', (await verifiedAt()) === null);
+    check(
+      '유효한 인증 링크 (200) → 인증 시각 기록',
+      (await post('/auth/verify-email', { token: v2 })).status === 200 &&
+        (await verifiedAt()) !== null,
+    );
+    check(
+      '같은 링크 재사용 불가 (400 INVALID_TOKEN)',
+      (await post('/auth/verify-email', { token: v2 })).body?.error?.code === 'INVALID_TOKEN',
+    );
+    const expired = newToken();
+    await put('verify', expired, new Date(Date.now() - 3600_000));
+    check(
+      '만료된 링크 (400)',
+      (await post('/auth/verify-email', { token: expired })).status === 400,
+    );
+
+    // 비밀번호 재설정
+    const before = await post('/auth/login', { email: mailEmail, password: 'S3cure!pass' });
+    check('재설정 전 로그인 가능', before.status === 200, JSON.stringify(before.body));
+    const r1 = newToken();
+    await put('reset', r1);
+    const weak = await post('/auth/reset-password', { token: r1, password: 'short' });
+    const unused = await db.query(
+      "SELECT 1 FROM email_tokens WHERE user_id = $1 AND kind = 'reset' AND used_at IS NULL",
+      [uid],
+    );
+    check(
+      '약한 비밀번호는 400 이고 링크는 소비되지 않음',
+      weak.status === 400 && unused.rowCount === 1,
+    );
+    const reset = await post('/auth/reset-password', { token: r1, password: 'N3w-secure-pass' });
+    check('재설정 링크로 새 비밀번호 설정 (200)', reset.status === 200, JSON.stringify(reset.body));
+    const live = await db.query(
+      'SELECT 1 FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL',
+      [uid],
+    );
+    check('재설정 후 기존 refresh 세션이 모두 폐기됨', live.rowCount === 0);
+    const oldLogin = await post('/auth/login', { email: mailEmail, password: 'S3cure!pass' });
+    const newLogin = await post('/auth/login', { email: mailEmail, password: 'N3w-secure-pass' });
+    check(
+      '이전 비밀번호 로그인 불가 (401), 새 비밀번호 가능 (200)',
+      oldLogin.status === 401 && newLogin.status === 200,
+    );
+    check(
+      '재설정 링크도 일회용 (400)',
+      (await post('/auth/reset-password', { token: r1, password: 'Another-pass-9' })).status ===
+        400,
+    );
+    const ghostEmail = `nobody-${run}@example.test`;
+    check(
+      '없는 이메일의 재설정·재발송 요청도 같은 202 (계정 존재 비노출)',
+      (await post('/auth/forgot-password', { email: ghostEmail })).status === 202 &&
+        (await post('/auth/resend-verification', { email: ghostEmail })).status === 202,
+    );
+
+    // 정리: 만료된 지 하루 지난 토큰은 cron 이 지운다
+    const stale = newToken();
+    await put('reset', stale, new Date(Date.now() - 2 * 86400_000));
+    await authRepo.deleteExpired();
+    check(
+      '만료된 지 하루 지난 이메일 토큰은 정리됨',
+      (await db.query('SELECT 1 FROM email_tokens WHERE token_hash = $1', [hashOf(stale)]))
+        .rowCount === 0,
+    );
+    const rlsOn = await db.query(
+      "SELECT 1 FROM pg_class WHERE relname = 'email_tokens' AND relrowsecurity",
+    );
+    const removed = await db.query('DELETE FROM users WHERE id = $1', [uid]);
+    const left = await db.query('SELECT 1 FROM email_tokens WHERE user_id = $1', [uid]);
+    check(
+      'email_tokens RLS 활성화, 사용자 삭제 시 CASCADE',
+      rlsOn.rowCount === 1 && removed.rowCount === 1 && left.rowCount === 0,
+    );
   }
 
   // --- 삭제 + CASCADE

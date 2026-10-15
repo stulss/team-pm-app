@@ -4,6 +4,9 @@ import { ProtectedRoute, PublicOnlyRoute, RoleRoute } from './routes/guards.jsx'
 import Layout from './components/common/Layout.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
+import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
+import ResetPasswordPage from './pages/ResetPasswordPage.jsx';
+import VerifyEmailPage from './pages/VerifyEmailPage.jsx';
 import ProjectListPage from './pages/ProjectListPage.jsx';
 import ProjectDetailPage from './pages/ProjectDetailPage.jsx';
 import MyTasksPage from './pages/MyTasksPage.jsx';
@@ -27,7 +30,13 @@ export default function App() {
             <Route element={<AuthLayout />}>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             </Route>
+          </Route>
+          {/* 메일 링크는 로그인 여부와 상관없이 열려야 한다 */}
+          <Route element={<AuthLayout />}>
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
           </Route>
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>

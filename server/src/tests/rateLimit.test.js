@@ -8,12 +8,13 @@ const { createLimiters, loginLimiter } = await import('../middleware/rateLimit.j
 
 // 운영과 같은 한도를 켠 작은 앱 (테스트에서는 메모리 저장소). 기본 limiter 는 개발/테스트에서 꺼져 있으므로 직접 만든다.
 function makeApp() {
-  const { login, register, api } = createLimiters({ skip: () => false, useRedis: false });
+  const { login, register, mail, api } = createLimiters({ skip: () => false, useRedis: false });
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json());
   app.post('/login', login, (req, res) => res.json({ ok: true }));
   app.post('/register', register, (req, res) => res.json({ ok: true }));
+  app.post('/forgot', mail, (req, res) => res.json({ ok: true }));
   app.use(api);
   app.get('/health', (req, res) => res.json({ ok: true }));
   app.get('/data', (req, res) => res.json({ ok: true }));
@@ -51,6 +52,17 @@ describe('register limiter (IP, 1시간 20회)', () => {
     for (let i = 0; i < 20; i += 1) expect((await post('3.3.3.3')).status).toBe(200);
     expect((await post('3.3.3.3')).status).toBe(429);
     expect((await post('4.4.4.4')).status).toBe(200);
+  });
+});
+
+describe('mail limiter (IP + 이메일, 1시간 10회)', () => {
+  it('같은 IP·이메일로 11번째 요청은 429, 이메일이 다르면 따로 센다', async () => {
+    const app = makeApp();
+    const post = (email) =>
+      request(app).post('/forgot').set('X-Forwarded-For', '6.6.6.6').send({ email });
+    for (let i = 0; i < 10; i += 1) expect((await post('a@example.com')).status).toBe(200);
+    expect((await post('A@example.com')).status).toBe(429);
+    expect((await post('b@example.com')).status).toBe(200);
   });
 });
 

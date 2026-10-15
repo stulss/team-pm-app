@@ -13,6 +13,7 @@ export const store = {
   tasks: [],
   comments: [],
   notifications: [],
+  emailTokens: [],
 };
 
 export function reset() {
@@ -23,6 +24,7 @@ export function reset() {
   store.tasks = [];
   store.comments = [];
   store.notifications = [];
+  store.emailTokens = [];
 }
 
 const pub = (u) => ({
@@ -32,6 +34,7 @@ const pub = (u) => ({
   role: u.role,
   is_active: u.is_active,
   created_at: u.created_at,
+  email_verified_at: u.email_verified_at ?? null,
 });
 
 export const usersRepo = {
@@ -81,6 +84,10 @@ export const usersRepo = {
     u.is_active = isActive;
     return pub(u);
   },
+  async markEmailVerified(id) {
+    const u = store.users.find((x) => x.id === id);
+    if (u && !u.email_verified_at) u.email_verified_at = new Date();
+  },
   async updateProfile(id, { name, passwordHash }) {
     const u = store.users.find((x) => x.id === id);
     if (!u) return null;
@@ -118,6 +125,34 @@ export const authRepo = {
   },
   async deleteExpired() {
     return 0;
+  },
+  async insertEmailToken({ userId, kind, tokenHash, expiresAt }) {
+    for (const t of store.emailTokens) {
+      if (t.user_id === userId && t.kind === kind && !t.used_at) t.used_at = new Date();
+    }
+    store.emailTokens.push({
+      user_id: userId,
+      kind,
+      token_hash: tokenHash,
+      expires_at: expiresAt,
+      used_at: null,
+      created_at: new Date(),
+    });
+  },
+  async secondsSinceLastEmailToken(userId, kind) {
+    const times = store.emailTokens
+      .filter((t) => t.user_id === userId && t.kind === kind)
+      .map((t) => t.created_at.getTime());
+    return times.length ? (Date.now() - Math.max(...times)) / 1000 : null;
+  },
+  async consumeEmailToken(tokenHash, kind) {
+    const t = store.emailTokens.find(
+      (x) =>
+        x.token_hash === tokenHash && x.kind === kind && !x.used_at && x.expires_at > new Date(),
+    );
+    if (!t) return null;
+    t.used_at = new Date();
+    return t.user_id;
   },
 };
 
