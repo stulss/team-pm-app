@@ -246,6 +246,8 @@ erDiagram
 | DELETE | `/tasks/:id` | 삭제 | Admin/Manager/작성자 |
 | GET | `/tasks/mine` | 내게 배정된 작업 | 로그인 |
 
+> 구현 규칙(M4 이동): 컬럼으로의 동시 이동은 컬럼(프로젝트+상태) 단위 advisory lock 으로 직렬화한다(빈 컬럼에서는 행 잠금이 동작하지 않아 position 이 중복되는 문제를 실DB 에서 확인). 이웃 간격이 1e-3 미만이면 컬럼을 1024 간격으로 재정렬한 뒤 다시 계산하고, 이웃이 대상 컬럼에 없으면 400, 순서가 뒤집혀 있으면 409 `STALE_POSITION`. 완료 시각은 done 으로 들어올 때만 설정하고 done 안에서의 이동은 유지한다.
+>
 > 구현 규칙(M3): `PATCH /tasks/:id` 는 `status` 변경도 받는다(해당 컬럼 맨 아래로 이동, `completed_at` 갱신). 위치까지 지정하는 이동은 M4 의 `/move`. 목록 필터 `assignee` 는 `me`·`unassigned`·사용자 ID, `groupBy=status` 면 `{ columns }` 로 응답. 담당자는 활성 프로젝트 멤버여야 하며(신규 지정·변경 시 검사), 멤버가 프로젝트에서 제거되면 그 프로젝트에서 배정된 작업은 미배정이 된다. **보관된 프로젝트의 작업은 읽기 전용**(생성·수정·삭제 시 409 `PROJECT_ARCHIVED`). 삭제는 Admin/Manager 는 모두, Member 는 본인이 만든 작업만. `due_date` 는 `YYYY-MM-DD` 문자열로만 다룬다(시간대로 인한 날짜 밀림 방지). `/tasks/mine` 은 접근 가능한 프로젝트의 작업만 보인다.
 
 #### Comments
@@ -324,10 +326,11 @@ erDiagram
 
 **PATCH `/tasks/:id/move`** (드래그 앤 드롭)
 ```json
-// 요청: 대상 컬럼의 앞/뒤 이웃 task를 알려주면 서버가 position 계산
+// 요청: 대상 컬럼에서 이동 후 바로 위(beforeTaskId)·바로 아래(afterTaskId)에 올 task 를 알려주면 서버가 position 계산
+// (둘 다 있으면 중간값, before 만 있으면 맨 아래(before+1024), after 만 있으면 맨 위(after/2), 둘 다 없으면 컬럼 맨 아래)
 { "status": "in_progress", "beforeTaskId": "t7…", "afterTaskId": null }
 // 200
-{ "id": "t1…", "status": "in_progress", "position": 512.0, "completedAt": null, "updatedAt": "…" }
+{ "id": "t1…", "status": "in_progress", "position": 2048.0, "completedAt": null, "updatedAt": "…" }  // t7 의 position 이 1024 일 때 (실제로는 task 전체 필드를 반환)
 // 403 (비멤버)
 { "error": { "code": "FORBIDDEN", "message": "프로젝트 멤버가 아닙니다." } }
 ```

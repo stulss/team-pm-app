@@ -400,6 +400,128 @@ try {
     JSON.stringify(afterRemove.body.assignee),
   );
 
+  // --- 칸반 이동
+  const bp = await call('POST', '/projects', {
+    token: t('manager'),
+    body: { name: 'smoke-board', memberIds: [people.member.id] },
+  });
+  const bpid = bp.body.id;
+  const mk = async (title, status = 'todo') =>
+    (
+      await call('POST', `/projects/${bpid}/tasks`, {
+        token: t('manager'),
+        body: { title, status },
+      })
+    ).body;
+  const [ta, tb, tc, td] = [
+    await mk('A'),
+    await mk('B'),
+    await mk('C'),
+    await mk('D', 'in_progress'),
+  ];
+  const mv = (who, id, body) => call('PATCH', `/tasks/${id}/move`, { token: t(who), body });
+  const board = async () =>
+    (await call('GET', `/projects/${bpid}/tasks?groupBy=status`, { token: t('manager') })).body
+      .columns;
+  const titles = (col) => col.map((x) => x.title).join('');
+  const pos = async (id) =>
+    Number((await db.query('SELECT position FROM tasks WHERE id = $1', [id])).rows[0].position);
+
+  const mid = await mv('member', tc.id, {
+    status: 'todo',
+    beforeTaskId: ta.id,
+    afterTaskId: tb.id,
+  });
+  check(
+    '두 작업 사이로 이동: 중간 position',
+    mid.status === 200 && mid.body.position === 1536,
+    JSON.stringify(mid.body),
+  );
+  check('groupBy 순서가 A,C,B', titles((await board()).todo) === 'ACB');
+  const top = await mv('member', tb.id, { status: 'todo', afterTaskId: ta.id });
+  check(
+    '맨 위로 이동 (after 만)',
+    top.body.position === 512 && titles((await board()).todo) === 'BAC',
+  );
+  const bottom = await mv('member', tb.id, { status: 'todo', beforeTaskId: tc.id });
+  check(
+    '맨 아래로 이동 (before 만)',
+    bottom.body.position === (await pos(tc.id)) + 1024 && titles((await board()).todo) === 'ACB',
+  );
+  const cross = await mv('member', ta.id, { status: 'in_progress', beforeTaskId: td.id });
+  check(
+    '다른 컬럼으로 이동',
+    cross.body.status === 'in_progress' && titles((await board()).in_progress) === 'DA',
+  );
+  check(
+    '빈 컬럼으로 이동 (position 1024)',
+    (await mv('member', tc.id, { status: 'review' })).body.position === 1024,
+  );
+
+  const doneMove = await mv('member', ta.id, { status: 'done' });
+  const doneAt = doneMove.body.completedAt;
+  check('done 이동 시 completed_at 설정', !!doneAt);
+  const other = await mk('E', 'done');
+  const within = await mv('member', ta.id, { status: 'done', beforeTaskId: other.id });
+  check(
+    'done 안에서 이동해도 completed_at 유지',
+    within.body.completedAt === doneAt,
+    `${within.body.completedAt} vs ${doneAt}`,
+  );
+  check(
+    'done 에서 나가면 completed_at 해제',
+    (await mv('member', ta.id, { status: 'todo' })).body.completedAt === null,
+  );
+
+  // 정밀도 고갈 → 재정렬
+  await db.query('UPDATE tasks SET position = 1024 WHERE id = $1', [ta.id]);
+  await db.query('UPDATE tasks SET position = 1024.0005 WHERE id = $1', [tb.id]);
+  const rebalanced = await mv('member', tc.id, {
+    status: 'todo',
+    beforeTaskId: ta.id,
+    afterTaskId: tb.id,
+  });
+  const col = (await board()).todo;
+  check(
+    '간격 고갈 시 재정렬 후 이동 성공 + 순서 유지',
+    rebalanced.status === 200 && titles(col) === 'ACB',
+    titles(col),
+  );
+  check(
+    '재정렬 후 간격이 충분함',
+    col[1].position - col[0].position > 100 && col[2].position - col[1].position > 100,
+    JSON.stringify(col.map((x) => x.position)),
+  );
+
+  check(
+    '이웃이 대상 컬럼에 없으면 400',
+    (await mv('member', tc.id, { status: 'todo', beforeTaskId: td.id })).status === 400,
+  );
+  check(
+    '이웃 순서가 뒤집히면 409',
+    (await mv('member', tc.id, { status: 'todo', beforeTaskId: tb.id, afterTaskId: ta.id }))
+      .status === 409,
+  );
+  check('비멤버 이동 불가 (403)', (await mv('outsider', tc.id, { status: 'todo' })).status === 403);
+
+  // 같은 컬럼 동시 이동: 모두 성공하고 position 이 서로 달라야 함 (FOR UPDATE 직렬화)
+  const racers = [await mk('R1'), await mk('R2'), await mk('R3'), await mk('R4'), await mk('R5')];
+  const results = await Promise.all(racers.map((r) => mv('member', r.id, { status: 'review' })));
+  const racePositions = new Set(results.map((r) => r.body.position));
+  check(
+    '동시 이동 5건 모두 성공 + position 중복 없음',
+    results.every((r) => r.status === 200) && racePositions.size === 5,
+    results.map((r) => `${r.status}:${r.body.position}`).join(' '),
+  );
+
+  await call('PATCH', `/projects/${bpid}`, { token: t('manager'), body: { status: 'archived' } });
+  const frozenMove = await mv('member', tc.id, { status: 'todo' });
+  check(
+    '보관된 프로젝트에서 이동 불가 (409)',
+    frozenMove.status === 409 && frozenMove.body.error.code === 'PROJECT_ARCHIVED',
+  );
+  await call('DELETE', `/projects/${bpid}`, { token: t('admin') });
+
   // 보관된 프로젝트는 읽기 전용
   await call('PATCH', `/projects/${tpid}`, { token: t('manager'), body: { status: 'archived' } });
   const frozen = await bad({ title: 'x' }, 'member');

@@ -10,43 +10,67 @@ import {
   STATUS_LABELS,
   isOverdue,
 } from '../../constants/task.js';
+import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
 
-// 프로젝트 상세의 작업 섹션: 필터 + 목록(리스트 뷰) + 생성/수정 모달.
-// (칸반 보드는 M4 에서 이 목록 위에 추가된다.)
+const VIEW_KEY = 'team-pm:task-view';
+const readView = () => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'board';
+  } catch {
+    return 'board'; // 저장소를 쓸 수 없어도 동작해야 한다
+  }
+};
+
+// 프로젝트 상세의 작업 섹션: 필터 + 보드/목록 뷰 + 생성/수정 모달.
 export default function TaskSection({ project, archived }) {
-  const queryClient = useQueryClient();
+  const [view, setView] = useState(readView);
   const [filters, setFilters] = useState({ status: '', priority: '', assignee: '' });
   const [q, setQ] = useState('');
   const [modal, setModal] = useState(null); // null | { task? }
   const debouncedQ = useDebounced(q.trim());
 
-  const params = {
-    status: filters.status || undefined,
-    priority: filters.priority || undefined,
-    assignee: filters.assignee || undefined,
-    q: debouncedQ || undefined,
-    limit: 200,
+  const changeView = (next) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      /* 저장 실패는 무시 */
+    }
   };
-  const { data, isPending, isError, error } = useQuery({
-    queryKey: ['tasks', project.id, params],
-    queryFn: () => listProjectTasks(project.id, params),
-    placeholderData: (prev) => prev,
-  });
-
-  const changeStatus = useMutation({
-    mutationFn: ({ id, status }) => updateTask(id, { status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
-  });
 
   const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
   const filtered = Boolean(filters.status || filters.priority || filters.assignee || debouncedQ);
   const activeMembers = project.members.filter((m) => m.isActive);
+  const common = {
+    priority: filters.priority || undefined,
+    assignee: filters.assignee || undefined,
+    q: debouncedQ || undefined,
+  };
 
   return (
     <div className="card">
       <div className="row between">
-        <h2>작업{data ? ` (${data.meta.total})` : ''}</h2>
+        <div className="row">
+          <h2>작업</h2>
+          <div className="tabs" role="tablist" aria-label="보기 방식">
+            {[
+              ['board', '보드'],
+              ['list', '목록'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={view === value}
+                className={view === value ? 'tab active' : 'tab'}
+                onClick={() => changeView(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         {!archived && (
           <button type="button" onClick={() => setModal({})}>
             작업 추가
@@ -62,14 +86,16 @@ export default function TaskSection({ project, archived }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <select aria-label="상태 필터" value={filters.status} onChange={setFilter('status')}>
-          <option value="">상태 전체</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABELS[s]}
-            </option>
-          ))}
-        </select>
+        {view === 'list' && (
+          <select aria-label="상태 필터" value={filters.status} onChange={setFilter('status')}>
+            <option value="">상태 전체</option>
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           aria-label="우선순위 필터"
           value={filters.priority}
@@ -106,6 +132,50 @@ export default function TaskSection({ project, archived }) {
         )}
       </div>
 
+      {view === 'board' ? (
+        <TaskBoard
+          project={project}
+          archived={archived}
+          filters={common}
+          onOpenTask={(task) => setModal({ task })}
+        />
+      ) : (
+        <TaskList
+          project={project}
+          archived={archived}
+          params={{ ...common, status: filters.status || undefined, limit: 200 }}
+          filtered={filtered}
+          onOpenTask={(task) => setModal({ task })}
+        />
+      )}
+
+      {modal && (
+        <TaskModal
+          projectId={project.id}
+          members={project.members}
+          task={modal.task}
+          readOnly={archived}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TaskList({ project, archived, params, filtered, onOpenTask }) {
+  const queryClient = useQueryClient();
+  const { data, isPending, isError, error } = useQuery({
+    queryKey: ['tasks', project.id, 'list', params],
+    queryFn: () => listProjectTasks(project.id, params),
+    placeholderData: (prev) => prev,
+  });
+  const changeStatus = useMutation({
+    mutationFn: ({ id, status }) => updateTask(id, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+
+  return (
+    <>
       {isPending && <p className="muted">불러오는 중…</p>}
       {isError && (
         <p role="alert" className="error">
@@ -144,11 +214,7 @@ export default function TaskSection({ project, archived }) {
               {data.data.map((t) => (
                 <tr key={t.id}>
                   <td className="wrap">
-                    <button
-                      type="button"
-                      className="linklike title"
-                      onClick={() => setModal({ task: t })}
-                    >
+                    <button type="button" className="linklike title" onClick={() => onOpenTask(t)}>
                       {t.title}
                     </button>
                   </td>
@@ -182,16 +248,6 @@ export default function TaskSection({ project, archived }) {
           </table>
         </div>
       )}
-
-      {modal && (
-        <TaskModal
-          projectId={project.id}
-          members={project.members}
-          task={modal.task}
-          readOnly={archived}
-          onClose={() => setModal(null)}
-        />
-      )}
-    </div>
+    </>
   );
 }

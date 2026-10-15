@@ -426,3 +426,77 @@ td.overdue {
   gap: 0.75rem;
   padding: 1.25rem;
 }
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 12rem;
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.column.over {
+  border-color: var(--primary);
+}
+
+.column h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.column-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-height: 4rem;
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.task-card:hover {
+  border-color: var(--primary);
+}
+
+.task-card.overlay {
+  cursor: grabbing;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.task-card-title {
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.task-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.empty {
+  margin: auto;
+  text-align: center;
+}

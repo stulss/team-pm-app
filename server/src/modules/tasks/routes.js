@@ -55,6 +55,17 @@ const patchBody = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' });
 
+const moveBody = z
+  .object({
+    status,
+    // 대상 컬럼에서 이동 후 바로 위(before)·바로 아래(after)에 올 작업. 둘 다 없으면 맨 아래.
+    beforeTaskId: z.uuid().nullish(),
+    afterTaskId: z.uuid().nullish(),
+  })
+  .refine((v) => !v.beforeTaskId || v.beforeTaskId !== v.afterTaskId, {
+    message: 'beforeTaskId 와 afterTaskId 는 달라야 합니다.',
+  });
+
 // /projects/:id/tasks
 export const projectTasksRouter = Router({ mergeParams: true });
 projectTasksRouter.use(authenticate);
@@ -87,6 +98,10 @@ tasksRouter.get('/:id', requireTaskAccess(), (req, res) => {
 
 tasksRouter.patch('/:id', requireTaskAccess(), validate(patchBody), async (req, res) => {
   res.json(await service.update(req.task, req.project, req.body));
+});
+
+tasksRouter.patch('/:id/move', requireTaskAccess(), validate(moveBody), async (req, res) => {
+  res.json(await service.move(req.task, req.project, req.body));
 });
 
 tasksRouter.delete('/:id', requireTaskAccess(), async (req, res) => {

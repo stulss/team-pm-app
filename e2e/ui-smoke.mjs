@@ -57,6 +57,7 @@ await db.connect();
 const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED });
 const newPage = async () => {
   const ctx = await browser.newContext({
+    viewport: { width: 1400, height: 1000 },
     extraHTTPHeaders: process.env.VERCEL_BYPASS
       ? { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS }
       : {},
@@ -151,6 +152,10 @@ try {
       .click();
     await page.getByRole('heading', { name: '멤버 (2)' }).waitFor();
   });
+  // waitForFunction 의 콜백은 브라우저에서 실행되므로 document 를 쓸 수 있다.
+  const waitRows = (p, n) =>
+    // eslint-disable-next-line no-undef
+    p.waitForFunction((count) => document.querySelectorAll('tbody tr').length === count, n);
   const addTask = async (p, title, fill = async () => {}) => {
     await p.getByRole('button', { name: '작업 추가' }).click();
     const dialog = p.getByRole('dialog');
@@ -162,6 +167,7 @@ try {
   await step(
     '작업 추가: 담당자·우선순위·지난 마감일을 넣으면 목록에 나타나고 지연 표시',
     async () => {
+      await page.getByRole('tab', { name: '목록' }).click();
       await addTask(page, '디자인 시안', async (dialog) => {
         await dialog.getByLabel('설명').fill('피그마 시안 반영');
         await dialog.getByLabel('담당자').selectOption({ label: 'ui-member' });
@@ -172,27 +178,27 @@ try {
       await row.waitFor();
       await row.getByText('ui-member').waitFor();
       await row.getByText('(지연)').waitFor();
-      await page.getByRole('heading', { name: '작업 (1)' }).waitFor();
+      await waitRows(page, 1);
     },
   );
   await step('필터(담당자·검색)와 초기화', async () => {
     await addTask(page, '배포 준비');
-    await page.getByRole('heading', { name: '작업 (2)' }).waitFor();
+    await waitRows(page, 2);
 
     await page.getByLabel('담당자 필터').selectOption({ label: 'ui-member' });
-    await page.getByRole('heading', { name: '작업 (1)' }).waitFor();
+    await waitRows(page, 1);
     await page.getByRole('row', { name: /디자인 시안/ }).waitFor();
     if ((await page.getByRole('row', { name: /배포 준비/ }).count()) !== 0) {
       throw new Error('담당자 필터가 적용되지 않음');
     }
     await page.getByRole('button', { name: '필터 초기화' }).click();
-    await page.getByRole('heading', { name: '작업 (2)' }).waitFor();
+    await waitRows(page, 2);
 
     await page.getByLabel('작업 검색').fill('배포');
-    await page.getByRole('heading', { name: '작업 (1)' }).waitFor();
+    await waitRows(page, 1);
     await page.getByRole('row', { name: /배포 준비/ }).waitFor();
     await page.getByRole('button', { name: '필터 초기화' }).click();
-    await page.getByRole('heading', { name: '작업 (2)' }).waitFor();
+    await waitRows(page, 2);
   });
   await step('목록에서 상태를 바꾸면 저장되고 새로고침 후에도 유지', async () => {
     await Promise.all([
@@ -218,10 +224,78 @@ try {
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: '배포 준비', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: '삭제' }).click();
-    await page.getByRole('heading', { name: '작업 (1)' }).waitFor();
+    await waitRows(page, 1);
     if ((await page.getByRole('row', { name: /배포 준비/ }).count()) !== 0) {
       throw new Error('삭제된 작업이 남아 있음');
     }
+  });
+
+  const card = (p, title) => p.locator('[data-task-id]').filter({ hasText: title });
+  const column = (p, status) => p.locator(`section[data-status="${status}"]`);
+  // 포인터로 source 를 target 위로 끌어다 놓는다. where: 'center' | 'top'
+  const drag = async (p, source, target, where = 'center') => {
+    // 화면 밖의 카드는 마우스 이벤트를 받지 못하므로 먼저 스크롤한다.
+    await source.scrollIntoViewIfNeeded();
+    await target.scrollIntoViewIfNeeded();
+    const s = await source.boundingBox();
+    const t = await target.boundingBox();
+    const sx = s.x + s.width / 2;
+    const sy = s.y + s.height / 2;
+    await p.mouse.move(sx, sy);
+    await p.mouse.down();
+    await p.mouse.move(sx + 12, sy + 12, { steps: 4 }); // 드래그 시작 거리(6px)를 넘긴다
+    await p.mouse.move(t.x + t.width / 2, where === 'top' ? t.y + 4 : t.y + t.height / 2, {
+      steps: 20,
+    });
+    await p.mouse.up();
+  };
+  const dbTask = async (title) =>
+    (await db.query('SELECT status, position FROM tasks WHERE title = $1', [title])).rows[0];
+  const pollUntil = async (fn, label) => {
+    for (let i = 0; i < 40; i += 1) {
+      if (await fn()) return;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    throw new Error(`시간 초과: ${label}`);
+  };
+
+  await step('보드: 카드가 컬럼에 보이고, 다른 컬럼으로 드래그하면 저장됨', async () => {
+    await page.getByRole('tab', { name: '보드' }).click();
+    await column(page, 'todo').locator('[data-task-id]', { hasText: '디자인 시안 v2' }).waitFor();
+    await drag(page, card(page, '디자인 시안 v2'), column(page, 'in_progress'));
+    await column(page, 'in_progress')
+      .locator('[data-task-id]', { hasText: '디자인 시안 v2' })
+      .waitFor();
+    await pollUntil(
+      async () => (await dbTask('디자인 시안 v2')).status === 'in_progress',
+      'DB 상태',
+    );
+    await page.reload(); // 보기 방식(보드)은 유지된다
+    await column(page, 'in_progress')
+      .locator('[data-task-id]', { hasText: '디자인 시안 v2' })
+      .waitFor();
+  });
+  await step('보드: 같은 컬럼에서 순서를 바꾸면 새로고침 후에도 유지', async () => {
+    await addTask(page, '첫째');
+    await addTask(page, '둘째');
+    const todoTitles = () => column(page, 'todo').locator('.task-card-title').allTextContents();
+    await pollUntil(async () => (await todoTitles()).join() === '첫째,둘째', '초기 순서');
+    await drag(page, card(page, '둘째'), card(page, '첫째'), 'top');
+    await pollUntil(async () => (await todoTitles()).join() === '둘째,첫째', '드래그 후 순서');
+    await pollUntil(
+      async () => (await dbTask('둘째')).position < (await dbTask('첫째')).position,
+      'DB position',
+    );
+    await page.reload();
+    await pollUntil(async () => (await todoTitles()).join() === '둘째,첫째', '새로고침 후 순서');
+  });
+  await step('보드: 담당자 필터가 보드에도 적용됨', async () => {
+    await page.getByLabel('담당자 필터').selectOption({ label: 'ui-member' });
+    await card(page, '디자인 시안 v2').waitFor();
+    await pollUntil(async () => (await card(page, '첫째').count()) === 0, '필터 적용');
+    await page.getByRole('button', { name: '필터 초기화' }).click();
+    await card(page, '첫째').waitFor();
+    await page.getByRole('tab', { name: '목록' }).click();
   });
 
   await step('보관 → 진행 중 목록에서 사라지고 보관됨 탭에 나타남', async () => {
@@ -271,6 +345,7 @@ try {
     }
   });
   await step('member: 작업을 만들 수 있고, 남이 만든 작업에는 삭제 버튼이 없음', async () => {
+    await member.getByRole('tab', { name: '목록' }).click();
     await addTask(member, 'member 작업');
     await member.getByRole('row', { name: /member 작업/ }).waitFor();
 

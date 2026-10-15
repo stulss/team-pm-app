@@ -2,6 +2,8 @@
 // repository.js 와 같은 시그니처를 가지며, 행은 DB 행(snake_case)과 같은 모양이다.
 // SQL 자체는 검증하지 못한다 — 실제 DB 가 연결되면 통합 테스트로 보강한다.
 import crypto from 'node:crypto';
+import { badRequest, conflict } from '../../utils/errors.js';
+import { positionBetween } from '../../utils/position.js';
 
 export const store = { users: [], tokens: [], projects: [], members: [], tasks: [] };
 
@@ -286,6 +288,54 @@ export const tasksRepo = {
     }
     t.updated_at = new Date();
     return withNames(t);
+  },
+  // 실제 repository.moveTask 와 같은 규칙을 메모리에서 재현한다. (SQL 은 실DB 스모크가 검증)
+  async moveTask(client, task, { status, beforeId, afterId }) {
+    const column = () =>
+      store.tasks.filter((t) => t.project_id === task.project_id && t.status === status);
+    const ids = [beforeId, afterId].filter(Boolean);
+    const read = () => {
+      const byId = Object.fromEntries(
+        column()
+          .filter((t) => t.id !== task.id)
+          .map((t) => [t.id, t.position]),
+      );
+      if (ids.some((id) => byId[id] === undefined)) {
+        throw badRequest('이웃 작업이 대상 컬럼에 없습니다.');
+      }
+      return { before: byId[beforeId], after: byId[afterId] };
+    };
+
+    let position;
+    if (ids.length === 0) {
+      const others = column().filter((t) => t.id !== task.id);
+      position = positionBetween(
+        others.length ? Math.max(...others.map((t) => t.position)) : undefined,
+        undefined,
+      );
+    } else {
+      let { before, after } = read();
+      position = positionBetween(before, after);
+      if (position === null) {
+        column()
+          .sort((a, b) => a.position - b.position || a.created_at - b.created_at)
+          .forEach((t, i) => {
+            t.position = (i + 1) * STEP;
+          });
+        ({ before, after } = read());
+        position = positionBetween(before, after);
+        if (position === null) throw conflict('STALE_POSITION', '작업 순서가 바뀌었습니다.');
+      }
+    }
+    const t = store.tasks.find((x) => x.id === task.id);
+    if (status === 'done') {
+      if (t.status !== 'done') t.completed_at = new Date();
+    } else {
+      t.completed_at = null;
+    }
+    t.status = status;
+    t.position = position;
+    t.updated_at = new Date();
   },
   async deleteTask(id) {
     const before = store.tasks.length;

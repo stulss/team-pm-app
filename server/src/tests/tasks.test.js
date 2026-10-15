@@ -419,3 +419,147 @@ describe('GET /tasks/mine', () => {
     expect(store.tasks.find((t) => t.title === 'C').assignee_id).toBe(people.member2.id);
   });
 });
+
+describe('PATCH /tasks/:id/move', () => {
+  let a, b, c, d;
+  const move = (who, id, body) =>
+    request(app).patch(`/api/v1/tasks/${id}/move`).set(as(who)).send(body);
+  const order = (status) =>
+    store.tasks
+      .filter((t) => t.status === status)
+      .sort((x, y) => x.position - y.position)
+      .map((t) => t.title);
+
+  beforeEach(async () => {
+    a = (await createTask('manager', { title: 'A' })).body; // todo 1024
+    b = (await createTask('manager', { title: 'B' })).body; // todo 2048
+    c = (await createTask('manager', { title: 'C' })).body; // todo 3072
+    d = (await createTask('manager', { title: 'D', status: 'in_progress' })).body; // 1024
+  });
+
+  it('같은 컬럼 안에서 두 작업 사이로 옮기면 중간 position 을 받는다', async () => {
+    const res = await move('member', c.id, {
+      status: 'todo',
+      beforeTaskId: a.id,
+      afterTaskId: b.id,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: c.id, status: 'todo', position: 1536 });
+    expect(order('todo')).toEqual(['A', 'C', 'B']);
+  });
+
+  it('맨 위로 (afterTaskId 만) / 맨 아래로 (beforeTaskId 만)', async () => {
+    const top = await move('member', c.id, { status: 'todo', afterTaskId: a.id });
+    expect(top.body.position).toBe(512);
+    expect(order('todo')).toEqual(['C', 'A', 'B']);
+
+    const bottom = await move('member', c.id, { status: 'todo', beforeTaskId: b.id });
+    expect(bottom.body.position).toBe(3072);
+    expect(order('todo')).toEqual(['A', 'B', 'C']);
+  });
+
+  it('다른 컬럼의 작업 아래/사이/빈 컬럼으로 옮길 수 있다', async () => {
+    const below = await move('member', a.id, { status: 'in_progress', beforeTaskId: d.id });
+    expect(below.body).toMatchObject({ status: 'in_progress', position: 2048 });
+
+    const empty = await move('member', b.id, { status: 'review' });
+    expect(empty.body).toMatchObject({ status: 'review', position: 1024 });
+
+    const between = await move('member', c.id, {
+      status: 'in_progress',
+      beforeTaskId: d.id,
+      afterTaskId: a.id,
+    });
+    expect(between.body.position).toBe(1536);
+    expect(order('in_progress')).toEqual(['D', 'C', 'A']);
+  });
+
+  it('이웃 없이 기존 컬럼으로 옮기면 맨 아래에 붙는다', async () => {
+    const res = await move('member', a.id, { status: 'in_progress' });
+    expect(res.body.position).toBe(2048);
+  });
+
+  it('done 으로 옮기면 completedAt 이 채워지고, done 안에서 움직이면 유지, 나가면 비워진다', async () => {
+    const done = await move('member', a.id, { status: 'done' });
+    expect(done.body.completedAt).toBeTruthy();
+    const first = done.body.completedAt;
+
+    const other = await createTask('manager', { title: 'E', status: 'done' });
+    const within = await move('member', a.id, { status: 'done', beforeTaskId: other.body.id });
+    expect(within.body.completedAt).toBe(first);
+
+    const out = await move('member', a.id, { status: 'review' });
+    expect(out.body.completedAt).toBeNull();
+  });
+
+  it('간격이 고갈되면 컬럼을 재정렬하고 순서를 유지한다', async () => {
+    store.tasks.find((t) => t.id === b.id).position =
+      store.tasks.find((t) => t.id === a.id).position + 0.0005;
+    const res = await move('member', c.id, {
+      status: 'todo',
+      beforeTaskId: a.id,
+      afterTaskId: b.id,
+    });
+    expect(res.status).toBe(200);
+    expect(order('todo')).toEqual(['A', 'C', 'B']);
+    const positions = store.tasks
+      .filter((t) => t.status === 'todo')
+      .map((t) => t.position)
+      .sort((x, y) => x - y);
+    expect(positions[1] - positions[0]).toBeGreaterThan(100);
+    expect(positions[2] - positions[1]).toBeGreaterThan(100);
+  });
+
+  it('이웃 순서가 뒤집혀 있으면 409 STALE_POSITION', async () => {
+    const res = await move('member', c.id, {
+      status: 'todo',
+      beforeTaskId: b.id,
+      afterTaskId: a.id,
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('STALE_POSITION');
+  });
+
+  it('이웃이 대상 컬럼에 없거나(다른 컬럼/없는 작업/자기 자신) 같은 ID 를 두 번 주면 400', async () => {
+    expect((await move('member', c.id, { status: 'todo', beforeTaskId: d.id })).status).toBe(400);
+    expect(
+      (await move('member', c.id, { status: 'todo', beforeTaskId: crypto.randomUUID() })).status,
+    ).toBe(400);
+    expect((await move('member', c.id, { status: 'todo', afterTaskId: c.id })).status).toBe(400);
+    expect(
+      (await move('member', c.id, { status: 'todo', beforeTaskId: a.id, afterTaskId: a.id }))
+        .status,
+    ).toBe(400);
+    expect(store.tasks.find((t) => t.id === c.id).position).toBe(3072);
+  });
+
+  it('다른 프로젝트의 작업을 이웃으로 줄 수 없다', async () => {
+    const other = await request(app)
+      .post('/api/v1/projects')
+      .set(as('manager'))
+      .send({ name: '다른 프로젝트' });
+    const foreign = (await createTask('manager', { title: 'X' }, other.body.id)).body;
+    expect((await move('member', c.id, { status: 'todo', beforeTaskId: foreign.id })).status).toBe(
+      400,
+    );
+  });
+
+  it('권한: 비멤버 403, 없는 작업 404, 잘못된 body 400, 인증 없으면 401', async () => {
+    expect((await move('outsider', c.id, { status: 'todo' })).status).toBe(403);
+    expect((await move('member', crypto.randomUUID(), { status: 'todo' })).status).toBe(404);
+    expect((await move('member', c.id, { status: 'nope' })).status).toBe(400);
+    expect((await move('member', c.id, {})).status).toBe(400);
+    const res = await request(app).patch(`/api/v1/tasks/${c.id}/move`).send({ status: 'todo' });
+    expect(res.status).toBe(401);
+  });
+
+  it('보관된 프로젝트에서는 409 PROJECT_ARCHIVED', async () => {
+    await request(app)
+      .patch(`/api/v1/projects/${pid}`)
+      .set(as('manager'))
+      .send({ status: 'archived' });
+    const res = await move('member', c.id, { status: 'review' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('PROJECT_ARCHIVED');
+  });
+});

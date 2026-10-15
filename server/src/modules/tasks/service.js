@@ -1,3 +1,4 @@
+import { withTransaction } from '../../config/db.js';
 import { badRequest, conflict, forbidden } from '../../utils/errors.js';
 import * as projectsRepo from '../projects/repository.js';
 import * as usersRepo from '../users/repository.js';
@@ -66,6 +67,15 @@ export async function update(task, project, patch) {
     await assertAssignable(project.id, patch.assigneeId);
   }
   return repo.toTask(await repo.updateTask(task.id, patch, task));
+}
+
+// 칸반 이동: 대상 컬럼의 앞/뒤 이웃을 알려주면 서버가 position 을 계산한다. 상태가 바뀌면 completed_at 도 맞춘다.
+export async function move(task, project, { status, beforeTaskId, afterTaskId }) {
+  assertWritable(project);
+  await withTransaction((client) =>
+    repo.moveTask(client, task, { status, beforeId: beforeTaskId, afterId: afterTaskId }),
+  );
+  return repo.toTask(await repo.findById(task.id));
 }
 
 export async function remove(task, project, user) {
