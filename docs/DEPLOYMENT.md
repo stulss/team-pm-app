@@ -1,6 +1,8 @@
 # 배포 계획
 
 > 결정: **Vercel + Supabase.** 프론트와 Express를 하나의 Vercel 프로젝트로 배포한다(동일 오리진).
+> 비용 원칙: **무료 플랜 범위 안에서만 사용한다**(Vercel Hobby, Supabase Free, Redis 무료 옵션). Redis는 Socket.io 다중 인스턴스 전달 용도로만 쓴다. 한도 초과가 확인되면 기능을 줄이거나 다시 결정한다.
+> 일정: 첫 배포는 M1 직후(M1.5). M0는 로컬 개발만 한다.
 
 ## 1. 구성
 
@@ -34,9 +36,9 @@
 
 > 기능은 REST 쓰기 → 소켓 푸시 구조라, REST를 처리한 인스턴스에서 `io.to(room).emit()` 하면 Redis adapter가 다른 인스턴스의 소켓에 전달한다.
 
-## 3. 위험과 검증 (M0 스파이크)
+## 3. 위험과 검증 (M1.5 스파이크)
 
-Vercel에서 Socket.io + Redis adapter 조합이 이 앱 요구(1초 내 반영)를 만족하는지 **M0에서 먼저 검증한다.**
+Vercel에서 Socket.io + Redis adapter 조합이 이 앱 요구(1초 내 반영)를 만족하는지 **M1.5(첫 배포)에서 먼저 검증한다.**
 
 - [ ] 배포본에서 두 브라우저가 WebSocket으로 연결되고 메시지가 서로 전달됨
 - [ ] 서로 다른 인스턴스에 붙어도 전달됨(Redis adapter 경유)
@@ -70,7 +72,7 @@ Vercel 프로젝트 설정에 Production / Preview 를 나눠 등록한다. 비�
 
 | 시점 | 배포 내용 | 확인 |
 |---|---|---|
-| M0 | 빈 껍데기(`/health`, 빈 React 화면) + **WebSocket 스파이크** | `/health` 가 DB 연결과 함께 응답, HTTPS, 스파이크 체크리스트(§3) |
+| M1.5 | 첫 배포: `/health`, 로그인 + **WebSocket 스파이크** | `/health` 가 DB 연결과 함께 응답, HTTPS, 쿠키 동작, 스파이크 체크리스트(§3) |
 | M1 | 인증 | 로그인·새로고침 세션 유지(쿠키) |
 | M3.5 | **1차 점검 배포** | `ROADMAP.md` 1차 확인 목록 |
 | M5 | 실시간 | WebSocket 연결·재연결·다중 인스턴스 전달 |

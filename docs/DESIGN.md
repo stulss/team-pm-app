@@ -401,7 +401,6 @@ team-pm-app/
 │  └─ DESIGN.md
 ├─ package.json                 # workspaces: ["client", "server"]
 ├─ vercel.json                  # 빌드/라우팅(/api → Express 함수), crons
-├─ docker-compose.yml           # (선택) 오프라인 개발용 로컬 postgres. 기본은 Supabase 개발 프로젝트 사용
 ├─ .env.example
 ├─ .gitignore
 ├─ README.md
@@ -486,8 +485,9 @@ team-pm-app/
 
 | M | 목표 | 주요 작업 | 완료 기준 |
 |---|---|---|---|
-| **M0** (0.5~1일) | 기반 세팅 + 빈 껍데기 배포 | 모노레포, **Supabase 프로젝트 생성(dev/prod 분리) 및 `DATABASE_URL` 연결 확인**, env 검증, eslint/prettier, 마이그레이션 도구, `/health`, Vercel 프로젝트 연결, Redis 연결, **WebSocket 스파이크**(Express+Socket.io+Redis adapter로 두 클라이언트 간 메시지 전달을 배포본에서 검증), Vercel Cron 요금제 제한 확인 | 로컬에서 client·server·DB 기동, **배포 URL의 `/health`가 DB 연결과 함께 응답**, 스파이크 통과(실패 시 §0 실시간 방식 재검토) |
+| **M0** (0.5~1일) | 기반 세팅 | 모노레포, env 검증, eslint/prettier, 마이그레이션 도구, `/health`, Socket.io 스파이크 코드, Vercel 진입점·설정 | 로컬에서 client·server 기동, lint·테스트·빌드 통과 |
 | **M1** (2~3일) | 인증·사용자 | users/refresh_tokens 마이그레이션, 가입·로그인·refresh·logout·me, 역할 미들웨어, 클라 로그인/가입 화면, ProtectedRoute, axios 인터셉터 | 새로고침 후 세션 유지, 역할별 라우트 차단. **배포본에서 쿠키 동작 확인** |
+| **M1.5** (0.5~1일) | **첫 배포 + 스파이크** | **Supabase 프로젝트 생성(dev/prod 분리) 및 `DATABASE_URL` 연결**, Vercel 프로젝트 연결, Redis(Marketplace) 연결, 환경변수 등록, 배포, **WebSocket 스파이크**(Express+Socket.io+Redis adapter로 두 클라이언트 간 메시지 전달을 배포본에서 검증), Vercel Cron·Redis 무료 한도 확인 | **배포 URL의 `/health`가 DB 연결과 함께 응답**, 로그인·새로고침 쿠키 동작, 스파이크 통과(실패 시 §0 실시간 방식 재검토) |
 | **M2** (2일) | 프로젝트·멤버 | projects/project_members CRUD, requireProjectMember, 프로젝트 목록/생성 UI, 멤버 관리 UI, Admin 사용자 관리 | Manager가 프로젝트 생성 후 멤버 초대, 비멤버 접근 403 |
 | **M3** (3일) | 작업 CRUD | tasks 마이그레이션/인덱스, 작업 CRUD API, 필터, 작업 모달(담당자·우선순위·마감일), 리스트 뷰 | 작업 생성·수정·삭제·필터 동작 |
 | **M3.5** (0.5일) | **1차 배포·스모크 테스트** | 최종 배포, 가입→로그인→프로젝트→작업 흐름 점검, 403 확인 | 배포 URL에서 전체 흐름 통과 → **1차 점검** |
@@ -537,5 +537,5 @@ team-pm-app/
 2. 한 사용자가 여러 팀(워크스페이스)에 속할 필요가 있는지 (현재는 단일 팀 가정)
 3. 이메일 알림이 필요한지 (현재는 앱 내 알림만)
 4. 칸반 컬럼을 4개로 고정해도 되는지
-5. ~~배포 대상~~ → **결정: Vercel(프론트+Express 함수) + Supabase.** 소켓은 Redis adapter, cron은 Vercel Cron. 스파이크(M0) 실패 시 Express만 별도 상시 서버(Render 등)로 분리하는 안으로 되돌린다
+5. ~~배포 대상~~ → **결정: Vercel(프론트+Express 함수) + Supabase.** 소켓은 Redis adapter, cron은 Vercel Cron. 스파이크(M1.5) 실패 시 Express만 별도 상시 서버(Render 등)로 분리하는 안으로 되돌린다
 6. Supabase를 DB로만 쓸지, 추후 Supabase Auth/Realtime으로 대체할 여지를 둘지 (현재 설계는 DB 전용)

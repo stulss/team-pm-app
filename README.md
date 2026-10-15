@@ -2,7 +2,7 @@
 
 2~10명 규모의 원격 팀이 프로젝트와 작업을 칸반 보드로 함께 관리하는 웹앱.
 
-> 상태: M0(기반 세팅) 코드 작성 완료, 배포 검증 대기.
+> 상태: M0(기반 세팅) 완료. 다음은 M1(인증), 첫 배포는 M1 직후.
 
 ## 스택
 
@@ -28,7 +28,7 @@ React(Vite) · Node.js + Express · Supabase(관리형 PostgreSQL, DB 전용) ·
 
 ## 개발 환경
 
-요구 사항: Node 22 이상, Supabase(dev) 프로젝트 또는 로컬 Postgres(`docker compose up -d`).
+요구 사항: Node 22 이상, Supabase(dev) 프로젝트.
 
 ```
 npm install
