@@ -856,3 +856,41 @@ label.inline {
   align-items: center;
   gap: 0.4rem;
 }
+
+/* 멘션 */
+.mention {
+  background: color-mix(in srgb, var(--primary, #2563eb) 15%, transparent);
+  color: var(--primary, #2563eb);
+  border-radius: 4px;
+  padding: 0 0.2em;
+  font-weight: 600;
+}
+.mention-box {
+  position: relative;
+}
+.mention-box textarea {
+  width: 100%;
+}
+.mention-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  margin: 2px 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 15%);
+}
+.mention-list li {
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.mention-list li.active,
+.mention-list li:hover {
+  background: color-mix(in srgb, var(--primary, #2563eb) 15%, transparent);
+}

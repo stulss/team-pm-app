@@ -41,10 +41,10 @@ export async function notifyTaskAssigned({ task, actor }) {
 }
 
 // 댓글 → 작업의 담당자와 작성자 (댓글 작성자 본인 제외, 활성 프로젝트 멤버만)
-export async function notifyCommentAdded({ task, actor }) {
+export async function notifyCommentAdded({ task, actor, excludeUserIds = [] }) {
   try {
     const candidates = [...new Set([task.assignee_id, task.created_by])].filter(
-      (id) => id && id !== actor.id,
+      (id) => id && id !== actor.id && !excludeUserIds.includes(id),
     );
     const recipients = await repo.filterNotifiable(task.project_id, candidates);
     await createAndPush(
@@ -58,6 +58,25 @@ export async function notifyCommentAdded({ task, actor }) {
     );
   } catch (err) {
     logger.error({ err: err.message }, 'comment notification failed');
+  }
+}
+
+// 댓글에서 멘션된 사용자 (본인 제외, 활성 프로젝트 멤버만)
+export async function notifyMentioned({ task, actor, userIds }) {
+  try {
+    const candidates = [...new Set(userIds)].filter((id) => id !== actor.id);
+    const recipients = await repo.filterNotifiable(task.project_id, candidates);
+    await createAndPush(
+      recipients.map((userId) => ({
+        userId,
+        type: 'mention',
+        taskId: task.id,
+        actorId: actor.id,
+        message: `${actor.name}님이 '${task.title}' 작업의 댓글에서 회원님을 언급했습니다.`,
+      })),
+    );
+  } catch (err) {
+    logger.error({ err: err.message }, 'mention notification failed');
   }
 }
 

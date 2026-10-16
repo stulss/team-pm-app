@@ -1,4 +1,4 @@
-import { query } from '../../config/db.js';
+import { query, withTransaction } from '../../config/db.js';
 
 export const DELETED_BODY = '삭제된 댓글';
 
@@ -9,6 +9,7 @@ export const toComment = (row) =>
     author: { id: row.author_id, name: row.author_name },
     // 삭제된 댓글은 본문을 가린다.
     body: row.deleted_at ? DELETED_BODY : row.body,
+    mentions: row.deleted_at ? [] : (row.mentions ?? []),
     deleted: Boolean(row.deleted_at),
     edited: !row.deleted_at && new Date(row.updated_at) > new Date(row.created_at),
     createdAt: row.created_at,
@@ -16,7 +17,12 @@ export const toComment = (row) =>
   };
 
 const SELECT = `
-  SELECT c.*, u.name AS author_name, t.project_id, t.title AS task_title
+  SELECT c.*, u.name AS author_name, t.project_id, t.title AS task_title,
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', cm.user_id, 'name', cm.name)
+                            ORDER BY cm.created_at, cm.user_id)
+            FROM comment_mentions cm WHERE cm.comment_id = c.id),
+           '[]'::json) AS mentions
   FROM comments c
   JOIN users u ON u.id = c.author_id
   JOIN tasks t ON t.id = c.task_id`;
@@ -34,21 +40,53 @@ export async function listByTask(taskId) {
   return rows;
 }
 
-export async function insertComment({ taskId, authorId, body }) {
+// 프로젝트의 활성 멤버만 돌려준다. 멘션 대상 검증과 이름 스냅샷에 쓴다.
+export async function memberNames(projectId, userIds) {
+  if (userIds.length === 0) return [];
   const { rows } = await query(
-    'INSERT INTO comments (task_id, author_id, body) VALUES ($1, $2, $3) RETURNING id',
-    [taskId, authorId, body],
+    `SELECT u.id, u.name FROM users u
+     JOIN project_members m ON m.user_id = u.id AND m.project_id = $1
+     WHERE u.id = ANY($2::uuid[]) AND u.is_active`,
+    [projectId, userIds],
   );
-  return findById(rows[0].id);
+  return rows;
 }
 
-// 삭제된 댓글은 수정할 수 없다(갱신되는 행이 없으면 null).
-export async function updateBody(id, body) {
-  const { rowCount } = await query(
-    'UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL',
-    [id, body],
+async function insertMentions(client, commentId, mentions) {
+  if (mentions.length === 0) return;
+  await client.query(
+    `INSERT INTO comment_mentions (comment_id, user_id, name)
+     SELECT $1, * FROM unnest($2::uuid[], $3::text[])`,
+    [commentId, mentions.map((m) => m.id), mentions.map((m) => m.name)],
   );
-  return rowCount === 1 ? findById(id) : null;
+}
+
+// 댓글과 멘션을 한 트랜잭션으로 저장한다. mentions: [{ id, name }]
+export async function insertComment({ taskId, authorId, body, mentions = [] }) {
+  const id = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'INSERT INTO comments (task_id, author_id, body) VALUES ($1, $2, $3) RETURNING id',
+      [taskId, authorId, body],
+    );
+    await insertMentions(client, rows[0].id, mentions);
+    return rows[0].id;
+  });
+  return findById(id);
+}
+
+// 삭제된 댓글은 수정할 수 없다(갱신되는 행이 없으면 null). 멘션은 통째로 교체한다.
+export async function updateBody(id, body, mentions = []) {
+  const updated = await withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      'UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL',
+      [id, body],
+    );
+    if (rowCount !== 1) return false;
+    await client.query('DELETE FROM comment_mentions WHERE comment_id = $1', [id]);
+    await insertMentions(client, id, mentions);
+    return true;
+  });
+  return updated ? findById(id) : null;
 }
 
 export async function softDelete(id) {

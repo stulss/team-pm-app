@@ -548,6 +548,7 @@ const withAuthor = (c) => ({
   author_name: store.users.find((u) => u.id === c.author_id)?.name,
   project_id: store.tasks.find((t) => t.id === c.task_id)?.project_id,
   task_title: store.tasks.find((t) => t.id === c.task_id)?.title,
+  mentions: (c.mentions ?? []).map((m) => ({ ...m })),
 });
 
 export const commentsRepo = {
@@ -561,7 +562,17 @@ export const commentsRepo = {
       .sort((a, b) => a.created_at - b.created_at)
       .map(withAuthor);
   },
-  async insertComment({ taskId, authorId, body }) {
+  async memberNames(projectId, ids) {
+    return ids
+      .map((id) => store.users.find((u) => u.id === id))
+      .filter(
+        (u) =>
+          u?.is_active &&
+          store.members.some((m) => m.project_id === projectId && m.user_id === u.id),
+      )
+      .map((u) => ({ id: u.id, name: u.name }));
+  },
+  async insertComment({ taskId, authorId, body, mentions = [] }) {
     const now = new Date(Date.now() + store.comments.length);
     const row = {
       id: crypto.randomUUID(),
@@ -571,14 +582,16 @@ export const commentsRepo = {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      mentions: mentions.map((m) => ({ ...m })),
     };
     store.comments.push(row);
     return withAuthor(row);
   },
-  async updateBody(id, body) {
+  async updateBody(id, body, mentions = []) {
     const c = store.comments.find((x) => x.id === id && !x.deleted_at);
     if (!c) return null;
     c.body = body;
+    c.mentions = mentions.map((m) => ({ ...m }));
     c.updated_at = new Date(c.created_at.getTime() + 5000);
     return withAuthor(c);
   },

@@ -120,10 +120,16 @@ erDiagram
         timestamptz updated_at
         timestamptz deleted_at "soft delete"
     }
+    comment_mentions {
+        uuid comment_id PK_FK
+        uuid user_id PK_FK
+        varchar name "멘션 시점의 이름(본문의 @이름 과 대응)"
+        timestamptz created_at
+    }
     notifications {
         uuid id PK
         uuid user_id FK
-        enum type "task_assigned|due_soon|comment_added|task_overdue"
+        enum type "task_assigned|due_soon|comment_added|task_overdue|mention"
         uuid task_id FK
         uuid actor_id FK "nullable"
         text message
@@ -184,6 +190,11 @@ erDiagram
 **comments**
 - 인덱스: `(task_id, created_at)`
 - 삭제는 soft delete (`deleted_at`), 본문은 응답 시 "삭제된 댓글"로 마스킹
+
+**comment_mentions** (M11 멘션)
+- 댓글이 누구를 멘션했는지 **명시적으로** 저장한다(본문 문자열을 해석해 추측하지 않는다). PK `(comment_id, user_id)`, 둘 다 `ON DELETE CASCADE`.
+- `name` 은 멘션한 시점의 이름이다. 본문의 `@이름` 텍스트와 짝이 되어, 나중에 이름이 바뀌어도 화면에서 강조 표시가 어긋나지 않는다.
+- 인덱스: `(user_id, created_at DESC)` — "나를 멘션한 글" 모아보기(M14)용.
 
 **notifications**
 - 인덱스: `(user_id, is_read, created_at DESC)`
@@ -295,8 +306,8 @@ erDiagram
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|
 | GET | `/tasks/:id/comments` | 댓글 목록 | 멤버 |
-| POST | `/tasks/:id/comments` | 댓글 작성 | 멤버 |
-| PATCH | `/comments/:id` | 수정 | 작성자 |
+| POST | `/tasks/:id/comments` | 댓글 작성 `{ body, mentionIds? }` | 멤버 |
+| PATCH | `/comments/:id` | 수정 `{ body, mentionIds? }` | 작성자 |
 | DELETE | `/comments/:id` | 삭제 | 작성자/Admin/Manager |
 
 > 구현 규칙(M6): 권한표의 "댓글 수정: Admin/Manager 모두"와 API 표의 "수정: 작성자"가 달랐고, **수정은 작성자만**으로 확정했다(남의 글을 고치지 않는다). 삭제는 작성자·Admin·Manager(프로젝트 멤버). 삭제는 소프트 삭제이며 응답에서는 `body: "삭제된 댓글"`, `deleted: true` 로 가리고 목록에는 남긴다. 수정된 댓글은 `edited: true`. 댓글은 최대 5000자, 앞뒤 공백 제거, 본문은 문자열로만 저장·렌더링한다(HTML 해석 안 함). 보관된 프로젝트에서는 작성·수정·삭제가 409. 작업 응답에는 삭제되지 않은 댓글 수 `commentCount` 가 포함된다. 변경은 `comment:created/updated/deleted` 로 프로젝트 방에 전달된다.
@@ -319,6 +330,8 @@ erDiagram
 > 구현 규칙(M10b): 공개 조회 응답은 `{ project: { name, status }, expiresAt, data, nextCursor }` 이다. 없는·만료된·폐기된 토큰은 모두 **같은 404**(`SHARE_LINK_NOT_FOUND`)로 응답해 구분할 수 없게 한다. 공개 응답에서는 `member.*`·`share.*` 기록을 **제외**한다(팀원 정보와 공유 사실 자체는 외부에 보이지 않게). 작업 제목·담당자 이름·행위자 이름은 보이므로, 소유자가 그 사실을 알고 만들도록 화면에서 안내한다. 공개 응답은 `Cache-Control: no-store`, `X-Robots-Tag: noindex` 이고 IP 기준 분당 120회로 제한한다. 링크 생성·폐기는 활동 기록(`share.created`/`share.revoked`)에 남아 프로젝트 멤버가 볼 수 있다. 보관(archived) 프로젝트도 공유 조회는 된다.
 >
 > **CSV 내보내기**는 서버 API 를 더 두지 않고, 클라이언트가 기존 `GET /projects/:id/activities` 를 페이지(최대 200건)로 읽어 **최근 2000건**까지 CSV 로 만든다(프로젝트 멤버 누구나, 본인이 볼 수 있는 범위 그대로). 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM 을 붙이고, `=`·`+`·`-`·`@` 로 시작하는 값은 앞에 `'` 를 붙여 수식 주입을 막는다.
+
+> 구현 규칙(M11 멘션): 요청 본문은 `{ body, mentionIds?: uuid[] }`(최대 10명)이고, 응답의 댓글에는 `mentions: [{ id, name }]` 이 붙는다(삭제된 댓글은 빈 배열). 멘션은 클라이언트의 자동완성에서 고른 **ID 를 명시적으로** 보낸다. 서버는 각 ID 가 **활성 프로젝트 멤버**인지 확인하고(아니면 400 `INVALID_MENTION`), 본문에 그 사람의 `@이름` 텍스트가 실제로 들어 있어야 한다(보이지 않는 멘션으로 알림만 보내는 것을 막기 위함, 아니면 400). 중복 ID 는 합치고, 본인 멘션은 허용하되 알림은 보내지 않는다. 수정(PATCH)은 멘션 목록을 **통째로 교체**한다(보내지 않으면 비움). 알림은 **새로 추가된 멘션**에만 보낸다(수정으로 같은 사람을 다시 알리지 않고, 빠진 사람의 알림을 회수하지도 않는다).
 
 #### Notifications
 | 메서드 | 경로 | 설명 | 권한 |
@@ -467,7 +480,8 @@ erDiagram
 | 작업 생성/수정으로 담당자 지정·변경 | 새 담당자 (본인이 본인에게 지정 시 제외) | `task_assigned` |
 | 마감일이 오늘·내일 & 미완료 (cron, 매일 1회) | 담당자 | `due_soon` (`due_notified_at` 로 1회만) |
 | 마감 경과 & 미완료 (cron, 매일 오전) | 담당자 | `task_overdue` |
-| 내 담당 작업에 댓글 | 담당자·작성자 (댓글 작성자 제외) | `comment_added` |
+| 내 담당 작업에 댓글 | 담당자·작성자 (댓글 작성자 제외, **그 댓글에서 멘션된 사람은 제외**) | `comment_added` |
+| 댓글에서 `@이름` 으로 멘션 | 멘션된 활성 프로젝트 멤버 (본인 제외) | `mention` — 같은 댓글에서 `comment_added` 와 겹치면 `mention` 하나만 보낸다 |
 
 > 구현 규칙(M7): 알림은 부가 기능이라 생성에 실패해도 원래 요청을 깨뜨리지 않는다. 수신자는 활성 사용자이면서 해당 프로젝트 멤버여야 한다. 생성 즉시 `notification:new` 를 수신자의 개인 방(`user:{id}`)으로 푸시한다. 마감 알림은 `GET /api/cron/daily`(Vercel Cron, 하루 1회, `Authorization: Bearer CRON_SECRET`) 가 만든다 — 마감일이 오늘·내일인 미완료 작업은 `due_soon`, 오늘 이전은 `task_overdue`. 각각 `due_notified_at` / `overdue_notified_at` 으로 한 번만 알리고(대상 확보와 알림 생성은 한 트랜잭션), 마감일이 바뀌면 둘 다 초기화한다. 완료·담당자 없음·보관된 프로젝트·비활성/제거된 담당자의 작업은 제외한다. "오늘"은 `APP_TIMEZONE`(기본 Asia/Seoul) 기준이다. 같은 Cron 이 90일 지난 알림과 만료된 refresh 토큰을 정리한다. 클라이언트는 알림을 누르면 `/projects/:id?task=:taskId` 로 이동해 해당 작업을 연다.
 
@@ -600,7 +614,7 @@ team-pm-app/
 |---|---|---|
 | **M10** | 활동 기록(히스토리) | 프로젝트 타임라인 + 작업별 변경 이력(`activity_logs`, §1.2·§2.2) |
 | **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기(클라이언트 생성), 읽기 전용 공유 링크(토큰 해시 저장·필수 만료·폐기·조회수, 공개 응답에서 멤버 정보 제외) — `share_links`, §1.2·§2.2 |
-| **M11** | 멘션 | 댓글·채팅의 `@이름` → 대상 사용자 알림(`mention` 알림 종류), 프로젝트 멤버만 멘션 가능 |
+| **M11** | 멘션 | 댓글의 `@이름` 자동완성 → 대상 멤버 알림(`mention` 타입, 마이그레이션 009 `comment_mentions`), 프로젝트 멤버만 멘션 가능. 채팅(M12)에서도 같은 방식으로 확장(그때 알림의 `task_id` 를 선택값으로 완화) |
 | **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 길이·개수 상한 |
 | **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(권한 필터 필수, `pg_trgm`) |
 | **M14** | 모아보기 | 내 배정·멘션·마감·안 읽은 알림·최근 활동을 한 화면에 모은 피드 |

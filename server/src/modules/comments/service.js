@@ -1,4 +1,4 @@
-import { forbidden, notFound } from '../../utils/errors.js';
+import { AppError, forbidden, notFound } from '../../utils/errors.js';
 import { assertWritable } from '../tasks/service.js';
 import * as repo from './repository.js';
 
@@ -16,16 +16,39 @@ export async function list(task) {
   return (await repo.listByTask(task.id)).map(repo.toComment);
 }
 
-export async function create(task, project, user, body) {
-  assertWritable(project);
-  return repo.toComment(await repo.insertComment({ taskId: task.id, authorId: user.id, body }));
+const invalidMention = (message) => new AppError(400, 'INVALID_MENTION', message);
+
+// 멘션할 사용자를 검증하고 이름 스냅샷을 붙인다.
+// - 활성 프로젝트 멤버여야 한다.
+// - 본문에 그 사람의 `@이름` 이 실제로 있어야 한다(보이지 않는 멘션으로 알림만 보내는 것을 막는다).
+export async function resolveMentions(project, body, mentionIds) {
+  const ids = [...new Set(mentionIds ?? [])];
+  if (ids.length === 0) return [];
+  const names = new Map((await repo.memberNames(project.id, ids)).map((m) => [m.id, m.name]));
+  return ids.map((id) => {
+    const name = names.get(id);
+    if (!name) throw invalidMention('프로젝트 멤버가 아닌 사용자는 멘션할 수 없습니다.');
+    if (!body.includes(`@${name}`)) {
+      throw invalidMention(`본문에 @${name} 이(가) 없어 멘션할 수 없습니다.`);
+    }
+    return { id, name };
+  });
 }
 
-export async function update(comment, project, user, body) {
+export async function create(task, project, user, body, mentionIds) {
+  assertWritable(project);
+  const mentions = await resolveMentions(project, body, mentionIds);
+  return repo.toComment(
+    await repo.insertComment({ taskId: task.id, authorId: user.id, body, mentions }),
+  );
+}
+
+export async function update(comment, project, user, body, mentionIds) {
   assertWritable(project);
   if (comment.deleted_at) throw notFound('댓글을 찾을 수 없습니다.');
   if (!canEdit(user, comment)) throw forbidden('본인이 쓴 댓글만 수정할 수 있습니다.');
-  const updated = await repo.updateBody(comment.id, body);
+  const mentions = await resolveMentions(project, body, mentionIds);
+  const updated = await repo.updateBody(comment.id, body, mentions);
   if (!updated) throw notFound('댓글을 찾을 수 없습니다.');
   return repo.toComment(updated);
 }

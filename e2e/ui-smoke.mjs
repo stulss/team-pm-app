@@ -836,6 +836,91 @@ try {
     await rtMember.keyboard.press('Escape');
     await panel.waitFor({ state: 'detached' });
   });
+  await step(
+    '멘션: @ 자동완성으로 고르면 강조되고, 멘션된 담당자에게는 알림이 한 건만 간다',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const before = await unread(rtMember);
+      await card(rtManager, '알림 작업').click();
+      const dlg = rtManager.getByRole('dialog');
+      const box = dlg.getByLabel('새 댓글');
+      await box.click();
+      await box.pressSequentially('@ui-me', { delay: 40 });
+      const list = dlg.getByRole('listbox', { name: '멘션 후보' });
+      await list.waitFor();
+      const options = list.getByRole('option');
+      if ((await options.count()) !== 1) throw new Error('후보가 멤버 한 명으로 좁혀지지 않음');
+      await options.first().getByText('ui-member').waitFor();
+      // 본인(ui-manager)과 비멤버(ui-outsider)는 후보에 없다
+      await box.fill('');
+      await box.pressSequentially('@ui-', { delay: 40 });
+      await list.waitFor();
+      const names = await list.getByRole('option').allInnerTexts();
+      if (names.some((n) => n.includes('ui-manager') || n.includes('ui-outsider'))) {
+        throw new Error(`후보에 있으면 안 되는 사람이 있음: ${names.join(' / ')}`);
+      }
+      await box.fill('');
+      await box.pressSequentially('@ui-me', { delay: 40 });
+      await list.waitFor();
+      await rtManager.keyboard.press('Enter'); // 선택
+      await list.waitFor({ state: 'detached' });
+      if (!(await box.inputValue()).startsWith('@ui-member ')) {
+        throw new Error(`선택 후 본문이 이상함: ${await box.inputValue()}`);
+      }
+      await box.pressSequentially('멘션 확인 부탁해요', { delay: 10 });
+      await dlg.getByRole('button', { name: '댓글 등록' }).click();
+      await dlg.locator('.comment-body .mention', { hasText: '@ui-member' }).waitFor();
+      await dlg.getByRole('button', { name: '닫기', exact: true }).click();
+
+      // 담당자이기도 한 멘션 대상에게는 멘션 알림 1건만 (댓글 알림 중복 없음)
+      await pollUntil(async () => (await unread(rtMember)) === before + 1, '멘션 알림 배지');
+      await new Promise((r) => setTimeout(r, 1500));
+      if ((await unread(rtMember)) !== before + 1) throw new Error('알림이 중복으로 옴');
+
+      await rtMember.locator('.bell-button').click();
+      const panel = rtMember.getByRole('dialog', { name: '알림 목록' });
+      const mention = panel.getByRole('button', {
+        name: /ui-manager님이 '알림 작업' 작업의 댓글에서 회원님을 언급했습니다/,
+      });
+      await mention.waitFor();
+      if ((await panel.getByText(/작업에 댓글을 남겼습니다/).count()) !== 1) {
+        throw new Error('멘션 댓글에 대해 댓글 알림이 추가로 생성됨(중복)');
+      }
+      await mention.click();
+      const taskDlg = rtMember.getByRole('dialog', { name: '작업 수정' });
+      await taskDlg.waitFor();
+      await taskDlg.locator('.comment-body .mention', { hasText: '@ui-member' }).waitFor();
+      await taskDlg.getByRole('button', { name: '취소' }).click();
+      await rtMember.waitForURL((u) => !u.search.includes('task='));
+    },
+  );
+  await step('멘션: 고른 뒤 본문에서 지우면 멘션 없이 등록되고 알림도 가지 않음', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    // 앞 단계에서 누른 멘션 알림의 읽음 처리(비동기)가 반영된 뒤의 값을 기준으로 삼는다
+    await pollUntil(async () => (await unread(rtMember)) === 0, '이전 알림 읽음 반영');
+    const before = await unread(rtMember);
+    await card(rtManager, '알림 작업').click();
+    const dlg = rtManager.getByRole('dialog');
+    const box = dlg.getByLabel('새 댓글');
+    await box.click();
+    await box.pressSequentially('@ui-me', { delay: 40 });
+    await dlg.getByRole('listbox', { name: '멘션 후보' }).waitFor();
+    await rtManager.keyboard.press('Enter');
+    await box.fill('멘션을 지웠어요');
+    await dlg.getByRole('button', { name: '댓글 등록' }).click();
+    const done = dlg.locator('.comment-body', { hasText: '멘션을 지웠어요' });
+    await done.waitFor();
+    if ((await done.locator('.mention').count()) !== 0) throw new Error('지운 멘션이 강조됨');
+    await dlg.getByRole('button', { name: '닫기', exact: true }).click();
+    // 멘션은 없지만 담당자이므로 일반 댓글 알림은 1건 온다 (멘션 알림은 없음)
+    await pollUntil(async () => (await unread(rtMember)) === before + 1, '댓글 알림 배지');
+    await rtMember.locator('.bell-button').click();
+    const panel = rtMember.getByRole('dialog', { name: '알림 목록' });
+    await panel.getByRole('button', { name: '모두 읽음' }).click();
+    await pollUntil(async () => (await unread(rtMember)) === 0, '모두 읽음');
+    await rtMember.keyboard.press('Escape');
+    await panel.waitFor({ state: 'detached' });
+  });
   await step('실시간: 연결이 끊긴 동안 생긴 변경은 재연결 후 다시 불러와 보정됨', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');
     const [adminToken, managerToken] = [await apiLogin('admin'), await apiLogin('manager')];

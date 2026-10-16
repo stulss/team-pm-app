@@ -164,7 +164,9 @@ export default function TaskModal({
           </div>
         </div>
       </form>
-      {editing && <CommentSection taskId={task.id} ownerId={ownerId} readOnly={readOnly} />}
+      {editing && (
+        <CommentSection taskId={task.id} ownerId={ownerId} members={members} readOnly={readOnly} />
+      )}
       {editing && (
         <ActivityFeed projectId={projectId} taskId={task.id} title="변경 이력" limit={10} />
       )}

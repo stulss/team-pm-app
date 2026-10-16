@@ -1508,6 +1508,162 @@ try {
     );
   }
 
+  // --- 멘션 (M11): comment_mentions SQL, enum, 알림 중복 제거, 검증을 실제 DB 로 확인
+  {
+    const mpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-mention', memberIds: [people.member.id, people.manager2.id] },
+      })
+    ).body.id;
+    const mtid = (
+      await call('POST', `/projects/${mpid}/tasks`, {
+        token: t('manager'),
+        body: { title: 'smoke-mention-task', assigneeId: people.manager2.id },
+      })
+    ).body.id;
+    await db.query('DELETE FROM notifications WHERE task_id = $1', [mtid]);
+    const mention = (who, body, ids) =>
+      call('POST', `/tasks/${mtid}/comments`, {
+        token: t(who),
+        body: { body, ...(ids && { mentionIds: ids }) },
+      });
+    const notesFor = (key, type) =>
+      db
+        .query(
+          'SELECT message FROM notifications WHERE task_id = $1 AND user_id = $2 AND type = $3',
+          [mtid, people[key].id, type],
+        )
+        .then((r) => r.rows);
+
+    const c1 = await mention('manager', '@smoke-member 확인 부탁', [people.member.id]);
+    check(
+      '멘션 댓글 작성 (201), 응답에 mentions(id,name)',
+      c1.status === 201 &&
+        JSON.stringify(c1.body.mentions) ===
+          JSON.stringify([{ id: people.member.id, name: 'smoke-member' }]),
+      JSON.stringify(c1.body),
+    );
+    const stored = await db.query(
+      'SELECT user_id, name FROM comment_mentions WHERE comment_id = $1',
+      [c1.body.id],
+    );
+    check(
+      'comment_mentions 에 (댓글, 사용자, 이름 스냅샷) 저장',
+      stored.rowCount === 1 &&
+        stored.rows[0].user_id === people.member.id &&
+        stored.rows[0].name === 'smoke-member',
+    );
+    const mn = await notesFor('member', 'mention');
+    check(
+      "멘션된 멤버에게 'mention' 알림 (enum 값 사용 가능)",
+      mn.length === 1 &&
+        mn[0].message.includes('smoke-manager') &&
+        mn[0].message.includes('회원님을 언급'),
+      JSON.stringify(mn),
+    );
+    check(
+      '작성자 본인에게는 알림 없음, 담당자·작성자 댓글 알림은 멘션 대상이 아니면 그대로',
+      (await notesFor('manager', 'mention')).length === 0 &&
+        (await notesFor('manager2', 'comment_added')).length === 1,
+    );
+
+    // 담당자를 멘션하면 mention 하나만 (comment_added 중복 없음)
+    await db.query('DELETE FROM notifications WHERE task_id = $1', [mtid]);
+    await mention('member', '@smoke-manager2 이거 봐 주세요', [people.manager2.id]);
+    check(
+      '담당자 멘션 시 mention 1건만, comment_added 는 중복 없음',
+      (await notesFor('manager2', 'mention')).length === 1 &&
+        (await notesFor('manager2', 'comment_added')).length === 0,
+    );
+
+    // 검증
+    const before = (
+      await db.query('SELECT count(*)::int AS n FROM comments WHERE task_id = $1', [mtid])
+    ).rows[0].n;
+    const bad1 = await mention('manager', '@smoke-outsider 안녕', [people.outsider.id]);
+    const bad2 = await mention('manager', '이름이 본문에 없음', [people.member.id]);
+    const bad3 = await mention('manager', '@x', [crypto.randomUUID()]);
+    const after = (
+      await db.query('SELECT count(*)::int AS n FROM comments WHERE task_id = $1', [mtid])
+    ).rows[0].n;
+    check(
+      '비멤버·본문에 이름 없음·없는 사용자는 400 INVALID_MENTION, 댓글도 저장되지 않음',
+      [bad1, bad2, bad3].every(
+        (r) => r.status === 400 && r.body.error.code === 'INVALID_MENTION',
+      ) && after === before,
+      JSON.stringify([bad1.status, bad2.status, bad3.status, before, after]),
+    );
+
+    // 수정: 새로 추가된 멘션에게만 알림, 전체 교체
+    await db.query('DELETE FROM notifications WHERE task_id = $1', [mtid]);
+    const edited = await call('PATCH', `/comments/${c1.body.id}`, {
+      token: t('manager'),
+      body: { body: '@smoke-manager2 로 바꿈', mentionIds: [people.manager2.id] },
+    });
+    const rows = await db.query('SELECT user_id FROM comment_mentions WHERE comment_id = $1', [
+      c1.body.id,
+    ]);
+    check(
+      '수정은 멘션을 통째로 교체하고 새 멘션에게만 알림',
+      edited.status === 200 &&
+        rows.rowCount === 1 &&
+        rows.rows[0].user_id === people.manager2.id &&
+        (await notesFor('manager2', 'mention')).length === 1 &&
+        (await notesFor('member', 'mention')).length === 0,
+      JSON.stringify(edited.body),
+    );
+    const cleared = await call('PATCH', `/comments/${c1.body.id}`, {
+      token: t('manager'),
+      body: { body: '멘션 없이 수정' },
+    });
+    check(
+      'mentionIds 없이 수정하면 멘션이 비워짐',
+      cleared.status === 200 &&
+        cleared.body.mentions.length === 0 &&
+        (await db.query('SELECT 1 FROM comment_mentions WHERE comment_id = $1', [c1.body.id]))
+          .rowCount === 0,
+    );
+
+    // 이름 스냅샷, 삭제 마스킹, 목록 조회(json_agg)
+    const c2 = await mention('manager', '@smoke-member 스냅샷', [people.member.id]);
+    await db.query("UPDATE users SET name = 'smoke-renamed' WHERE id = $1", [people.member.id]);
+    const listed = await call('GET', `/tasks/${mtid}/comments`, { token: t('manager') });
+    const found = listed.body.data.find((x) => x.id === c2.body.id);
+    check(
+      '이름이 바뀌어도 댓글의 멘션 이름(스냅샷)은 유지',
+      found?.mentions?.[0]?.name === 'smoke-member' && found.body.includes('@smoke-member'),
+      JSON.stringify(found?.mentions),
+    );
+    await db.query("UPDATE users SET name = 'smoke-member' WHERE id = $1", [people.member.id]);
+    await call('DELETE', `/comments/${c2.body.id}`, { token: t('manager') });
+    const masked = (
+      await call('GET', `/tasks/${mtid}/comments`, { token: t('manager') })
+    ).body.data.find((x) => x.id === c2.body.id);
+    check(
+      '삭제된 댓글은 mentions 도 빈 배열',
+      masked.deleted === true && masked.mentions.length === 0,
+    );
+
+    // 제약
+    const idx = await db.query(
+      "SELECT 1 FROM pg_indexes WHERE tablename = 'comment_mentions' AND indexname = 'comment_mentions_user_created_idx'",
+    );
+    const rlsOn = await db.query(
+      "SELECT 1 FROM pg_class WHERE relname = 'comment_mentions' AND relrowsecurity",
+    );
+    check('comment_mentions 인덱스 + RLS', idx.rowCount === 1 && rlsOn.rowCount === 1);
+
+    const c3 = await mention('manager', '@smoke-member 삭제 연쇄', [people.member.id]);
+    await db.query('DELETE FROM tasks WHERE id = $1', [mtid]);
+    check(
+      '작업 삭제 시 댓글과 멘션 CASCADE',
+      (await db.query('SELECT 1 FROM comment_mentions WHERE comment_id = $1', [c3.body.id]))
+        .rowCount === 0,
+    );
+    await call('DELETE', `/projects/${mpid}`, { token: t('manager') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

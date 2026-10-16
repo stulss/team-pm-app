@@ -3,13 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createComment, deleteComment, listComments, updateComment } from '../../api/comments.js';
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
+import MentionTextarea from './MentionTextarea.jsx';
 
 const formatTime = (iso) =>
   new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
 
 // 작업 모달의 댓글 영역. 본문은 항상 텍스트로 렌더링한다(HTML 로 해석하지 않음).
 // 다른 사용자의 변경은 프로젝트 화면의 실시간 구독이 ['comments', taskId] 를 갱신해 반영된다.
-export default function CommentSection({ taskId, ownerId, readOnly = false }) {
+export default function CommentSection({ taskId, ownerId, members = [], readOnly = false }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const key = ['comments', taskId];
@@ -25,18 +27,21 @@ export default function CommentSection({ taskId, ownerId, readOnly = false }) {
   };
 
   const [text, setText] = useState('');
+  const [mentions, setMentions] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
+  const [editMentions, setEditMentions] = useState([]);
 
   const add = useMutation({
-    mutationFn: () => createComment(taskId, text),
+    mutationFn: () => createComment(taskId, text, activeMentionIds(text, mentions)),
     onSuccess: () => {
       setText('');
+      setMentions([]);
       refresh();
     },
   });
   const save = useMutation({
-    mutationFn: ({ id, body }) => updateComment(id, body),
+    mutationFn: ({ id, body }) => updateComment(id, body, activeMentionIds(body, editMentions)),
     onSuccess: () => {
       setEditingId(null);
       refresh();
@@ -81,6 +86,7 @@ export default function CommentSection({ taskId, ownerId, readOnly = false }) {
                   onClick={() => {
                     setEditingId(c.id);
                     setEditText(c.body);
+                    setEditMentions(c.mentions ?? []);
                   }}
                 >
                   수정
@@ -107,12 +113,16 @@ export default function CommentSection({ taskId, ownerId, readOnly = false }) {
                   save.mutate({ id: c.id, body: editText });
                 }}
               >
-                <textarea
+                <MentionTextarea
                   rows={3}
                   maxLength={5000}
                   aria-label="댓글 수정"
                   value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
+                  onChange={setEditText}
+                  mentions={editMentions}
+                  onMentionsChange={setEditMentions}
+                  members={members}
+                  meId={user.id}
                 />
                 <div className="row">
                   <button type="submit" disabled={save.isPending || !editText.trim()}>
@@ -124,7 +134,9 @@ export default function CommentSection({ taskId, ownerId, readOnly = false }) {
                 </div>
               </form>
             ) : (
-              <p className={c.deleted ? 'comment-body muted' : 'comment-body'}>{c.body}</p>
+              <p className={c.deleted ? 'comment-body muted' : 'comment-body'}>
+                {c.deleted ? c.body : renderWithMentions(c.body, c.mentions)}
+              </p>
             )}
           </li>
         ))}
@@ -144,13 +156,17 @@ export default function CommentSection({ taskId, ownerId, readOnly = false }) {
             if (text.trim()) add.mutate();
           }}
         >
-          <textarea
+          <MentionTextarea
             rows={3}
             maxLength={5000}
             aria-label="새 댓글"
-            placeholder="댓글을 입력하세요"
+            placeholder="댓글을 입력하세요 (@ 로 멤버를 멘션)"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={setText}
+            mentions={mentions}
+            onMentionsChange={setMentions}
+            members={members}
+            meId={user.id}
           />
           <div className="row">
             <button type="submit" disabled={add.isPending || !text.trim()}>
