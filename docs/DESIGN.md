@@ -64,6 +64,10 @@ erDiagram
     projects ||--o{ activity_logs : logs
     projects ||--o{ chat_messages : has
     users ||--o{ chat_messages : writes
+    projects ||--o{ polls : has
+    polls ||--o{ poll_options : offers
+    poll_options ||--o{ poll_votes : receives
+    users ||--o{ poll_votes : casts
 
     users {
         uuid id PK
@@ -159,6 +163,27 @@ erDiagram
         jsonb meta
         timestamptz created_at
     }
+    polls {
+        uuid id PK
+        uuid project_id FK
+        uuid created_by FK "nullable, 탈퇴/삭제 시 NULL"
+        varchar question "1~200자"
+        boolean multiple "복수 선택 허용"
+        timestamptz closed_at "nullable, 마감되면 값"
+        timestamptz created_at
+    }
+    poll_options {
+        uuid id PK
+        uuid poll_id FK
+        varchar label "1~100자"
+        smallint position
+    }
+    poll_votes {
+        uuid poll_id PK
+        uuid option_id PK
+        uuid user_id PK
+        timestamptz created_at
+    }
     chat_messages {
         uuid id PK
         bigint seq "순번(커서 페이지네이션용)"
@@ -227,6 +252,14 @@ erDiagram
   - `share.created` `{expiresAt}` / `share.revoked` `{}` (히스토리 공유 링크, M10b)
 - 기록은 요청의 본 동작이 성공한 뒤에 별도로 저장한다(같은 트랜잭션이 아님). 기록 저장이 실패해도 요청은 실패시키지 않고 로그만 남긴다 → 드물게 기록이 빠질 수 있다.
 - 보관: 180일 이후 정리(cron, 알림 정리와 같은 일일 작업)
+
+**polls / poll_options / poll_votes** (M15 투표, 마이그레이션 012)
+- 프로젝트 안 투표. `polls.project_id` `ON DELETE CASCADE`, `created_by` `ON DELETE SET NULL`. 선택지는 `poll_options`(투표당 2~10개, 순서 `position`), 표는 `poll_votes`.
+- `poll_votes` 의 기본키는 `(poll_id, option_id, user_id)` 이고, `(poll_id, option_id)` → `poll_options(poll_id, id)` 복합 외래키 + `ON DELETE CASCADE` 로 **다른 투표의 선택지에 표를 던질 수 없게** DB 가 보장한다. 사용자가 지워지면 표도 사라진다.
+- **1인 1표(단일 선택)** 는 서버가 보장한다: 투표 행을 `SELECT … FOR UPDATE` 로 잠근 트랜잭션 안에서 "내 표 전부 삭제 → 새 표 삽입"을 하므로 동시에 두 번 눌러도 한 표만 남는다. 복수 선택 투표(`multiple`)는 선택지마다 한 표씩이다.
+- 집계는 **지금 프로젝트 멤버인 사용자의 표만** 센다(`project_members` 조인). 멤버에서 제거되면 그 사람의 표는 결과에서 빠진다(행은 남아 다시 추가되면 되살아남).
+- 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `polls (project_id, created_at DESC)`, `poll_options (poll_id, position)`, `poll_votes (user_id)`.
+- 프로젝트당 투표 최대 100개(`LIMIT_REACHED`, 소프트 상한).
 
 **검색 인덱스** (M13, 마이그레이션 011)
 - `CREATE EXTENSION pg_trgm` 후 `projects.name`, `tasks.title`, `tasks.description`, `comments.body`, `chat_messages.body` 에 `gin_trgm_ops` GIN 인덱스를 만든다. 새 테이블은 없다.
@@ -342,6 +375,17 @@ erDiagram
 | GET | `/projects/:id/activities` | 활동 기록(최신순). `?limit`(1~200, 기본 30) `&before=<seq>`(커서) `&taskId=` `&action=` | 멤버 |
 
 > 구현 규칙(M10): 응답은 `{ data: [{ id, seq, action, taskId, actor: {id,name}|null, meta, createdAt }], nextCursor }` 이고 `nextCursor` 가 null 이면 끝이다. `taskId` 를 주면 그 작업의 변경 이력만 돌려준다(작업 상세 모달의 "변경 이력"). 프로젝트 멤버(와 Admin)만 볼 수 있고, 멤버에서 제거되면 즉시 볼 수 없다. 기록을 저장한 뒤 `activity:created` `{ projectId, taskId }` 를 프로젝트 방 전체(요청자 포함)에 보내고, 클라이언트는 이를 받으면 활동 목록을 다시 불러온다(작업·댓글 이벤트는 기록 저장을 기다리지 않고 먼저 나간다).
+
+#### Polls (M15)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects/:id/polls` | 투표 목록(최신순, 최대 50건) | 멤버 |
+| POST | `/projects/:id/polls` | 투표 만들기 `{ question, options: [label…](2~10), multiple? }` | 멤버 (보관 프로젝트 409) |
+| PUT | `/projects/:id/polls/:pollId/vote` | 내 표 정하기(교체) `{ optionIds: [uuid…] }` — 빈 배열은 표 취소 | 멤버 (마감·보관 409) |
+| POST | `/projects/:id/polls/:pollId/close` | 투표 마감(되돌릴 수 없음) | 만든 사람·소유자·Admin |
+| DELETE | `/projects/:id/polls/:pollId` | 투표 삭제 | 만든 사람·소유자·Admin (보관 프로젝트 409) |
+
+> 구현 규칙(M15): 투표 응답은 `{ id, question, multiple, closed, closedAt, createdBy: {id,name}|null, createdAt, options: [{id,label,votes}], totalVoters, myVotes: [optionId] }` 이다. **익명 집계**: 득표수만 보여 주고 누가 어디에 투표했는지는 응답에 없다(본인 선택 `myVotes` 만). 단일 선택 투표에 2개 이상, 선택지가 아닌 ID·중복 ID 는 400 `INVALID_VOTE`. 선택지 이름은 앞뒤 공백을 제거하고 대소문자 무시로 중복되면 400. 마감된 투표에 투표하면 409 `POLL_CLOSED`. 마감 전에는 표를 바꾸거나 취소할 수 있다. 투표 생성·투표·마감·삭제는 `poll:changed` `{ projectId, pollId }` 를 프로젝트 방 전체(요청자 소켓 제외)에 보내고 클라이언트는 목록을 다시 불러온다. 활동 기록·알림은 남기지 않는다.
 
 #### Feed (M14 모아보기)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -498,6 +542,7 @@ erDiagram
 | C→S | `project:join` | `{ projectId }` | 보드 진입 시 (ack로 성공/실패) |
 | C→S | `project:leave` | `{ projectId }` | 보드 이탈 |
 | S→C | `activity:created` | `{ projectId, taskId }` | 활동 기록이 저장됨(요청자 포함 전원). 클라이언트는 활동 목록을 다시 불러온다 |
+| S→C | `poll:changed` | `{ projectId, pollId }` | 투표가 만들어지거나 표·마감·삭제로 바뀜(요청자 소켓 제외). 클라이언트는 투표 목록을 다시 불러온다 |
 | S→C | `chat:created` | `{ projectId, message }` | 채팅 메시지가 저장됨(요청자 소켓 제외) |
 | S→C | `chat:deleted` | `{ projectId, messageId }` | 채팅 메시지가 삭제됨(요청자 소켓 제외) |
 | S→C | `task:created` | `{ task }` | 작업 생성 |
@@ -667,7 +712,7 @@ team-pm-app/
 | **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 2000자·프로젝트당 5000건·90일 보관·분당 30건 제한(`chat_messages`, 마이그레이션 010, §1.2·§2.2) |
 | **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(SQL 권한 필터, `pg_trgm` 인덱스, 마이그레이션 011, §1.2·§2.2) |
 | **M14** | 모아보기 | 내 마감 작업·멘션·안 읽은 알림·내가 없는 동안의 활동을 한 화면에 모은 피드(`GET /feed`, 마이그레이션 없음, §2.2) |
-| **M15** | 투표 | 프로젝트 안 투표(선택지·마감·복수 선택 여부), 실시간 집계, 1인 1표 서버 보장 |
+| **M15** | 투표 | 프로젝트 안 익명 투표(선택지 2~10·복수 선택 여부·수동 마감), 실시간 집계, 1인 1표를 잠금 트랜잭션으로 서버 보장(`polls`·`poll_options`·`poll_votes`, 마이그레이션 012, §1.2·§2.2) |
 
 > 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.
 

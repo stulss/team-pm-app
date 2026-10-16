@@ -1066,6 +1066,59 @@ try {
     },
   );
   await step(
+    '투표: 만들면 상대 화면에 나타나고, 투표·변경 결과가 두 화면에 실시간 반영됨',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const mPoll = rtManager.getByRole('region', { name: '투표', exact: true });
+      const uPoll = rtMember.getByRole('region', { name: '투표', exact: true });
+      await mPoll.scrollIntoViewIfNeeded();
+      await mPoll.getByRole('button', { name: '새 투표' }).click();
+      await mPoll.getByLabel('질문').fill('점심 메뉴는?');
+      await mPoll.getByLabel('선택지 1').fill('한식');
+      await mPoll.getByLabel('선택지 2').fill('중식');
+      await mPoll.getByRole('button', { name: '투표 만들기' }).click();
+      await mPoll.getByText('점심 메뉴는?').waitFor();
+      await uPoll.getByText('점심 메뉴는?').waitFor({ timeout: 5000 });
+
+      // 멤버가 첫 선택지에 투표 → 두 화면 모두 1표(100%)
+      await uPoll.getByRole('radio', { name: '한식' }).click();
+      await uPoll.getByText('1표 (100%)').waitFor();
+      await mPoll.getByText('1표 (100%)').waitFor({ timeout: 5000 });
+      // 소유자 화면에서는 내 선택이 아니므로 체크되어 있지 않다(누가 골랐는지 보이지 않음)
+      if (await mPoll.getByRole('radio', { name: '한식' }).isChecked()) {
+        throw new Error('남의 선택이 내 선택으로 보임');
+      }
+      if ((await mPoll.getByText('ui-member').count()) !== 0) {
+        throw new Error('투표한 사람의 이름이 노출됨');
+      }
+      // 소유자도 투표, 멤버는 마음을 바꿈
+      await mPoll.getByRole('radio', { name: '중식' }).click();
+      await uPoll.getByText('2명 참여').waitFor({ timeout: 5000 });
+      await uPoll.getByRole('radio', { name: '중식' }).click();
+      await uPoll.getByText('2표 (100%)').waitFor();
+      await mPoll.getByText('2표 (100%)').waitFor({ timeout: 5000 });
+      await mPoll.getByText('0표 (0%)').waitFor();
+    },
+  );
+  await step('투표: 소유자가 마감하면 상대는 더 투표할 수 없고, 삭제하면 사라짐', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    const mPoll = rtManager.getByRole('region', { name: '투표', exact: true });
+    const uPoll = rtMember.getByRole('region', { name: '투표', exact: true });
+    // 소유자가 아닌 멤버(만든 사람도 아님)에게는 마감·삭제 버튼이 없다
+    if ((await uPoll.getByRole('button', { name: '마감' }).count()) !== 0) {
+      throw new Error('권한 없는 멤버에게 마감 버튼이 보임');
+    }
+    rtManager.once('dialog', (d) => d.accept());
+    await mPoll.getByRole('button', { name: '마감' }).click();
+    await uPoll.getByText('마감', { exact: true }).waitFor({ timeout: 5000 });
+    if (!(await uPoll.getByRole('radio', { name: '한식' }).isDisabled())) {
+      throw new Error('마감된 투표에 투표할 수 있음');
+    }
+    rtManager.once('dialog', (d) => d.accept());
+    await mPoll.getByRole('button', { name: '삭제' }).click();
+    await uPoll.getByText('점심 메뉴는?').waitFor({ state: 'detached', timeout: 5000 });
+  });
+  await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');

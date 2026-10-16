@@ -2010,6 +2010,162 @@ try {
     await call('DELETE', `/projects/${fpid}`, { token: t('manager') });
   }
 
+  // --- 투표 (M15): 집계 SQL, 1인 1표 잠금, 복합 외래키, RLS, CASCADE 를 실제 DB 로 확인
+  {
+    const ppid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-poll', memberIds: [people.member.id, people.manager2.id] },
+      })
+    ).body.id;
+    const url = (path = '') => `/projects/${ppid}/polls${path}`;
+    const made = await call('POST', url(), {
+      token: t('member'),
+      body: { question: 'smoke-poll 질문', options: ['가', '나', '다'] },
+    });
+    const poll = made.body;
+    check(
+      '투표 만들기 (201), 선택지 순서·0표·만든 사람',
+      made.status === 201 &&
+        poll.options.map((o) => `${o.label}:${o.votes}`).join() === '가:0,나:0,다:0' &&
+        poll.createdBy?.name === 'smoke-member' &&
+        poll.totalVoters === 0,
+      JSON.stringify(made.body),
+    );
+    const other = (
+      await call('POST', url(), {
+        token: t('manager'),
+        body: { question: 'smoke-poll 다른 투표', options: ['x', 'y'], multiple: true },
+      })
+    ).body;
+    const vote = (who, pl, picks) =>
+      call('PUT', url(`/${pl.id}/vote`), {
+        token: t(who),
+        body: { optionIds: picks.map((i) => pl.options[i].id) },
+      });
+
+    const v1 = await vote('member', poll, [0]);
+    await vote('manager2', poll, [0]);
+    const v3 = await vote('member', poll, [1]); // 바꾸기
+    check(
+      '투표 집계: 바꾸기는 한 표만 남고 득표·참여자 수가 맞다',
+      v1.status === 200 &&
+        v3.body.options.map((o) => o.votes).join() === '1,1,0' &&
+        v3.body.totalVoters === 2 &&
+        v3.body.myVotes.join() === poll.options[1].id,
+      JSON.stringify(v3.body),
+    );
+    const rows = await db.query(
+      'SELECT count(*)::int AS n FROM poll_votes WHERE poll_id = $1 AND user_id = $2',
+      [poll.id, people.member.id],
+    );
+    check('DB 에 내 표는 정확히 1행', rows.rows[0].n === 1);
+
+    // 같은 사람이 동시에 서로 다른 선택지를 보내도 단일 선택이면 한 표만 남는다
+    await Promise.all([0, 1, 2].map((i) => vote('manager2', poll, [i])));
+    const race = await db.query(
+      'SELECT count(*)::int AS n FROM poll_votes WHERE poll_id = $1 AND user_id = $2',
+      [poll.id, people.manager2.id],
+    );
+    check('동시 투표 3건 후에도 단일 선택은 1표 (잠금 트랜잭션)', race.rows[0].n === 1);
+
+    const invalid = await call('PUT', url(`/${poll.id}/vote`), {
+      token: t('member'),
+      body: { optionIds: [other.options[0].id] },
+    });
+    check(
+      '다른 투표의 선택지·2개 선택은 400 INVALID_VOTE',
+      invalid.status === 400 &&
+        invalid.body.error.code === 'INVALID_VOTE' &&
+        (await vote('member', poll, [0, 1])).status === 400,
+    );
+    let fkRejected = false;
+    try {
+      await db.query('INSERT INTO poll_votes (poll_id, option_id, user_id) VALUES ($1, $2, $3)', [
+        poll.id,
+        other.options[0].id,
+        people.member.id,
+      ]);
+    } catch {
+      fkRejected = true;
+    }
+    check('DB 복합 외래키가 다른 투표의 선택지에 대한 표를 거부', fkRejected);
+
+    const multi = await vote('member', other, [0, 1]);
+    check(
+      '복수 선택 투표: 여러 개 선택',
+      multi.status === 200 && multi.body.options.map((o) => o.votes).join() === '1,1',
+    );
+    check(
+      '비멤버는 읽기·투표 403',
+      (await call('GET', url(), { token: t('outsider') })).status === 403 &&
+        (
+          await call('PUT', url(`/${poll.id}/vote`), {
+            token: t('outsider'),
+            body: { optionIds: [] },
+          })
+        ).status === 403,
+    );
+
+    // 멤버에서 제거되면 그 사람의 표는 집계에서 빠진다
+    await call('DELETE', `/projects/${ppid}/members/${people.manager2.id}`, {
+      token: t('manager'),
+    });
+    const afterRemove = (await call('GET', url(), { token: t('member') })).body.data.find(
+      (x) => x.id === poll.id,
+    );
+    check(
+      '멤버에서 제거되면 그 표는 집계에서 빠진다',
+      afterRemove.options.map((o) => o.votes).join() === '0,1,0' && afterRemove.totalVoters === 1,
+      JSON.stringify(afterRemove.options),
+    );
+
+    // 마감
+    const forbiddenClose = await call('POST', url(`/${poll.id}/close`), { token: t('manager2') });
+    const closed = await call('POST', url(`/${poll.id}/close`), { token: t('manager') });
+    const late = await vote('member', poll, [2]);
+    check(
+      '마감: 권한 없는 사람 403, 소유자 200, 이후 투표 409 POLL_CLOSED',
+      forbiddenClose.status === 403 &&
+        closed.status === 200 &&
+        closed.body.closed === true &&
+        late.status === 409 &&
+        late.body.error.code === 'POLL_CLOSED',
+    );
+
+    // 삭제 + CASCADE
+    check(
+      '삭제: 다른 멤버 403, 만든 사람 204',
+      (await call('DELETE', url(`/${other.id}`), { token: t('member') })).status === 403 &&
+        (await call('DELETE', url(`/${poll.id}`), { token: t('member') })).status === 204,
+    );
+    check(
+      '투표 삭제 시 선택지·표 CASCADE',
+      (await db.query('SELECT 1 FROM poll_options WHERE poll_id = $1', [poll.id])).rowCount === 0 &&
+        (await db.query('SELECT 1 FROM poll_votes WHERE poll_id = $1', [poll.id])).rowCount === 0,
+    );
+
+    const rls = await db.query(
+      "SELECT relname FROM pg_class WHERE relname IN ('polls','poll_options','poll_votes') AND relrowsecurity",
+    );
+    check('polls / poll_options / poll_votes RLS 활성화', rls.rowCount === 3);
+
+    // 보관 프로젝트는 읽기 전용
+    await call('PATCH', `/projects/${ppid}`, { token: t('manager'), body: { status: 'archived' } });
+    const archived = await vote('member', other, [0]);
+    check(
+      '보관된 프로젝트: 투표 409 PROJECT_ARCHIVED, 읽기는 200',
+      archived.status === 409 &&
+        archived.body.error.code === 'PROJECT_ARCHIVED' &&
+        (await call('GET', url(), { token: t('member') })).status === 200,
+    );
+    await call('DELETE', `/projects/${ppid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 투표 CASCADE',
+      (await db.query('SELECT 1 FROM polls WHERE project_id = $1', [ppid])).rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

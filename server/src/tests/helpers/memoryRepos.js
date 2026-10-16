@@ -17,6 +17,9 @@ export const store = {
   activities: [],
   shareLinks: [],
   chat: [],
+  polls: [],
+  pollOptions: [],
+  pollVotes: [],
 };
 
 export function reset() {
@@ -31,6 +34,9 @@ export function reset() {
   store.activities = [];
   store.shareLinks = [];
   store.chat = [];
+  store.polls = [];
+  store.pollOptions = [];
+  store.pollVotes = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -380,6 +386,90 @@ export const feedRepo = {
         project_name: store.projects.find((p) => p.id === a.project_id)?.name,
         actor_name: store.users.find((u) => u.id === a.actor_id)?.name,
       }));
+  },
+};
+
+// 투표 저장소: 지금 멤버의 표만 세는 집계와 "마감 후에는 표가 안 들어감"을 메모리로 흉내 낸다.
+export const pollsRepo = {
+  MAX_POLLS_PER_PROJECT: 100,
+  async countByProject(projectId) {
+    return store.polls.filter((p) => p.project_id === projectId).length;
+  },
+  async insertPoll({ projectId, createdBy, question, multiple, options }) {
+    const poll = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      created_by: createdBy,
+      question,
+      multiple,
+      closed_at: null,
+      created_at: new Date(Date.now() + store.polls.length),
+    };
+    store.polls.push(poll);
+    options.forEach((label, position) =>
+      store.pollOptions.push({ id: crypto.randomUUID(), poll_id: poll.id, label, position }),
+    );
+    return poll.id;
+  },
+  async findById(projectId, pollId) {
+    return store.polls.find((p) => p.project_id === projectId && p.id === pollId) ?? null;
+  },
+  async optionIds(pollId) {
+    return store.pollOptions.filter((o) => o.poll_id === pollId).map((o) => o.id);
+  },
+  async setVotes(pollId, userId, optionIds) {
+    const poll = store.polls.find((p) => p.id === pollId);
+    if (!poll || poll.closed_at) return false;
+    store.pollVotes = store.pollVotes.filter(
+      (v) => !(v.poll_id === pollId && v.user_id === userId),
+    );
+    for (const optionId of optionIds) {
+      store.pollVotes.push({ poll_id: pollId, option_id: optionId, user_id: userId });
+    }
+    return true;
+  },
+  async close(pollId) {
+    const poll = store.polls.find((p) => p.id === pollId);
+    if (!poll || poll.closed_at) return false;
+    poll.closed_at = new Date();
+    return true;
+  },
+  async remove(pollId) {
+    store.polls = store.polls.filter((p) => p.id !== pollId);
+    store.pollOptions = store.pollOptions.filter((o) => o.poll_id !== pollId);
+    store.pollVotes = store.pollVotes.filter((v) => v.poll_id !== pollId);
+  },
+  async list(projectId, userId, { pollId = null, limit = 50 } = {}) {
+    const isMember = (uid) =>
+      store.members.some((m) => m.project_id === projectId && m.user_id === uid);
+    return store.polls
+      .filter((p) => p.project_id === projectId && (!pollId || p.id === pollId))
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, pollId ? 1 : limit)
+      .map((p) => {
+        const votes = store.pollVotes.filter((v) => v.poll_id === p.id);
+        return {
+          id: p.id,
+          question: p.question,
+          multiple: p.multiple,
+          closed: Boolean(p.closed_at),
+          closedAt: p.closed_at,
+          createdBy: p.created_by
+            ? { id: p.created_by, name: store.users.find((u) => u.id === p.created_by)?.name }
+            : null,
+          createdAt: p.created_at,
+          options: store.pollOptions
+            .filter((o) => o.poll_id === p.id)
+            .sort((a, b) => a.position - b.position)
+            .map((o) => ({
+              id: o.id,
+              label: o.label,
+              votes: votes.filter((v) => v.option_id === o.id && isMember(v.user_id)).length,
+            })),
+          totalVoters: new Set(votes.filter((v) => isMember(v.user_id)).map((v) => v.user_id)).size,
+          myVotes: votes.filter((v) => v.user_id === userId).map((v) => v.option_id),
+        };
+      });
   },
 };
 

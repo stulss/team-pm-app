@@ -17,6 +17,7 @@ import UserSearch from '../components/project/UserSearch.jsx';
 import MemberEmailAdd from '../components/project/MemberEmailAdd.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
 import ProjectDashboard from '../components/dashboard/ProjectDashboard.jsx';
+import PollPanel from '../components/poll/PollPanel.jsx';
 import ChatPanel from '../components/chat/ChatPanel.jsx';
 import ActivityFeed from '../components/activity/ActivityFeed.jsx';
 import ExportCsvButton from '../components/activity/ExportCsvButton.jsx';
@@ -206,6 +207,10 @@ export default function ProjectDetailPage() {
 
       <div className="card">
         <ChatPanel project={project} archived={archived} />
+      </div>
+
+      <div className="card">
+        <PollPanel project={project} archived={archived} />
       </div>
 
       <div className="card">
