@@ -228,6 +228,10 @@ erDiagram
 - 기록은 요청의 본 동작이 성공한 뒤에 별도로 저장한다(같은 트랜잭션이 아님). 기록 저장이 실패해도 요청은 실패시키지 않고 로그만 남긴다 → 드물게 기록이 빠질 수 있다.
 - 보관: 180일 이후 정리(cron, 알림 정리와 같은 일일 작업)
 
+**검색 인덱스** (M13, 마이그레이션 011)
+- `CREATE EXTENSION pg_trgm` 후 `projects.name`, `tasks.title`, `tasks.description`, `comments.body`, `chat_messages.body` 에 `gin_trgm_ops` GIN 인덱스를 만든다. 새 테이블은 없다.
+- 인덱스는 저장 용량을 늘리므로(무료 범위) 검색 대상을 위 5개 열로 한정한다. 2글자 검색어는 인덱스 이점이 작아 느릴 수 있다 — 그래서 결과 수와 호출 횟수를 제한한다.
+
 **chat_messages** (M12 프로젝트 채팅)
 - 프로젝트당 채팅방 1개(별도 방 테이블 없음 — `project_id` 가 곧 방). DM·스레드·수정·파일 첨부는 없다.
 - `project_id` `ON DELETE CASCADE`, `author_id` `ON DELETE SET NULL`(화면에는 "알 수 없는 사용자").
@@ -338,6 +342,13 @@ erDiagram
 | GET | `/projects/:id/activities` | 활동 기록(최신순). `?limit`(1~200, 기본 30) `&before=<seq>`(커서) `&taskId=` `&action=` | 멤버 |
 
 > 구현 규칙(M10): 응답은 `{ data: [{ id, seq, action, taskId, actor: {id,name}|null, meta, createdAt }], nextCursor }` 이고 `nextCursor` 가 null 이면 끝이다. `taskId` 를 주면 그 작업의 변경 이력만 돌려준다(작업 상세 모달의 "변경 이력"). 프로젝트 멤버(와 Admin)만 볼 수 있고, 멤버에서 제거되면 즉시 볼 수 없다. 기록을 저장한 뒤 `activity:created` `{ projectId, taskId }` 를 프로젝트 방 전체(요청자 포함)에 보내고, 클라이언트는 이를 받으면 활동 목록을 다시 불러온다(작업·댓글 이벤트는 기록 저장을 기다리지 않고 먼저 나간다).
+
+#### Search (M13)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/search` | 통합검색. `?q=`(2~50자, 필수) `&type=all\|project\|task\|comment\|chat`(기본 all) `&limit`(종류별 1~20, 기본 8) | 로그인 |
+
+> 구현 규칙(M13): **내가 접근할 수 있는 프로젝트만** 검색한다 — 내가 멤버인 프로젝트(Admin 은 전체). 권한 필터는 SQL 의 `JOIN project_members` 로 건다(결과를 가져온 뒤 거르지 않는다). 멤버에서 제거되면 그 프로젝트의 결과는 즉시 사라진다. 검색 대상은 프로젝트 이름, 작업 제목·설명, 삭제되지 않은 댓글 본문, 채팅 본문이다. 대소문자를 구분하지 않는 부분 일치(`ILIKE '%q%'`)이고 `%`·`_`·`\` 는 글자 그대로 찾는다(와일드카드로 해석하지 않음). 느려지지 않도록 `pg_trgm` GIN 인덱스를 둔다(마이그레이션 011). 응답은 종류별 묶음 `{ projects: [{id,name,status}], tasks: [{id,title,status,projectId,projectName,snippet}], comments: [{id,taskId,taskTitle,projectId,projectName,author,snippet,createdAt}], chat: [{id,projectId,projectName,author,snippet,createdAt}] }` 이고 종류마다 최신순(프로젝트는 이름순)으로 최대 `limit` 건이다. `snippet` 은 서버가 일치 부분 주변 약 80자를 잘라 만든 텍스트이며 HTML 이 아니다. 검색은 **사용자당 분당 30회**로 제한한다(운영에서만 동작). 검색어는 로그에 남기지 않는다. 클라이언트는 상단 검색창 → `/search?q=` 화면에서 결과를 보여 주고, 결과를 누르면 프로젝트(또는 `?task=<id>` 로 그 작업 모달)로 이동한다.
 
 #### Chat (M12)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -647,7 +658,7 @@ team-pm-app/
 | **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기(클라이언트 생성), 읽기 전용 공유 링크(토큰 해시 저장·필수 만료·폐기·조회수, 공개 응답에서 멤버 정보 제외) — `share_links`, §1.2·§2.2 |
 | **M11** | 멘션 | 댓글의 `@이름` 자동완성 → 대상 멤버 알림(`mention` 타입, 마이그레이션 009 `comment_mentions`), 프로젝트 멤버만 멘션 가능. 채팅 멘션은 M12 범위에서 제외(필요해지면 그때 알림의 `task_id` 를 선택값으로 완화) |
 | **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 2000자·프로젝트당 5000건·90일 보관·분당 30건 제한(`chat_messages`, 마이그레이션 010, §1.2·§2.2) |
-| **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(권한 필터 필수, `pg_trgm`) |
+| **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(SQL 권한 필터, `pg_trgm` 인덱스, 마이그레이션 011, §1.2·§2.2) |
 | **M14** | 모아보기 | 내 배정·멘션·마감·안 읽은 알림·최근 활동을 한 화면에 모은 피드 |
 | **M15** | 투표 | 프로젝트 안 투표(선택지·마감·복수 선택 여부), 실시간 집계, 1인 1표 서버 보장 |
 
