@@ -176,7 +176,8 @@ async function main() {
   if (b) mineB = await readChecks('B', b);
 
   // --- A 와 B 사이: 서로의 프로젝트는 못 본다(둘 다 일반 사용자일 때) ---
-  if (a && b && a.user.role !== 'admin' && b.user.role !== 'admin') {
+  // 일반 사용자 쪽만 "못 본다"를 확인할 수 있다(Admin 은 모든 프로젝트를 볼 수 있다).
+  if (a && b) {
     const onlyA = mineA.filter((id) => !mineB.includes(id));
     const onlyB = mineB.filter((id) => !mineA.includes(id));
     console.log(`      (A 만 접근 ${onlyA.length}개, B 만 접근 ${onlyB.length}개)`);
@@ -184,6 +185,7 @@ async function main() {
       [b, 'B', onlyA],
       [a, 'A', onlyB],
     ]) {
+      if (who.user.role === 'admin') continue;
       for (const id of ids.slice(0, 3)) {
         const rs = await Promise.all(
           ['chat', 'polls', 'activities', 'dashboard'].map((p) =>
