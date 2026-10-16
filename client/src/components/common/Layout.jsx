@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -9,6 +10,13 @@ export default function Layout() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   useUserRealtime();
+  const [term, setTerm] = useState('');
+
+  const onSearch = (e) => {
+    e.preventDefault();
+    const q = term.trim();
+    if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
+  };
 
   const onLogout = async () => {
     await logout();
@@ -28,6 +36,16 @@ export default function Layout() {
           <NavLink to="/tasks/mine">내 작업</NavLink>
           {user.role === 'admin' && <NavLink to="/admin/users">사용자 관리</NavLink>}
         </nav>
+        <form className="topbar-search" role="search" onSubmit={onSearch}>
+          <input
+            type="search"
+            aria-label="통합검색"
+            placeholder="검색 (작업·댓글·채팅·프로젝트)"
+            maxLength={50}
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+          />
+        </form>
         <div className="topbar-user">
           <NotificationBell />
           <span>{user.name}</span>

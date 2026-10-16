@@ -999,6 +999,47 @@ try {
     },
   );
   await step(
+    '통합검색: 상단 검색창으로 작업·댓글을 찾고, 결과를 누르면 그 작업이 열림',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const box = rtMember.getByRole('searchbox', { name: '통합검색' });
+      await box.click();
+      await box.pressSequentially('알림 작업', { delay: 20 });
+      await rtMember.keyboard.press('Enter');
+      await rtMember.waitForURL((u) => u.pathname === '/search' && u.search.includes('q='));
+      const tasks = rtMember.getByRole('region', { name: '작업' });
+      const link = tasks.getByRole('link', { name: '알림 작업' });
+      await link.waitFor();
+      if ((await tasks.locator('mark').count()) === 0) throw new Error('검색어가 강조되지 않음');
+
+      // 댓글 본문으로도 찾는다 (멘션 단계에서 남긴 댓글)
+      await box.fill('');
+      await box.pressSequentially('멘션 확인', { delay: 20 });
+      await rtMember.keyboard.press('Enter');
+      const comments = rtMember.getByRole('region', { name: '댓글' });
+      await comments.getByText('멘션 확인 부탁해요').first().waitFor();
+
+      // 결과 없음 안내, 그리고 1글자는 검색하지 않음
+      await box.fill('');
+      await box.pressSequentially('없는말abcxyz', { delay: 20 });
+      await rtMember.keyboard.press('Enter');
+      await rtMember.getByText('결과가 없습니다').waitFor();
+
+      await box.fill('');
+      await box.pressSequentially('알림 작업', { delay: 20 });
+      await rtMember.keyboard.press('Enter');
+      await rtMember
+        .getByRole('region', { name: '작업' })
+        .getByRole('link', { name: '알림 작업' })
+        .click();
+      const dlg = rtMember.getByRole('dialog', { name: '작업 수정' });
+      await dlg.waitFor();
+      await dlg.getByRole('button', { name: '취소' }).click();
+      await rtMember.waitForURL((u) => !u.search.includes('task='));
+      await rtMember.getByRole('region', { name: '프로젝트 채팅' }).waitFor();
+    },
+  );
+  await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');

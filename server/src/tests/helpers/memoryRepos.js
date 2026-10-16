@@ -268,6 +268,63 @@ export const chatRepo = {
   },
 };
 
+// 검색 저장소: SQL 의 권한 필터(멤버 프로젝트, Admin 은 전체)와 ILIKE 의미를 메모리로 흉내 낸다.
+const unlike = (pattern) => pattern.slice(1, -1).replace(/\\(.)/g, '$1').toLowerCase();
+const accessible = (userId, isAdmin) => (projectId) =>
+  isAdmin || store.members.some((m) => m.project_id === projectId && m.user_id === userId);
+const has = (text, needle) => Boolean(text) && text.toLowerCase().includes(needle);
+const searchProjectName = (id) => store.projects.find((p) => p.id === id)?.name;
+const searchUserName = (id) => store.users.find((u) => u.id === id)?.name;
+export const searchRepo = {
+  async searchProjects({ userId, isAdmin, pattern, limit }) {
+    const n = unlike(pattern);
+    return store.projects
+      .filter((p) => accessible(userId, isAdmin)(p.id) && has(p.name, n))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, limit);
+  },
+  async searchTasks({ userId, isAdmin, pattern, limit }) {
+    const n = unlike(pattern);
+    return store.tasks
+      .filter(
+        (t) =>
+          accessible(userId, isAdmin)(t.project_id) && (has(t.title, n) || has(t.description, n)),
+      )
+      .slice(0, limit)
+      .map((t) => ({ ...t, project_name: searchProjectName(t.project_id) }));
+  },
+  async searchComments({ userId, isAdmin, pattern, limit }) {
+    const n = unlike(pattern);
+    return store.comments
+      .map((c) => ({ c, t: store.tasks.find((t) => t.id === c.task_id) }))
+      .filter(
+        ({ c, t }) =>
+          t && !c.deleted_at && accessible(userId, isAdmin)(t.project_id) && has(c.body, n),
+      )
+      .sort((a, b) => b.c.created_at - a.c.created_at)
+      .slice(0, limit)
+      .map(({ c, t }) => ({
+        ...c,
+        task_title: t.title,
+        project_id: t.project_id,
+        project_name: searchProjectName(t.project_id),
+        author_name: searchUserName(c.author_id),
+      }));
+  },
+  async searchChat({ userId, isAdmin, pattern, limit }) {
+    const n = unlike(pattern);
+    return store.chat
+      .filter((m) => accessible(userId, isAdmin)(m.project_id) && has(m.body, n))
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, limit)
+      .map((m) => ({
+        ...m,
+        project_name: searchProjectName(m.project_id),
+        author_name: searchUserName(m.author_id),
+      }));
+  },
+};
+
 export const shareRepo = {
   MAX_ACTIVE_PER_PROJECT: 5,
   STALE_DAYS: 30,

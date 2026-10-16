@@ -1789,6 +1789,133 @@ try {
     );
   }
 
+  // --- 통합검색 (M13): 권한 필터 SQL, ILIKE 이스케이프, 삭제 댓글 제외를 실제 DB 로 확인
+  {
+    const word = 'zq' + Math.random().toString(36).slice(2, 8); // 다른 데이터와 겹치지 않는 검색어
+    const spA = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: `smoke-search-A ${word}`, memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const spB = (
+      await call('POST', '/projects', {
+        token: t('manager2'),
+        body: { name: `smoke-search-B ${word}` },
+      })
+    ).body.id;
+    const taskA = (
+      await call('POST', `/projects/${spA}/tasks`, {
+        token: t('manager'),
+        body: { title: `검색작업 ${word}`, description: `설명에도 ${word} 가 있다` },
+      })
+    ).body.id;
+    await call('POST', `/projects/${spB}/tasks`, {
+      token: t('manager2'),
+      body: { title: `남의작업 ${word}` },
+    });
+    const cm = await call('POST', `/tasks/${taskA}/comments`, {
+      token: t('manager'),
+      body: { body: `댓글 ${word} 내용` },
+    });
+    await call('POST', `/projects/${spA}/chat`, {
+      token: t('member'),
+      body: { body: `채팅 ${word} 내용` },
+    });
+    await call('POST', `/projects/${spB}/chat`, {
+      token: t('manager2'),
+      body: { body: `남의채팅 ${word}` },
+    });
+    const find = (who, q, extra = '') =>
+      call('GET', `/search?q=${encodeURIComponent(q)}${extra}`, { token: t(who) });
+
+    const mine = await find('member', word);
+    check(
+      '검색: 멤버는 자기 프로젝트의 프로젝트·작업·댓글·채팅을 찾는다',
+      mine.status === 200 &&
+        mine.body.projects.length === 1 &&
+        mine.body.tasks.length === 1 &&
+        mine.body.comments.length === 1 &&
+        mine.body.chat.length === 1 &&
+        mine.body.projects[0].id === spA,
+      JSON.stringify(mine.body).slice(0, 300),
+    );
+    check(
+      '검색: 다른 프로젝트(B)의 결과는 어떤 종류에도 없다',
+      [...mine.body.tasks, ...mine.body.comments, ...mine.body.chat].every(
+        (r) => r.projectId === spA,
+      ),
+    );
+    const none = await find('outsider', word);
+    check(
+      '검색: 어느 프로젝트에도 속하지 않은 사용자는 결과 0건',
+      none.status === 200 &&
+        none.body.projects.length +
+          none.body.tasks.length +
+          none.body.comments.length +
+          none.body.chat.length ===
+          0,
+    );
+    const adm = await find('admin', word);
+    check(
+      '검색: Admin 은 모든 프로젝트를 찾는다 (A, B 둘 다)',
+      adm.body.projects.length === 2 && adm.body.tasks.length === 2 && adm.body.chat.length === 2,
+    );
+    check(
+      '검색: 설명에만 일치한 작업은 snippet 을 준다',
+      mine.body.tasks[0].snippet === null || mine.body.tasks[0].snippet.includes(word),
+    );
+    check(
+      '검색: 대소문자 무시',
+      (await find('member', word.toUpperCase())).body.tasks.length === 1,
+    );
+    check(
+      '검색: % _ \\ 는 와일드카드가 아니다',
+      (await find('member', '%%')).body.tasks.length === 0 &&
+        (await find('member', '__')).body.chat.length === 0 &&
+        (await find('member', '\\\\')).status === 200,
+    );
+    await call('POST', `/projects/${spB}/chat`, {
+      token: t('manager2'),
+      body: { body: `${word}%50 완료` },
+    });
+    check(
+      '검색: 실제 % 가 들어간 글은 % 를 글자로 찾고 _ 는 다른 글자와 맞지 않는다',
+      (await find('manager2', `${word}%50`, '&type=chat')).body.chat.length === 1 &&
+        (await find('manager2', `${word}_50`, '&type=chat')).body.chat.length === 0,
+    );
+    check(
+      '검색: type 과 limit 적용',
+      (await find('admin', word, '&type=chat&limit=1')).body.chat.length === 1 &&
+        (await find('admin', word, '&type=chat')).body.tasks.length === 0,
+    );
+    check('검색: 검색어 1자는 400', (await find('member', 'a')).status === 400);
+
+    await call('DELETE', `/comments/${cm.body.id}`, { token: t('manager') });
+    check(
+      '검색: 삭제된 댓글은 찾지 않는다',
+      (await find('member', word)).body.comments.length === 0,
+    );
+    await call('DELETE', `/projects/${spA}/members/${people.member.id}`, { token: t('manager') });
+    const removed = await find('member', word);
+    check(
+      '검색: 멤버에서 제거되면 그 프로젝트의 결과가 즉시 사라진다',
+      removed.body.projects.length + removed.body.tasks.length + removed.body.chat.length === 0,
+    );
+
+    const idx = await db.query(
+      "SELECT indexname FROM pg_indexes WHERE indexname LIKE '%_trgm_idx' ORDER BY indexname",
+    );
+    check(
+      '검색: pg_trgm 인덱스 5개',
+      idx.rowCount === 5 &&
+        (await db.query("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")).rowCount === 1,
+      JSON.stringify(idx.rows),
+    );
+    await call('DELETE', `/projects/${spA}`, { token: t('manager') });
+    await call('DELETE', `/projects/${spB}`, { token: t('manager2') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

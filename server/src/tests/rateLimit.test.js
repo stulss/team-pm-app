@@ -8,7 +8,7 @@ const { createLimiters, loginLimiter } = await import('../middleware/rateLimit.j
 
 // 운영과 같은 한도를 켠 작은 앱 (테스트에서는 메모리 저장소). 기본 limiter 는 개발/테스트에서 꺼져 있으므로 직접 만든다.
 function makeApp() {
-  const { login, register, mail, shared, chat, api } = createLimiters({
+  const { login, register, mail, shared, chat, search, api } = createLimiters({
     skip: () => false,
     useRedis: false,
   });
@@ -24,6 +24,12 @@ function makeApp() {
     '/chat',
     (req, res, next) => ((req.user = { id: req.get('x-user') }), next()),
     chat,
+    (req, res) => res.json({ ok: true }),
+  );
+  app.get(
+    '/search',
+    (req, res, next) => ((req.user = { id: req.get('x-user') }), next()),
+    search,
     (req, res) => res.json({ ok: true }),
   );
   app.use(api);
@@ -95,6 +101,17 @@ describe('chat limiter (사용자, 1분 30건)', () => {
     for (let i = 0; i < 30; i += 1) expect((await send('u1')).status).toBe(200);
     expect((await send('u1')).status).toBe(429);
     expect((await send('u2')).status).toBe(200);
+  });
+});
+
+describe('search limiter (사용자, 1분 30회)', () => {
+  it('31번째 검색은 429, 다른 사용자는 영향 없음', async () => {
+    const app = makeApp();
+    const go = (user) =>
+      request(app).get('/search').set('X-Forwarded-For', '3.3.3.3').set('X-User', user);
+    for (let i = 0; i < 30; i += 1) expect((await go('u1')).status).toBe(200);
+    expect((await go('u1')).status).toBe(429);
+    expect((await go('u2')).status).toBe(200);
   });
 });
 

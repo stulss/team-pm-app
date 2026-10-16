@@ -114,6 +114,15 @@ export function createLimiters({ skip = defaultSkip, useRedis = true } = {}) {
       store: store('rl:chat:'),
       keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip),
     }),
+    // 통합검색: 사용자 기준 분당 30회(느린 부분 일치 검색의 남용 방지). authenticate 뒤에서만 쓴다.
+    search: rateLimit({
+      ...common,
+      windowMs: 60 * 1000,
+      limit: 30,
+      skip,
+      store: store('rl:search:'),
+      keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip),
+    }),
     // 일반 API: IP 기준. 같은 사무실(NAT)의 여러 사용자가 함께 쓸 수 있도록 넉넉하게 둔다.
     api: rateLimit({
       ...common,
@@ -132,5 +141,6 @@ export const {
   mail: mailLimiter,
   shared: sharedLimiter,
   chat: chatSendLimiter,
+  search: searchLimiter,
   api: apiLimiter,
 } = createLimiters();

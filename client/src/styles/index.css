@@ -954,3 +954,45 @@ label.inline {
 .chat-form button {
   width: auto;
 }
+
+/* 통합검색 */
+.topbar-search {
+  flex: 1;
+  max-width: 22rem;
+  min-width: 8rem;
+}
+.topbar-search input {
+  width: 100%;
+}
+.search-group h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.4rem;
+}
+.search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.search-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.search-snippet {
+  flex-basis: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+mark {
+  background: #fde68a;
+  color: inherit;
+  border-radius: 2px;
+}
