@@ -5,6 +5,7 @@ import { notFound } from '../../utils/errors.js';
 import * as authRepo from '../auth/repository.js';
 import * as activityRepo from '../activity/repository.js';
 import * as shareRepo from '../share/repository.js';
+import * as chatRepo from '../chat/repository.js';
 import * as repo from './repository.js';
 import { logger } from '../../utils/logger.js';
 
@@ -132,5 +133,6 @@ export async function runDailyJobs({ today = todayIn() } = {}) {
   result.tokensDeleted = await authRepo.deleteExpired();
   result.activitiesDeleted = await activityRepo.deleteOlderThan(activityRepo.RETENTION_DAYS);
   result.shareLinksDeleted = await shareRepo.deleteStale();
+  result.chatMessagesDeleted = await chatRepo.deleteOlderThan(chatRepo.RETENTION_DAYS);
   return result;
 }

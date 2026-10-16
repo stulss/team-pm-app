@@ -1664,6 +1664,131 @@ try {
     await call('DELETE', `/projects/${mpid}`, { token: t('manager') });
   }
 
+  // --- 채팅 (M12): chat_messages SQL, 권한, 제약, 정리를 실제 DB 로 확인
+  {
+    const chatRepo = await import('../src/modules/chat/repository.js');
+    const cpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-chat', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const say = (who, body) =>
+      call('POST', `/projects/${cpid}/chat`, { token: t(who), body: { body } });
+    const feed = (who, qs = '') => call('GET', `/projects/${cpid}/chat${qs}`, { token: t(who) });
+
+    const m1 = await say('member', '  안녕하세요  ');
+    check(
+      '채팅 보내기 (201), 공백 제거·작성자 이름 포함',
+      m1.status === 201 && m1.body.body === '안녕하세요' && m1.body.author?.name === 'smoke-member',
+      JSON.stringify(m1.body),
+    );
+    await say('manager', '둘째');
+    await say('manager', '셋째');
+    const page1 = await feed('member', '?limit=2');
+    const page2 = await feed('member', `?limit=2&before=${page1.body.nextCursor}`);
+    check(
+      '채팅 목록은 최신순이고 seq 커서로 이어 읽힌다',
+      page1.body.data.map((m) => m.body).join() === '셋째,둘째' &&
+        typeof page1.body.nextCursor === 'number' &&
+        page2.body.data.map((m) => m.body).join() === '안녕하세요' &&
+        page2.body.nextCursor === null,
+      JSON.stringify([page1.body, page2.body]),
+    );
+    check(
+      '비멤버는 읽기·쓰기 403',
+      (await feed('outsider')).status === 403 && (await say('outsider', '들어감')).status === 403,
+    );
+    check(
+      '빈 메시지·2000자 초과는 400, 2000자는 통과',
+      (await say('member', '   ')).status === 400 &&
+        (await say('member', 'a'.repeat(2001))).status === 400 &&
+        (await say('member', 'a'.repeat(2000))).status === 201,
+    );
+    let checkRejected = false;
+    try {
+      await db.query(
+        "INSERT INTO chat_messages (project_id, body) VALUES ($1, repeat('a', 2001))",
+        [cpid],
+      );
+    } catch {
+      checkRejected = true;
+    }
+    check('DB CHECK 제약이 2001자 메시지를 거부', checkRejected);
+
+    const del = (who, id) => call('DELETE', `/projects/${cpid}/chat/${id}`, { token: t(who) });
+    check(
+      '삭제: 다른 멤버는 403, 작성자 204, 소유자 204',
+      (await del('manager2', m1.body.id)).status === 403 &&
+        (await del('member', m1.body.id)).status === 204 &&
+        (await del('manager', (await say('member', '소유자가 지움')).body.id)).status === 204,
+    );
+    check('삭제한 메시지는 다시 지우면 404', (await del('member', m1.body.id)).status === 404);
+
+    // 상한 정리(trim): 가장 최근 N건만 남긴다
+    await db.query('DELETE FROM chat_messages WHERE project_id = $1', [cpid]);
+    for (let i = 1; i <= 6; i += 1) await say('manager', `t${i}`);
+    const trimmed = await chatRepo.trim(cpid, 4);
+    const left = await feed('manager');
+    check(
+      '상한 정리는 오래된 메시지부터 지워 최근 N건만 남김',
+      trimmed === 2 && left.body.data.map((m) => m.body).join() === 't6,t5,t4,t3',
+      JSON.stringify([trimmed, left.body.data.map((m) => m.body)]),
+    );
+    check('상한 이하이면 아무것도 지우지 않음', (await chatRepo.trim(cpid, 10)) === 0);
+
+    // 보관 기간 정리
+    await db.query(
+      "INSERT INTO chat_messages (project_id, body, created_at) VALUES ($1, '오래됨', now() - interval '100 days')",
+      [cpid],
+    );
+    const removedOld = await chatRepo.deleteOlderThan(chatRepo.RETENTION_DAYS);
+    check(
+      '90일 지난 메시지만 정리됨',
+      removedOld >= 1 && (await feed('manager')).body.data.length === 4,
+    );
+
+    // 작성자가 지워져도 메시지는 남고 author 는 null
+    const ghost = await db.query(
+      "INSERT INTO users (email, password_hash, name) VALUES ('smoke-ghost@example.test', 'x', 'smoke-ghost') RETURNING id",
+    );
+    await db.query('INSERT INTO chat_messages (project_id, author_id, body) VALUES ($1, $2, $3)', [
+      cpid,
+      ghost.rows[0].id,
+      '유령의 말',
+    ]);
+    await db.query('DELETE FROM users WHERE id = $1', [ghost.rows[0].id]);
+    const orphan = (await feed('manager', '?limit=1')).body.data[0];
+    check(
+      '작성자가 사라져도 메시지 유지, author null',
+      orphan.body === '유령의 말' && orphan.author === null,
+    );
+
+    // 보관 프로젝트는 읽기 전용
+    await call('PATCH', `/projects/${cpid}`, { token: t('manager'), body: { status: 'archived' } });
+    const archivedSend = await say('manager', '보관 후');
+    check(
+      '보관된 프로젝트: 읽기 200, 보내기 409 PROJECT_ARCHIVED',
+      (await feed('manager')).status === 200 &&
+        archivedSend.status === 409 &&
+        archivedSend.body.error.code === 'PROJECT_ARCHIVED',
+    );
+
+    const idx = await db.query(
+      "SELECT 1 FROM pg_indexes WHERE tablename = 'chat_messages' AND indexname = 'chat_messages_project_seq_idx'",
+    );
+    const rlsOn = await db.query(
+      "SELECT 1 FROM pg_class WHERE relname = 'chat_messages' AND relrowsecurity",
+    );
+    check('chat_messages 인덱스 + RLS', idx.rowCount === 1 && rlsOn.rowCount === 1);
+
+    await call('DELETE', `/projects/${cpid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 채팅 메시지 CASCADE',
+      (await db.query('SELECT 1 FROM chat_messages WHERE project_id = $1', [cpid])).rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

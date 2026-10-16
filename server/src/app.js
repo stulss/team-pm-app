@@ -17,6 +17,7 @@ import { notificationsRouter } from './modules/notifications/routes.js';
 import { cronRouter } from './modules/cron/routes.js';
 import { dashboardRouter, projectDashboardRouter } from './modules/dashboard/routes.js';
 import { projectActivityRouter } from './modules/activity/routes.js';
+import { projectChatRouter } from './modules/chat/routes.js';
 import { projectShareRouter, publicShareRouter } from './modules/share/routes.js';
 
 export const app = express();
@@ -59,6 +60,7 @@ api.use('/projects', projectsRouter);
 api.use('/projects/:id/tasks', projectTasksRouter);
 api.use('/projects/:id/dashboard', projectDashboardRouter);
 api.use('/projects/:id/activities', projectActivityRouter);
+api.use('/projects/:id/chat', projectChatRouter);
 api.use('/projects/:id/share-links', projectShareRouter);
 api.use('/shared', publicShareRouter);
 api.use('/tasks/:id/comments', taskCommentsRouter);

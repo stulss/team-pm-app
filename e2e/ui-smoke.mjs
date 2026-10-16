@@ -943,6 +943,61 @@ try {
       .locator('[data-task-id]', { hasText: '끊긴 동안 생성' })
       .waitFor({ timeout: 15000 });
   });
+  await step('채팅: 보낸 메시지가 상대 화면에 새로고침 없이 나타나고 줄바꿈이 유지됨', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    const mChat = rtManager.getByRole('region', { name: '프로젝트 채팅' });
+    const uChat = rtMember.getByRole('region', { name: '프로젝트 채팅' });
+    await mChat.scrollIntoViewIfNeeded();
+    const box = mChat.getByLabel('채팅 메시지');
+    await box.click();
+    await box.pressSequentially('안녕하세요 <b>굵게</b>', { delay: 10 });
+    await rtManager.keyboard.press('Shift+Enter'); // 줄바꿈 (전송 아님)
+    await box.pressSequentially('두 번째 줄', { delay: 10 });
+    if ((await mChat.locator('.chat-body').count()) !== 0) throw new Error('Shift+Enter 로 전송됨');
+    await rtManager.keyboard.press('Enter');
+    const mine = mChat.locator('.chat-body', { hasText: '두 번째 줄' });
+    await mine.waitFor();
+    const theirs = uChat.locator('.chat-body', { hasText: '두 번째 줄' });
+    await theirs.waitFor({ timeout: 5000 });
+    if (!(await theirs.innerText()).includes('안녕하세요 <b>굵게</b>\n두 번째 줄')) {
+      throw new Error(`본문이 달라짐: ${await theirs.innerText()}`);
+    }
+    if ((await uChat.locator('.chat-body b').count()) !== 0) throw new Error('HTML 이 해석됨');
+    if ((await box.inputValue()) !== '') throw new Error('전송 후 입력창이 비워지지 않음');
+  });
+  await step(
+    '채팅: 답장이 양쪽에 보이고, 삭제는 작성자·소유자만 할 수 있으며 삭제하면 상대 화면에서도 사라짐',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const mChat = rtManager.getByRole('region', { name: '프로젝트 채팅' });
+      const uChat = rtMember.getByRole('region', { name: '프로젝트 채팅' });
+      const box = uChat.getByLabel('채팅 메시지');
+      await box.click();
+      await box.pressSequentially('네 확인했어요', { delay: 10 });
+      await uChat.getByRole('button', { name: '보내기' }).click();
+      await mChat.locator('.chat-body', { hasText: '네 확인했어요' }).waitFor({ timeout: 5000 });
+      // 멤버는 남(소유자)의 메시지를 지울 수 없고, 자기 메시지에만 삭제 버튼이 있다
+      const others = uChat.locator('.chat-msg', { hasText: '두 번째 줄' });
+      if ((await others.getByRole('button', { name: '삭제' }).count()) !== 0) {
+        throw new Error('남의 메시지에 삭제 버튼이 보임');
+      }
+      // 소유자는 멤버의 메시지도 지울 수 있다
+      const replyOnManager = mChat.locator('.chat-msg', { hasText: '네 확인했어요' });
+      rtManager.once('dialog', (d) => d.accept());
+      await replyOnManager.getByRole('button', { name: '삭제' }).click();
+      await replyOnManager.waitFor({ state: 'detached' });
+      await uChat
+        .locator('.chat-body', { hasText: '네 확인했어요' })
+        .waitFor({ state: 'detached', timeout: 5000 });
+      // 작성자는 자기 메시지를 지운다
+      const first = mChat.locator('.chat-msg', { hasText: '두 번째 줄' });
+      rtManager.once('dialog', (d) => d.accept());
+      await first.getByRole('button', { name: '삭제' }).click();
+      await uChat
+        .locator('.chat-body', { hasText: '두 번째 줄' })
+        .waitFor({ state: 'detached', timeout: 5000 });
+    },
+  );
   await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {

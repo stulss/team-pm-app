@@ -16,6 +16,7 @@ export const store = {
   emailTokens: [],
   activities: [],
   shareLinks: [],
+  chat: [],
 };
 
 export function reset() {
@@ -29,7 +30,9 @@ export function reset() {
   store.emailTokens = [];
   store.activities = [];
   store.shareLinks = [];
+  store.chat = [];
   activitySeq = 0;
+  chatSeq = 0;
 }
 
 const pub = (u) => ({
@@ -206,6 +209,62 @@ export const activityRepo = {
     const before = store.activities.length;
     store.activities = store.activities.filter((a) => a.created_at.getTime() >= cutoff);
     return before - store.activities.length;
+  },
+};
+
+let chatSeq = 0;
+export const chatRepo = {
+  RETENTION_DAYS: 90,
+  MAX_PER_PROJECT: 5000,
+  toMessage: (row) =>
+    row && {
+      id: row.id,
+      seq: Number(row.seq),
+      body: row.body,
+      author: row.author_id ? { id: row.author_id, name: row.author_name } : null,
+      createdAt: row.created_at,
+    },
+  _withName: (m) => ({ ...m, author_name: store.users.find((u) => u.id === m.author_id)?.name }),
+  async insert({ projectId, authorId, body }) {
+    chatSeq += 1;
+    const row = {
+      id: crypto.randomUUID(),
+      seq: chatSeq,
+      project_id: projectId,
+      author_id: authorId,
+      body,
+      created_at: new Date(),
+    };
+    store.chat.push(row);
+    return chatRepo._withName(row);
+  },
+  async findById(projectId, id) {
+    const m = store.chat.find((x) => x.project_id === projectId && x.id === id);
+    return m ? chatRepo._withName(m) : null;
+  },
+  async list(projectId, { limit, before }) {
+    return store.chat
+      .filter((m) => m.project_id === projectId && (before === undefined || m.seq < before))
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, limit + 1)
+      .map(chatRepo._withName);
+  },
+  async remove(projectId, id) {
+    const before = store.chat.length;
+    store.chat = store.chat.filter((m) => !(m.project_id === projectId && m.id === id));
+    return store.chat.length < before;
+  },
+  async trim(projectId, keep) {
+    const mine = store.chat.filter((m) => m.project_id === projectId).sort((a, b) => b.seq - a.seq);
+    const drop = new Set(mine.slice(keep).map((m) => m.id));
+    store.chat = store.chat.filter((m) => !drop.has(m.id));
+    return drop.size;
+  },
+  async deleteOlderThan(days) {
+    const cutoff = Date.now() - days * 86400_000;
+    const before = store.chat.length;
+    store.chat = store.chat.filter((m) => m.created_at.getTime() >= cutoff);
+    return before - store.chat.length;
   },
 };
 

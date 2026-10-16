@@ -8,7 +8,7 @@ const { createLimiters, loginLimiter } = await import('../middleware/rateLimit.j
 
 // 운영과 같은 한도를 켠 작은 앱 (테스트에서는 메모리 저장소). 기본 limiter 는 개발/테스트에서 꺼져 있으므로 직접 만든다.
 function makeApp() {
-  const { login, register, mail, shared, api } = createLimiters({
+  const { login, register, mail, shared, chat, api } = createLimiters({
     skip: () => false,
     useRedis: false,
   });
@@ -19,6 +19,13 @@ function makeApp() {
   app.post('/register', register, (req, res) => res.json({ ok: true }));
   app.post('/forgot', mail, (req, res) => res.json({ ok: true }));
   app.get('/shared/:token', shared, (req, res) => res.json({ ok: true }));
+  // 인증을 흉내 낸다: X-User 헤더가 사용자 ID
+  app.post(
+    '/chat',
+    (req, res, next) => ((req.user = { id: req.get('x-user') }), next()),
+    chat,
+    (req, res) => res.json({ ok: true }),
+  );
   app.use(api);
   app.get('/health', (req, res) => res.json({ ok: true }));
   app.get('/data', (req, res) => res.json({ ok: true }));
@@ -77,6 +84,17 @@ describe('shared limiter (IP, 1분 120회)', () => {
     for (let i = 0; i < 120; i += 1) expect((await get('7.7.7.7')).status).toBe(200);
     expect((await get('7.7.7.7')).status).toBe(429);
     expect((await get('8.8.8.8')).status).toBe(200);
+  });
+});
+
+describe('chat limiter (사용자, 1분 30건)', () => {
+  it('31번째 메시지는 429, 다른 사용자는 같은 IP 라도 영향 없음', async () => {
+    const app = makeApp();
+    const send = (user) =>
+      request(app).post('/chat').set('X-Forwarded-For', '4.4.4.4').set('X-User', user);
+    for (let i = 0; i < 30; i += 1) expect((await send('u1')).status).toBe(200);
+    expect((await send('u1')).status).toBe(429);
+    expect((await send('u2')).status).toBe(200);
   });
 });
 
