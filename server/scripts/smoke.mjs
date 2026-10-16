@@ -1916,6 +1916,100 @@ try {
     await call('DELETE', `/projects/${spB}`, { token: t('manager2') });
   }
 
+  // --- 모아보기 (M14): GET /feed 의 SQL 과 "내가 멤버인 프로젝트" 한정을 실제 DB 로 확인
+  {
+    const day = (offset) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + offset);
+      return d.toISOString().slice(0, 10);
+    };
+    const fpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-feed', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const mk = (title, dueDate, extra = {}) =>
+      call('POST', `/projects/${fpid}/tasks`, {
+        token: t('manager'),
+        body: { title, dueDate, assigneeId: people.member.id, ...extra },
+      });
+    await mk('smoke-feed-late', day(-3));
+    await mk('smoke-feed-soon', day(3));
+    await mk('smoke-feed-far', day(30));
+    const doneTask = (await mk('smoke-feed-done', day(1))).body.id;
+    await call('PATCH', `/tasks/${doneTask}`, { token: t('manager'), body: { status: 'done' } });
+    const mtask = (
+      await call('POST', `/projects/${fpid}/tasks`, {
+        token: t('manager'),
+        body: { title: 'smoke-feed-mention' },
+      })
+    ).body.id;
+    await call('POST', `/tasks/${mtask}/comments`, {
+      token: t('manager'),
+      body: { body: '@smoke-member 피드 확인', mentionIds: [people.member.id] },
+    });
+    await call('POST', `/tasks/${mtask}/comments`, {
+      token: t('member'),
+      body: { body: '@smoke-member 내가 나를', mentionIds: [people.member.id] },
+    });
+
+    const mine = (await call('GET', '/feed', { token: t('member') })).body;
+    check(
+      '피드: 지연·7일 이내 마감만, 마감 순 (먼 마감·완료 제외), overdue 표시',
+      mine.dueTasks
+        .filter((x) => x.projectId === fpid)
+        .map((x) => x.title)
+        .join() === 'smoke-feed-late,smoke-feed-soon' &&
+        mine.dueTasks.find((x) => x.title === 'smoke-feed-late').overdue === true &&
+        mine.dueTasks.find((x) => x.title === 'smoke-feed-soon').overdue === false,
+      JSON.stringify(mine.dueTasks),
+    );
+    check(
+      '피드: 나를 멘션한 댓글(남이 쓴 것)만, 작성자·미리보기 포함',
+      mine.mentions.filter((x) => x.projectId === fpid).length === 1 &&
+        mine.mentions.find((x) => x.projectId === fpid).author.name === 'smoke-manager' &&
+        mine.mentions.find((x) => x.projectId === fpid).snippet.includes('피드 확인'),
+      JSON.stringify(mine.mentions),
+    );
+    check(
+      '피드: 안 읽은 알림 수와 미리보기 5건 이하',
+      mine.notifications.unread >= 1 && mine.notifications.items.length <= 5,
+    );
+    const acts = mine.activities.filter((x) => x.projectId === fpid);
+    check(
+      '피드: 내가 한 활동은 빼고 남이 한 활동만',
+      acts.length > 0 && acts.every((x) => x.actor?.id !== people.member.id),
+      JSON.stringify(acts.map((a) => a.actor)),
+    );
+
+    const out = (await call('GET', '/feed', { token: t('outsider') })).body;
+    const leaks = [...out.dueTasks, ...out.mentions, ...out.activities].filter(
+      (x) => x.projectId === fpid,
+    );
+    check('피드: 프로젝트 멤버가 아닌 사용자에게는 그 프로젝트가 나오지 않음', leaks.length === 0);
+    const adm = (await call('GET', '/feed', { token: t('admin') })).body;
+    check(
+      '피드: 멤버가 아닌 Admin 에게도 나오지 않음',
+      [...adm.dueTasks, ...adm.mentions, ...adm.activities].every((x) => x.projectId !== fpid),
+    );
+
+    await call('PATCH', `/projects/${fpid}`, { token: t('manager'), body: { status: 'archived' } });
+    const arch = (await call('GET', '/feed', { token: t('member') })).body;
+    check(
+      '피드: 보관된 프로젝트의 마감 작업은 제외',
+      arch.dueTasks.every((x) => x.projectId !== fpid),
+    );
+    await call('PATCH', `/projects/${fpid}`, { token: t('manager'), body: { status: 'active' } });
+    await call('DELETE', `/projects/${fpid}/members/${people.member.id}`, { token: t('manager') });
+    const gone = (await call('GET', '/feed', { token: t('member') })).body;
+    check(
+      '피드: 멤버에서 제거되면 마감·멘션·활동이 즉시 사라짐',
+      [...gone.dueTasks, ...gone.mentions, ...gone.activities].every((x) => x.projectId !== fpid),
+    );
+    await call('DELETE', `/projects/${fpid}`, { token: t('manager') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

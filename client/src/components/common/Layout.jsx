@@ -32,6 +32,7 @@ export default function Layout() {
           <NavLink to="/" end>
             프로젝트
           </NavLink>
+          <NavLink to="/feed">모아보기</NavLink>
           <NavLink to="/dashboard">대시보드</NavLink>
           <NavLink to="/tasks/mine">내 작업</NavLink>
           {user.role === 'admin' && <NavLink to="/admin/users">사용자 관리</NavLink>}

@@ -8,11 +8,14 @@ export function useUserRealtime() {
   useEffect(() => {
     const socket = connectSocket();
     const refresh = () => {
+      queryClient.invalidateQueries({ queryKey: ['feed'] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['mytasks'] });
     };
-    const refreshNotifications = () =>
+    const refreshNotifications = () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      queryClient.invalidateQueries({ queryKey: ['feed'] });
+    };
     socket.on('member:added', refresh);
     socket.on('member:removed', refresh);
     socket.on('notification:new', refreshNotifications);

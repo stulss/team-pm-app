@@ -12,6 +12,7 @@ import ProjectListPage from './pages/ProjectListPage.jsx';
 import ProjectDetailPage from './pages/ProjectDetailPage.jsx';
 import MyTasksPage from './pages/MyTasksPage.jsx';
 import SearchPage from './pages/SearchPage.jsx';
+import FeedPage from './pages/FeedPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import AdminUsersPage from './pages/AdminUsersPage.jsx';
 
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/tasks/mine" element={<MyTasksPage />} />
               <Route path="/search" element={<SearchPage />} />
+              <Route path="/feed" element={<FeedPage />} />
               <Route element={<RoleRoute roles={['admin']} />}>
                 <Route path="/admin/users" element={<AdminUsersPage />} />
               </Route>

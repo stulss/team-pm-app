@@ -83,8 +83,8 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 ## 6. 스모크·E2E (배포 직후)
 
 ```
-BASE_URL=https://team-pm-app-sand.vercel.app npm run smoke -w server   # 실제 DB API 스모크 (228 항목)
-BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라우저 e2e (59 단계, 모바일 포함)
+BASE_URL=https://team-pm-app-sand.vercel.app npm run smoke -w server   # 실제 DB API 스모크 (236 항목)
+BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라우저 e2e (60 단계, 모바일 포함)
 ```
 
 - 보호된 Preview 는 `VERCEL_BYPASS=<토큰>` 을 함께 준다. 둘 다 `@example.test` 계정·`smoke-`/`ui-` 데이터만 만들고 끝나면 삭제한다(실제 계정 불변).

@@ -325,6 +325,64 @@ export const searchRepo = {
   },
 };
 
+// 모아보기 저장소: SQL 의 "내가 멤버인 프로젝트" 필터와 조건을 메모리로 흉내 낸다.
+const myProject = (userId) => (projectId) =>
+  store.members.some((m) => m.project_id === projectId && m.user_id === userId);
+export const feedRepo = {
+  async dueTasks(userId, until, limit) {
+    const mine = myProject(userId);
+    return store.tasks
+      .filter((t) => {
+        const p = store.projects.find((x) => x.id === t.project_id);
+        return (
+          t.assignee_id === userId &&
+          t.status !== 'done' &&
+          t.due_date &&
+          String(t.due_date).slice(0, 10) <= until &&
+          p?.status === 'active' &&
+          mine(t.project_id)
+        );
+      })
+      .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))
+      .slice(0, limit)
+      .map((t) => ({ ...t, project_name: store.projects.find((p) => p.id === t.project_id).name }));
+  },
+  async mentions(userId, limit) {
+    const mine = myProject(userId);
+    return store.comments
+      .map((c) => ({ c, t: store.tasks.find((t) => t.id === c.task_id) }))
+      .filter(
+        ({ c, t }) =>
+          t &&
+          !c.deleted_at &&
+          c.author_id !== userId &&
+          c.mentions?.some((m) => m.id === userId) &&
+          mine(t.project_id),
+      )
+      .sort((a, b) => b.c.created_at - a.c.created_at)
+      .slice(0, limit)
+      .map(({ c, t }) => ({
+        ...c,
+        task_title: t.title,
+        project_id: t.project_id,
+        project_name: store.projects.find((p) => p.id === t.project_id).name,
+        author_name: store.users.find((u) => u.id === c.author_id)?.name,
+      }));
+  },
+  async activities(userId, limit) {
+    const mine = myProject(userId);
+    return store.activities
+      .filter((a) => mine(a.project_id) && a.actor_id !== userId)
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, limit)
+      .map((a) => ({
+        ...a,
+        project_name: store.projects.find((p) => p.id === a.project_id)?.name,
+        actor_name: store.users.find((u) => u.id === a.actor_id)?.name,
+      }));
+  },
+};
+
 export const shareRepo = {
   MAX_ACTIVE_PER_PROJECT: 5,
   STALE_DAYS: 30,

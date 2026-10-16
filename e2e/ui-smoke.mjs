@@ -1040,6 +1040,32 @@ try {
     },
   );
   await step(
+    '모아보기: 멘션·알림·남의 활동이 한 화면에 모이고, 멘션을 누르면 그 작업이 열림',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await rtMember.getByRole('link', { name: '모아보기' }).click();
+      await rtMember.waitForURL((u) => u.pathname === '/feed');
+      const mentions = rtMember.getByRole('region', { name: '나를 멘션한 댓글' });
+      await mentions.getByText('멘션 확인 부탁해요').waitFor();
+      // 내가 한 활동은 빼고 남(ui-manager)이 한 활동만 보인다
+      const acts = rtMember.getByRole('region', { name: '내가 없는 동안의 활동' });
+      await acts.getByText('ui-manager').first().waitFor();
+      if ((await acts.getByText('ui-member님이').count()) !== 0) {
+        throw new Error('내가 한 활동이 남의 활동 목록에 있음');
+      }
+      // 안 읽은 알림 영역이 있고, 마감 영역은 비어 있다는 안내가 보인다
+      await rtMember.getByRole('region', { name: '안 읽은 알림' }).waitFor();
+      await rtMember.getByRole('region', { name: '마감 임박·지연 작업' }).waitFor();
+
+      await mentions.getByRole('link', { name: '알림 작업' }).first().click();
+      const dlg = rtMember.getByRole('dialog', { name: '작업 수정' });
+      await dlg.waitFor();
+      await dlg.getByRole('button', { name: '취소' }).click();
+      await rtMember.waitForURL((u) => !u.search.includes('task='));
+      await rtMember.getByRole('region', { name: '프로젝트 채팅' }).waitFor();
+    },
+  );
+  await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');
