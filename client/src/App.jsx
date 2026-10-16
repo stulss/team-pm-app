@@ -7,6 +7,7 @@ import RegisterPage from './pages/RegisterPage.jsx';
 import ForgotPasswordPage from './pages/ForgotPasswordPage.jsx';
 import ResetPasswordPage from './pages/ResetPasswordPage.jsx';
 import VerifyEmailPage from './pages/VerifyEmailPage.jsx';
+import SharedHistoryPage from './pages/SharedHistoryPage.jsx';
 import ProjectListPage from './pages/ProjectListPage.jsx';
 import ProjectDetailPage from './pages/ProjectDetailPage.jsx';
 import MyTasksPage from './pages/MyTasksPage.jsx';
@@ -37,6 +38,7 @@ export default function App() {
           <Route element={<AuthLayout />}>
             <Route path="/verify-email" element={<VerifyEmailPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/share/:token" element={<SharedHistoryPage />} />
           </Route>
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>

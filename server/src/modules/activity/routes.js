@@ -16,10 +16,12 @@ const ACTIONS = [
   'task.deleted',
   'comment.created',
   'comment.deleted',
+  'share.created',
+  'share.revoked',
 ];
 
 const listQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(50).default(30),
+  limit: z.coerce.number().int().min(1).max(200).default(30),
   before: z.coerce.number().int().min(1).optional(),
   taskId: z.uuid().optional(),
   action: z.enum(ACTIONS).optional(),

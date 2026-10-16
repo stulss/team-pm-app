@@ -1314,6 +1314,200 @@ try {
     );
   }
 
+  // --- 히스토리 공유 링크 (M10b): 해시 저장·만료·폐기·한도·공개 조회·정리를 실제 DB 로 확인
+  {
+    const { createHash } = await import('node:crypto');
+    const shareRepo = await import('../src/modules/share/repository.js');
+    const spid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-share', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const mkLink = (who = 'manager', days = 7) =>
+      call('POST', `/projects/${spid}/share-links`, {
+        token: t(who),
+        body: { expiresInDays: days },
+      });
+    const publicGet = (tok, qs = '') =>
+      fetch(`${BASE}/shared/${tok}${qs}`, {
+        headers: process.env.VERCEL_BYPASS
+          ? { 'x-vercel-protection-bypass': process.env.VERCEL_BYPASS }
+          : {},
+      }).then(async (r) => ({
+        status: r.status,
+        headers: r.headers,
+        body: await r.json().catch(() => null),
+      }));
+
+    await call('POST', `/projects/${spid}/tasks`, {
+      token: t('member'),
+      body: { title: 'smoke-share-task' },
+    });
+    await call('POST', `/projects/${spid}/members`, {
+      token: t('manager'),
+      body: { userId: people.outsider.id },
+    });
+
+    const a = await mkLink('manager', 7);
+    check(
+      '소유자가 공유 링크 생성 (201), 토큰 43자',
+      a.status === 201 && /^[A-Za-z0-9_-]{43}$/.test(a.body.token),
+      JSON.stringify(a.body),
+    );
+    const stored = await db.query('SELECT token_hash FROM share_links WHERE id = $1', [a.body.id]);
+    check(
+      'DB 에는 SHA-256 해시만 저장 (원문 불일치)',
+      stored.rows[0].token_hash === createHash('sha256').update(a.body.token).digest('hex') &&
+        stored.rows[0].token_hash !== a.body.token,
+    );
+    check(
+      '멤버(소유자 아님)는 생성·목록 불가 (403)',
+      (await mkLink('member')).status === 403 &&
+        (await call('GET', `/projects/${spid}/share-links`, { token: t('member') })).status === 403,
+    );
+
+    const pub = await publicGet(a.body.token);
+    check(
+      '로그인 없이 공개 조회 (200), 프로젝트 이름·작업 기록 포함',
+      pub.status === 200 &&
+        pub.body.project.name === 'smoke-share' &&
+        pub.body.data.some(
+          (x) => x.action === 'task.created' && x.meta.title === 'smoke-share-task',
+        ),
+      JSON.stringify(pub.body)?.slice(0, 200),
+    );
+    check(
+      '공개 응답 헤더: no-store, noindex',
+      pub.headers.get('cache-control') === 'no-store' &&
+        (pub.headers.get('x-robots-tag') ?? '').includes('noindex'),
+    );
+    const actionsSeen = pub.body.data.map((x) => x.action);
+    check(
+      '공개 응답에서 멤버·공유 기록은 숨김',
+      !actionsSeen.some((x) => x.startsWith('member.') || x.startsWith('share.')),
+      JSON.stringify(actionsSeen),
+    );
+    check(
+      '공개 응답에 이메일 없음',
+      !JSON.stringify(pub.body).includes('@example.test') &&
+        !JSON.stringify(pub.body).includes(people.outsider.id),
+    );
+    const internal = await call('GET', `/projects/${spid}/activities?limit=50`, {
+      token: t('manager'),
+    });
+    check(
+      '멤버에게는 멤버 추가·공유 생성 기록이 보임',
+      internal.body.data.some((x) => x.action === 'member.added') &&
+        internal.body.data.some((x) => x.action === 'share.created'),
+    );
+
+    // 조회수: 첫 페이지만 센다
+    await publicGet(a.body.token, '?limit=1');
+    const afterFirst = await db.query(
+      'SELECT view_count, last_viewed_at FROM share_links WHERE id = $1',
+      [a.body.id],
+    );
+    const cursor = (await publicGet(a.body.token, '?limit=1')).body.nextCursor;
+    await publicGet(a.body.token, `?limit=1&before=${cursor}`);
+    const afterMore = await db.query('SELECT view_count FROM share_links WHERE id = $1', [
+      a.body.id,
+    ]);
+    check(
+      '조회수는 첫 페이지에서만 증가 (더 보기는 미증가), 마지막 조회 시각 기록',
+      afterFirst.rows[0].view_count === 2 &&
+        afterFirst.rows[0].last_viewed_at !== null &&
+        afterMore.rows[0].view_count === 3,
+      `${afterFirst.rows[0].view_count}/${afterMore.rows[0].view_count}`,
+    );
+    const listed = await call('GET', `/projects/${spid}/share-links`, { token: t('manager') });
+    check(
+      '목록에는 토큰·해시가 없고 조회수가 보임',
+      listed.status === 200 &&
+        listed.body.data.length === 1 &&
+        listed.body.data[0].viewCount === 3 &&
+        !JSON.stringify(listed.body).includes(a.body.token) &&
+        !JSON.stringify(listed.body).includes('hash'),
+    );
+
+    // 폐기·만료·없음은 같은 404
+    const b = await mkLink('manager', 1);
+    await db.query("UPDATE share_links SET expires_at = now() - interval '1 hour' WHERE id = $1", [
+      b.body.id,
+    ]);
+    const unknown = await publicGet('z'.repeat(43));
+    const expiredRes = await publicGet(b.body.token);
+    check(
+      '만료된 링크와 없는 링크는 같은 404 (SHARE_LINK_NOT_FOUND)',
+      unknown.status === 404 &&
+        expiredRes.status === 404 &&
+        JSON.stringify(unknown.body) === JSON.stringify(expiredRes.body) &&
+        unknown.body.error.code === 'SHARE_LINK_NOT_FOUND',
+    );
+    check(
+      '만료된 링크는 목록·개수에서 빠짐',
+      (await call('GET', `/projects/${spid}/share-links`, { token: t('manager') })).body.data
+        .length === 1,
+    );
+    check(
+      '폐기하면 즉시 404, 재폐기 404, 멤버는 폐기 불가 (403)',
+      (await call('DELETE', `/projects/${spid}/share-links/${a.body.id}`, { token: t('member') }))
+        .status === 403 &&
+        (
+          await call('DELETE', `/projects/${spid}/share-links/${a.body.id}`, {
+            token: t('manager'),
+          })
+        ).status === 204 &&
+        (await publicGet(a.body.token)).status === 404 &&
+        (
+          await call('DELETE', `/projects/${spid}/share-links/${a.body.id}`, {
+            token: t('manager'),
+          })
+        ).status === 404,
+    );
+
+    // 유효 링크 5개 한도
+    const made = [];
+    for (let i = 0; i < 5; i += 1) made.push((await mkLink()).status);
+    const sixth = await mkLink();
+    check(
+      '유효 링크는 프로젝트당 5개 (6번째 409 LIMIT_REACHED)',
+      made.every((x) => x === 201) &&
+        sixth.status === 409 &&
+        sixth.body.error.code === 'LIMIT_REACHED',
+      JSON.stringify(made),
+    );
+
+    // 정리: 만료·폐기된 지 30일이 지난 링크만
+    await db.query(
+      `INSERT INTO share_links (project_id, token_hash, expires_at)
+       VALUES ($1, 'smoke-old-expired-hash', now() - interval '40 days'),
+              ($1, 'smoke-recent-expired-hash', now() - interval '2 days')`,
+      [spid],
+    );
+    const removedStale = await shareRepo.deleteStale();
+    const staleLeft = await db.query(
+      "SELECT token_hash FROM share_links WHERE token_hash LIKE 'smoke-%-hash'",
+    );
+    check(
+      '30일 지난 만료 링크만 정리 (최근 만료는 유지)',
+      removedStale >= 1 &&
+        staleLeft.rowCount === 1 &&
+        staleLeft.rows[0].token_hash === 'smoke-recent-expired-hash',
+    );
+    const rlsShare = await db.query(
+      "SELECT 1 FROM pg_class WHERE relname = 'share_links' AND relrowsecurity",
+    );
+    check('share_links RLS 활성화', rlsShare.rowCount === 1);
+
+    await call('DELETE', `/projects/${spid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 공유 링크 CASCADE, 공개 조회도 404',
+      (await db.query('SELECT 1 FROM share_links WHERE project_id = $1', [spid])).rowCount === 0 &&
+        (await publicGet('y'.repeat(43))).status === 404,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

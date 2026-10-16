@@ -5,7 +5,13 @@ import { actorName, describeActivity, formatWhen } from '../../constants/activit
 
 // 프로젝트 전체 활동(taskId 없음) 또는 한 작업의 변경 이력(taskId 있음).
 // 실시간 이벤트가 오면 useProjectRealtime 이 ['activities', projectId] 를 무효화해 다시 불러온다.
-export default function ActivityFeed({ projectId, taskId, title = '활동 기록', limit = 20 }) {
+export default function ActivityFeed({
+  projectId,
+  taskId,
+  title = '활동 기록',
+  limit = 20,
+  actions = null,
+}) {
   const { data, isPending, isError, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
     useInfiniteQuery({
       queryKey: ['activities', projectId, taskId ?? null],
@@ -18,7 +24,10 @@ export default function ActivityFeed({ projectId, taskId, title = '활동 기록
 
   return (
     <section className="activity" aria-label={title}>
-      <h2>{title}</h2>
+      <div className="row between">
+        <h2>{title}</h2>
+        {actions}
+      </div>
       {isPending && <p className="muted small">불러오는 중…</p>}
       {isError && (
         <p role="alert" className="error">

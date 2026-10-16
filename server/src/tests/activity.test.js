@@ -100,7 +100,7 @@ describe('GET /projects/:id/activities — 접근 권한', () => {
   });
 
   it('잘못된 쿼리는 400', async () => {
-    for (const qs of ['?limit=0', '?limit=51', '?before=abc', '?taskId=x', '?action=nope']) {
+    for (const qs of ['?limit=0', '?limit=201', '?before=abc', '?taskId=x', '?action=nope']) {
       expect((await api('get', `/projects/${pid}/activities${qs}`, 'owner')).status, qs).toBe(400);
     }
   });

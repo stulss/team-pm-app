@@ -67,14 +67,14 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 
 ## 4. 마이그레이션
 
-- `node-pg-migrate` 로 `server/db/migrations/` 에 순서대로 작성한다(001 ~ 007). 되돌릴 수 있는 `down` 을 함께 둔다.
+- `node-pg-migrate` 로 `server/db/migrations/` 에 순서대로 작성한다(001 ~ 008). 되돌릴 수 있는 `down` 을 함께 둔다.
 - **자동 적용되지 않는다.** `main` 푸시가 코드를 배포하므로, **새 마이그레이션이 있는 변경은 코드를 푸시하기 전에 먼저 적용한다**(이전 코드가 새 스키마에서 깨지지 않는지 확인).
 - 적용: `npm run migrate -w server -- up` (`DIRECT_URL`, Session pooler 사용). Transaction pooler 로는 실행하지 않는다.
 - 모든 테이블은 같은 마이그레이션에서 `ENABLE ROW LEVEL SECURITY` 를 켠다(정책은 두지 않음 → Supabase 공개 API 직접 접근 차단).
 
 ## 5. 보안 설정 요약 (자세한 점검 결과는 `SECURITY.md`)
 
-- **레이트리밋**: 로그인 IP+이메일 15분 10회, 가입 IP 1시간 20회, 인증·재설정 메일 요청 IP+이메일 1시간 10회, 일반 API IP 분당 600회. 운영에서는 Redis 저장소(`LazyRedisStore`)로 인스턴스 간 공유하고, Redis 장애 시에는 요청을 막지 않는다(fail-open). 개발·테스트에서는 꺼져 있다.
+- **레이트리밋**: 로그인 IP+이메일 15분 10회, 가입 IP 1시간 20회, 인증·재설정 메일 요청 IP+이메일 1시간 10회, 공개 공유 조회 IP 분당 120회, 일반 API IP 분당 600회. 운영에서는 Redis 저장소(`LazyRedisStore`)로 인스턴스 간 공유하고, Redis 장애 시에는 요청을 막지 않는다(fail-open). 개발·테스트에서는 꺼져 있다.
 - **DB TLS**: 내장한 Supabase Root 2021 CA 로 서버 인증서를 검증한다(`server/src/config/supabaseCa.js`, **2031-04-26 만료 — 그 전에 교체**).
 - **Redis 구간 암호화 없음**: 무료 Redis 엔드포인트는 TLS 를 지원하지 않는다(`rediss://` 거부 확인). 소켓 이벤트·레이트리밋 카운트가 평문으로 오가므로 이벤트에는 작업 제목 등 필요한 정보만 싣고 비밀번호·토큰은 싣지 않는다. TLS 가능한 플랜으로 바꾸면 `REDIS_URL` 을 `rediss://` 로 교체한다.
 - **로그**: pino JSON 한 줄/요청(메서드·경로·상태·소요시간·`x-request-id`·사용자 ID). Authorization·쿠키·비밀번호·토큰은 남기지 않는다(운영 로그 200건 검사 확인). 문의가 오면 응답 헤더 `x-request-id` 로 추적한다.
@@ -83,8 +83,8 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 ## 6. 스모크·E2E (배포 직후)
 
 ```
-BASE_URL=https://team-pm-app-sand.vercel.app npm run smoke -w server   # 실제 DB API 스모크 (172 항목)
-BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라우저 e2e (51 단계, 모바일 포함)
+BASE_URL=https://team-pm-app-sand.vercel.app npm run smoke -w server   # 실제 DB API 스모크 (189 항목)
+BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라우저 e2e (54 단계, 모바일 포함)
 ```
 
 - 보호된 Preview 는 `VERCEL_BYPASS=<토큰>` 을 함께 준다. 둘 다 `@example.test` 계정·`smoke-`/`ui-` 데이터만 만들고 끝나면 삭제한다(실제 계정 불변).
@@ -98,6 +98,7 @@ BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라�
 | 배포 롤백 | Vercel 대시보드에서 이전 배포로 Instant Rollback. 마이그레이션이 포함된 배포는 `down` 가능 여부를 먼저 확인 |
 | 메일 설정(이메일 인증·재설정 켜기) | Brevo 에서 발신자(Sender) 이메일 인증 + API 키 발급 → Vercel 환경변수 `BREVO_API_KEY`, `MAIL_FROM`(인증한 발신 주소), `APP_URL` 등록 후 재배포. 켜기 전에 가입한 계정은 로그인 때 "인증 필요" 가 나오고 로그인 화면의 "인증 메일 다시 받기" 로 해결한다(006 마이그레이션 이전 계정은 이미 인증됨) |
 | 메일이 안 옴 | Brevo 대시보드 Transactional 로그, 스팸함, `MAIL_FROM` 이 Brevo 에서 인증된 발신자인지, 하루 300통 한도 확인. 서버 로그의 `mail send failed`(상태 코드만 기록) |
+| 공유 링크가 새어 나감 | 프로젝트 화면의 "읽기 전용 공유 링크" 에서 해당 링크를 **폐기**(즉시 무효). 전부 막으려면 프로젝트 소유자가 모든 링크를 폐기한다. 링크는 만료(최대 30일)되고 프로젝트당 5개까지다 |
 | 신규 가입 막기 | Vercel 환경변수 `ALLOW_REGISTRATION=false` 후 재배포(기존 사용자 로그인·사용은 그대로) |
 | 사용자 비활성화·역할 변경 | 앱의 `사용자 관리`(Admin). 비활성화하면 세션·소켓이 즉시 끊긴다 |
 | JWT 키 교체 | 환경변수 교체 후 재배포 → 모든 세션이 만료되어 재로그인 필요 |

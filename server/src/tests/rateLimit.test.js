@@ -8,13 +8,17 @@ const { createLimiters, loginLimiter } = await import('../middleware/rateLimit.j
 
 // 운영과 같은 한도를 켠 작은 앱 (테스트에서는 메모리 저장소). 기본 limiter 는 개발/테스트에서 꺼져 있으므로 직접 만든다.
 function makeApp() {
-  const { login, register, mail, api } = createLimiters({ skip: () => false, useRedis: false });
+  const { login, register, mail, shared, api } = createLimiters({
+    skip: () => false,
+    useRedis: false,
+  });
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json());
   app.post('/login', login, (req, res) => res.json({ ok: true }));
   app.post('/register', register, (req, res) => res.json({ ok: true }));
   app.post('/forgot', mail, (req, res) => res.json({ ok: true }));
+  app.get('/shared/:token', shared, (req, res) => res.json({ ok: true }));
   app.use(api);
   app.get('/health', (req, res) => res.json({ ok: true }));
   app.get('/data', (req, res) => res.json({ ok: true }));
@@ -63,6 +67,16 @@ describe('mail limiter (IP + 이메일, 1시간 10회)', () => {
     for (let i = 0; i < 10; i += 1) expect((await post('a@example.com')).status).toBe(200);
     expect((await post('A@example.com')).status).toBe(429);
     expect((await post('b@example.com')).status).toBe(200);
+  });
+});
+
+describe('shared limiter (IP, 1분 120회)', () => {
+  it('121번째 공개 조회는 429, 다른 IP 는 영향 없음', async () => {
+    const app = makeApp();
+    const get = (ip) => request(app).get('/shared/abc').set('X-Forwarded-For', ip);
+    for (let i = 0; i < 120; i += 1) expect((await get('7.7.7.7')).status).toBe(200);
+    expect((await get('7.7.7.7')).status).toBe(429);
+    expect((await get('8.8.8.8')).status).toBe(200);
   });
 });
 

@@ -837,3 +837,22 @@ button.bell-item.unread {
     gap: 0.1rem;
   }
 }
+
+/* 공유 링크 */
+.share {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.share h3 {
+  margin-top: 0;
+}
+.share input[readonly] {
+  flex: 1;
+  min-width: 0;
+}
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}

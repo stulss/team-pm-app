@@ -19,8 +19,8 @@ export async function record(input) {
   });
 }
 
-export async function list(projectId, { limit, before, taskId, action }) {
-  const rows = await repo.list(projectId, { limit, before, taskId, action });
+export async function list(projectId, { limit, before, taskId, action, excludeActions }) {
+  const rows = await repo.list(projectId, { limit, before, taskId, action, excludeActions });
   const page = rows.slice(0, limit);
   return {
     data: page.map(repo.toActivity),

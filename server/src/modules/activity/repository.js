@@ -22,7 +22,7 @@ export async function insert({ projectId, taskId = null, actorId = null, action,
 }
 
 // 최신순. before 는 이전 페이지의 마지막 seq(커서). limit+1 건을 읽어 다음 페이지 유무를 판단한다.
-export async function list(projectId, { limit, before, taskId, action }) {
+export async function list(projectId, { limit, before, taskId, action, excludeActions }) {
   const params = [projectId];
   const where = ['l.project_id = $1'];
   if (before !== undefined) {
@@ -36,6 +36,10 @@ export async function list(projectId, { limit, before, taskId, action }) {
   if (action) {
     params.push(action);
     where.push(`l.action = $${params.length}`);
+  }
+  if (excludeActions?.length) {
+    params.push(excludeActions);
+    where.push(`l.action <> ALL($${params.length}::text[])`);
   }
   params.push(limit + 1);
   const { rows } = await query(

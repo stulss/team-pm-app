@@ -15,6 +15,7 @@ export const store = {
   notifications: [],
   emailTokens: [],
   activities: [],
+  shareLinks: [],
 };
 
 export function reset() {
@@ -27,6 +28,7 @@ export function reset() {
   store.notifications = [];
   store.emailTokens = [];
   store.activities = [];
+  store.shareLinks = [];
   activitySeq = 0;
 }
 
@@ -185,14 +187,15 @@ export const activityRepo = {
       created_at: new Date(),
     });
   },
-  async list(projectId, { limit, before, taskId, action }) {
+  async list(projectId, { limit, before, taskId, action, excludeActions }) {
     return store.activities
       .filter(
         (a) =>
           a.project_id === projectId &&
           (before === undefined || a.seq < before) &&
           (!taskId || a.task_id === taskId) &&
-          (!action || a.action === action),
+          (!action || a.action === action) &&
+          !excludeActions?.includes(a.action),
       )
       .sort((a, b) => b.seq - a.seq)
       .slice(0, limit + 1)
@@ -203,6 +206,81 @@ export const activityRepo = {
     const before = store.activities.length;
     store.activities = store.activities.filter((a) => a.created_at.getTime() >= cutoff);
     return before - store.activities.length;
+  },
+};
+
+export const shareRepo = {
+  MAX_ACTIVE_PER_PROJECT: 5,
+  STALE_DAYS: 30,
+  toLink: (row) =>
+    row && {
+      id: row.id,
+      createdBy: row.created_by ? { id: row.created_by, name: row.creator_name } : null,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      viewCount: row.view_count,
+      lastViewedAt: row.last_viewed_at,
+    },
+  _active: (l) => !l.revoked_at && l.expires_at > new Date(),
+  async countActive(projectId) {
+    return store.shareLinks.filter((l) => l.project_id === projectId && shareRepo._active(l))
+      .length;
+  },
+  async insert({ projectId, createdBy, tokenHash, expiresInDays }) {
+    const row = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      created_by: createdBy,
+      token_hash: tokenHash,
+      expires_at: new Date(Date.now() + expiresInDays * 86400_000),
+      revoked_at: null,
+      view_count: 0,
+      last_viewed_at: null,
+      created_at: new Date(),
+    };
+    store.shareLinks.push(row);
+    return { id: row.id, expires_at: row.expires_at };
+  },
+  async listActive(projectId) {
+    return store.shareLinks
+      .filter((l) => l.project_id === projectId && shareRepo._active(l))
+      .map((l) => ({ ...l, creator_name: store.users.find((u) => u.id === l.created_by)?.name }))
+      .sort((a, b) => b.created_at - a.created_at);
+  },
+  async revoke(projectId, linkId) {
+    const l = store.shareLinks.find(
+      (x) => x.id === linkId && x.project_id === projectId && !x.revoked_at,
+    );
+    if (!l) return false;
+    l.revoked_at = new Date();
+    return true;
+  },
+  async findActiveByHash(tokenHash) {
+    const l = store.shareLinks.find((x) => x.token_hash === tokenHash && shareRepo._active(x));
+    if (!l) return null;
+    const p = store.projects.find((x) => x.id === l.project_id);
+    return {
+      id: l.id,
+      project_id: l.project_id,
+      expires_at: l.expires_at,
+      project_name: p?.name,
+      project_status: p?.status,
+    };
+  },
+  async touchView(id) {
+    const l = store.shareLinks.find((x) => x.id === id);
+    if (l) {
+      l.view_count += 1;
+      l.last_viewed_at = new Date();
+    }
+  },
+  async deleteStale() {
+    const cutoff = Date.now() - 30 * 86400_000;
+    const before = store.shareLinks.length;
+    store.shareLinks = store.shareLinks.filter(
+      (l) => l.expires_at.getTime() >= cutoff && !(l.revoked_at && l.revoked_at.getTime() < cutoff),
+    );
+    return before - store.shareLinks.length;
   },
 };
 

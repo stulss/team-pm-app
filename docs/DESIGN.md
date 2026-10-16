@@ -130,6 +130,17 @@ erDiagram
         boolean is_read
         timestamptz created_at
     }
+    share_links {
+        uuid id PK
+        uuid project_id FK
+        uuid created_by FK "nullable"
+        varchar token_hash UK "SHA-256, 원문 미저장"
+        timestamptz expires_at
+        timestamptz revoked_at "nullable"
+        int view_count
+        timestamptz last_viewed_at "nullable"
+        timestamptz created_at
+    }
     activity_logs {
         uuid id PK
         bigint seq "순번(커서 페이지네이션용)"
@@ -192,8 +203,17 @@ erDiagram
   - `task.moved` `{title, from, to}` — **상태(컬럼)가 바뀐 이동만** 기록. 같은 컬럼 안의 순서 변경은 노이즈라 기록하지 않는다.
   - `task.deleted` `{title}`
   - `comment.created` / `comment.deleted` `{taskTitle}`(댓글 수정은 기록하지 않음)
+  - `share.created` `{expiresAt}` / `share.revoked` `{}` (히스토리 공유 링크, M10b)
 - 기록은 요청의 본 동작이 성공한 뒤에 별도로 저장한다(같은 트랜잭션이 아님). 기록 저장이 실패해도 요청은 실패시키지 않고 로그만 남긴다 → 드물게 기록이 빠질 수 있다.
 - 보관: 180일 이후 정리(cron, 알림 정리와 같은 일일 작업)
+
+**share_links** (M10b 히스토리 공유)
+- 프로젝트 활동 기록을 **로그인 없이 읽기 전용**으로 공유하는 링크. 링크 주소의 토큰은 32바이트 난수이고, DB 에는 **SHA-256 해시만** 저장한다(원문은 만들 때 한 번만 보여 준다 — 이후 다시 볼 수 없고, 잃어버리면 폐기하고 새로 만든다).
+- `project_id` `ON DELETE CASCADE`(프로젝트가 지워지면 링크도 사라짐), `created_by` `ON DELETE SET NULL`.
+- 만료는 필수(1·7·30일 중 선택). 만료되거나 폐기된 링크는 조회되지 않는다. 프로젝트당 **유효한 링크는 최대 5개**.
+- `view_count`/`last_viewed_at`: 첫 페이지를 열 때만 올린다(더 보기는 세지 않음). 소유자가 "누가 얼마나 봤는지" 대략 확인하는 용도다.
+- 인덱스: `token_hash` UNIQUE, `(project_id, created_at DESC)`, `expires_at`
+- 정리: 만료·폐기된 지 30일이 지난 링크는 일일 cron 이 지운다.
 
 ### 1.3 대시보드 지표 정의
 
@@ -284,9 +304,21 @@ erDiagram
 #### Activities (M10)
 | 메서드 | 경로 | 설명 | 권한 |
 |---|---|---|---|
-| GET | `/projects/:id/activities` | 활동 기록(최신순). `?limit`(1~50, 기본 30) `&before=<seq>`(커서) `&taskId=` `&action=` | 멤버 |
+| GET | `/projects/:id/activities` | 활동 기록(최신순). `?limit`(1~200, 기본 30) `&before=<seq>`(커서) `&taskId=` `&action=` | 멤버 |
 
 > 구현 규칙(M10): 응답은 `{ data: [{ id, seq, action, taskId, actor: {id,name}|null, meta, createdAt }], nextCursor }` 이고 `nextCursor` 가 null 이면 끝이다. `taskId` 를 주면 그 작업의 변경 이력만 돌려준다(작업 상세 모달의 "변경 이력"). 프로젝트 멤버(와 Admin)만 볼 수 있고, 멤버에서 제거되면 즉시 볼 수 없다. 기록을 저장한 뒤 `activity:created` `{ projectId, taskId }` 를 프로젝트 방 전체(요청자 포함)에 보내고, 클라이언트는 이를 받으면 활동 목록을 다시 불러온다(작업·댓글 이벤트는 기록 저장을 기다리지 않고 먼저 나간다).
+
+#### 히스토리 공유 (M10b)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| POST | `/projects/:id/share-links` | 공유 링크 생성 `{ expiresInDays: 1\|7\|30 }` → `{ id, token, expiresAt }` (토큰은 이때 한 번만 반환) | Admin, 프로젝트 소유자 |
+| GET | `/projects/:id/share-links` | 유효한 링크 목록(토큰 제외: id·만든 사람·만든 시각·만료·조회수·마지막 조회) | Admin, 프로젝트 소유자 |
+| DELETE | `/projects/:id/share-links/:linkId` | 링크 폐기(즉시 무효) | Admin, 프로젝트 소유자 |
+| GET | `/shared/:token` | **공개(로그인 불필요)** 읽기 전용 활동 기록. `?before=<seq>&limit` | 링크를 가진 누구나 |
+
+> 구현 규칙(M10b): 공개 조회 응답은 `{ project: { name, status }, expiresAt, data, nextCursor }` 이다. 없는·만료된·폐기된 토큰은 모두 **같은 404**(`SHARE_LINK_NOT_FOUND`)로 응답해 구분할 수 없게 한다. 공개 응답에서는 `member.*`·`share.*` 기록을 **제외**한다(팀원 정보와 공유 사실 자체는 외부에 보이지 않게). 작업 제목·담당자 이름·행위자 이름은 보이므로, 소유자가 그 사실을 알고 만들도록 화면에서 안내한다. 공개 응답은 `Cache-Control: no-store`, `X-Robots-Tag: noindex` 이고 IP 기준 분당 120회로 제한한다. 링크 생성·폐기는 활동 기록(`share.created`/`share.revoked`)에 남아 프로젝트 멤버가 볼 수 있다. 보관(archived) 프로젝트도 공유 조회는 된다.
+>
+> **CSV 내보내기**는 서버 API 를 더 두지 않고, 클라이언트가 기존 `GET /projects/:id/activities` 를 페이지(최대 200건)로 읽어 **최근 2000건**까지 CSV 로 만든다(프로젝트 멤버 누구나, 본인이 볼 수 있는 범위 그대로). 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM 을 붙이고, `=`·`+`·`-`·`@` 로 시작하는 값은 앞에 `'` 를 붙여 수식 주입을 막는다.
 
 #### Notifications
 | 메서드 | 경로 | 설명 | 권한 |
@@ -567,7 +599,7 @@ team-pm-app/
 | 단계 | 기능 | 핵심 내용 |
 |---|---|---|
 | **M10** | 활동 기록(히스토리) | 프로젝트 타임라인 + 작업별 변경 이력(`activity_logs`, §1.2·§2.2) |
-| **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기, 읽기 전용 공유 링크(토큰 해시 저장·만료·폐기, 댓글 본문 제외) |
+| **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기(클라이언트 생성), 읽기 전용 공유 링크(토큰 해시 저장·필수 만료·폐기·조회수, 공개 응답에서 멤버 정보 제외) — `share_links`, §1.2·§2.2 |
 | **M11** | 멘션 | 댓글·채팅의 `@이름` → 대상 사용자 알림(`mention` 알림 종류), 프로젝트 멤버만 멘션 가능 |
 | **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 길이·개수 상한 |
 | **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(권한 필터 필수, `pg_trgm`) |
@@ -595,7 +627,7 @@ team-pm-app/
 
 ## 6. 향후 확장 (범위 외)
 
-초대 링크, 이메일 알림, 파일 첨부, 서브태스크/라벨, 커스텀 칸반 컬럼, 감사 로그 UI(관리자용), 1:1 DM, 다국어(i18n). (멘션·통합검색·채팅·모아보기·투표·히스토리 공유는 위 "확장 단계" 로 이동)
+초대 링크, 이메일 알림, 파일 첨부, 서브태스크/라벨, 커스텀 칸반 컬럼, 감사 로그 UI(관리자용), 1:1 DM, 음성·화상 통화·화면 공유(WebRTC: 소규모는 P2P+TURN, 대규모는 외부 미디어 서비스 — 2026-10-16 보류), 다국어(i18n). (멘션·통합검색·채팅·모아보기·투표·히스토리 공유는 위 "확장 단계" 로 이동)
 
 ## 7. 확인이 필요한 열린 질문
 

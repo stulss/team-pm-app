@@ -18,6 +18,8 @@ import MemberEmailAdd from '../components/project/MemberEmailAdd.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
 import ProjectDashboard from '../components/dashboard/ProjectDashboard.jsx';
 import ActivityFeed from '../components/activity/ActivityFeed.jsx';
+import ExportCsvButton from '../components/activity/ExportCsvButton.jsx';
+import ShareLinks from '../components/activity/ShareLinks.jsx';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -202,7 +204,8 @@ export default function ProjectDetailPage() {
       <TaskSection project={project} archived={archived} />
 
       <div className="card">
-        <ActivityFeed projectId={project.id} />
+        <ActivityFeed projectId={project.id} actions={<ExportCsvButton project={project} />} />
+        {canManage && <ShareLinks projectId={project.id} />}
       </div>
     </>
   );

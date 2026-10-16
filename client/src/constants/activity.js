@@ -50,6 +50,10 @@ export function describeActivity(a, { showTask = true } = {}) {
       return `${task(m.taskTitle)}에 댓글을 남겼습니다.`;
     case 'comment.deleted':
       return `${task(m.taskTitle)}의 댓글을 삭제했습니다.`;
+    case 'share.created':
+      return `읽기 전용 공유 링크를 만들었습니다.${m.days ? ` (${m.days}일간 유효)` : ''}`;
+    case 'share.revoked':
+      return '공유 링크를 폐기했습니다.';
     default:
       return a.action;
   }
