@@ -1,0 +1,227 @@
+// 운영(Production) 읽기 전용 점검. 새 계정을 만들지 않고 "이미 있는 계정"으로 로그인해서 확인한다.
+//
+//   npm run verify:prod -w server
+//   BASE_URL=https://<배포 URL> npm run verify:prod -w server
+//
+// 계정 정보는 server/.env 에만 둔다(채팅·커밋에 붙이지 말 것):
+//   VERIFY_EMAIL_A / VERIFY_PASSWORD_A   필수
+//   VERIFY_EMAIL_B / VERIFY_PASSWORD_B   선택 — 있으면 "다른 사람의 프로젝트는 못 본다"까지 확인
+//
+// 데이터를 만들거나 바꾸거나 지우지 않는다(GET 과 로그인/로그아웃만). 비밀번호·토큰은 출력하지 않는다.
+const BASE_ORIGIN = process.env.BASE_URL ?? 'https://team-pm-app-sand.vercel.app';
+const BASE = `${BASE_ORIGIN}/api/v1`;
+
+let failed = 0;
+const check = (label, ok, extra = '') => {
+  if (!ok) failed += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  ← ${extra}`}`);
+};
+
+const call = async (method, path, { token, cookie, body } = {}) => {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(token && { authorization: `Bearer ${token}` }),
+      ...(cookie && { cookie }),
+    },
+    body: body && JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { status: res.status, body: json, res };
+};
+
+async function login(label, email, password) {
+  const r = await call('POST', '/auth/login', { body: { email, password } });
+  if (r.status !== 200) {
+    check(`${label}: 로그인`, false, `HTTP ${r.status} ${r.body?.error?.code ?? ''}`);
+    return null;
+  }
+  const cookie = (r.res.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
+  check(`${label}: 로그인 (200, 액세스 토큰 발급)`, Boolean(r.body.accessToken));
+  const me = await call('GET', '/auth/me', { token: r.body.accessToken });
+  check(
+    `${label}: /auth/me 가 로그인한 이메일과 일치`,
+    me.body?.user?.email?.toLowerCase() === email.toLowerCase(),
+  );
+  return { token: r.body.accessToken, cookie, user: me.body?.user };
+}
+
+async function readChecks(label, who) {
+  const t = who.token;
+  const projects = await call('GET', '/projects?limit=100', { token: t });
+  check(
+    `${label}: 프로젝트 목록 (200)`,
+    projects.status === 200 && Array.isArray(projects.body?.data),
+  );
+  const mine = (projects.body?.data ?? []).map((p) => p.id);
+  console.log(`      (${label}: 접근 가능한 프로젝트 ${mine.length}개)`);
+
+  const feed = await call('GET', '/feed', { token: t });
+  check(
+    `${label}: 모아보기 응답 모양`,
+    feed.status === 200 &&
+      ['today', 'dueTasks', 'mentions', 'notifications', 'activities'].every((k) => k in feed.body),
+    JSON.stringify(Object.keys(feed.body ?? {})),
+  );
+  const feedIds = [...feed.body.dueTasks, ...feed.body.mentions, ...feed.body.activities].map(
+    (x) => x.projectId,
+  );
+  check(
+    `${label}: 모아보기는 내 프로젝트의 것만`,
+    feedIds.every((id) => mine.includes(id)),
+  );
+
+  const search = await call('GET', '/search?q=%EC%9E%91%EC%97%85', { token: t }); // "작업"
+  check(
+    `${label}: 통합검색 응답 모양`,
+    search.status === 200 &&
+      ['projects', 'tasks', 'comments', 'chat'].every((k) => k in search.body),
+  );
+  if (who.user?.role !== 'admin') {
+    const found = [...search.body.tasks, ...search.body.comments, ...search.body.chat].map(
+      (x) => x.projectId,
+    );
+    check(
+      `${label}: 통합검색은 내 프로젝트의 것만`,
+      found.every((id) => mine.includes(id)) &&
+        search.body.projects.every((p) => mine.includes(p.id)),
+    );
+  }
+  check(
+    `${label}: 검색어 1자는 400`,
+    (await call('GET', '/search?q=a', { token: t })).status === 400,
+  );
+
+  // 프로젝트 하나(가장 최근)의 읽기 API
+  if (mine.length > 0) {
+    const pid = mine[0];
+    const [chat, polls, acts, dash] = await Promise.all([
+      call('GET', `/projects/${pid}/chat?limit=5`, { token: t }),
+      call('GET', `/projects/${pid}/polls`, { token: t }),
+      call('GET', `/projects/${pid}/activities?limit=5`, { token: t }),
+      call('GET', `/projects/${pid}/dashboard`, { token: t }),
+    ]);
+    check(
+      `${label}: 채팅 목록 (200, data/nextCursor)`,
+      chat.status === 200 && 'nextCursor' in chat.body,
+    );
+    check(`${label}: 투표 목록 (200)`, polls.status === 200 && Array.isArray(polls.body?.data));
+    const anonymous = (polls.body?.data ?? []).every(
+      (p) =>
+        !('votes' in p) &&
+        p.options.every((o) => Object.keys(o).sort().join() === 'id,label,votes'),
+    );
+    check(`${label}: 투표 응답에 투표자 정보가 없음(익명 집계)`, anonymous);
+    check(`${label}: 활동 기록 (200)`, acts.status === 200 && Array.isArray(acts.body?.data));
+    check(`${label}: 대시보드 (200)`, dash.status === 200);
+  }
+  return mine;
+}
+
+async function main() {
+  console.log(`대상: ${BASE_ORIGIN}\n`);
+
+  // --- 로그인 없이 ---
+  const health = await call('GET', '/health');
+  check(
+    'health: ok, 운영 환경',
+    health.status === 200 && health.body?.db === 'ok' && health.body?.env === 'production',
+    JSON.stringify(health.body),
+  );
+  const anyId = '00000000-0000-4000-8000-000000000000';
+  for (const path of [
+    '/feed',
+    '/search?q=ab',
+    `/projects/${anyId}/chat`,
+    `/projects/${anyId}/polls`,
+    `/projects/${anyId}/activities`,
+  ]) {
+    check(
+      `로그인 없이 ${path.split('?')[0].replace(anyId, ':id')} 는 401`,
+      (await call('GET', path)).status === 401,
+    );
+  }
+  const page = await fetch(BASE_ORIGIN + '/');
+  const html = await page.text();
+  check('웹 화면(/) 이 HTML 로 열림', page.status === 200 && html.includes('<div id="root">'));
+  const share = await call('GET', '/shared/' + 'x'.repeat(43));
+  check('없는 공유 링크는 404', share.status === 404);
+
+  // --- 계정 A ---
+  const {
+    VERIFY_EMAIL_A: ea,
+    VERIFY_PASSWORD_A: pa,
+    VERIFY_EMAIL_B: eb,
+    VERIFY_PASSWORD_B: pb,
+  } = process.env;
+  if (!ea || !pa) {
+    console.log(
+      '\nVERIFY_EMAIL_A / VERIFY_PASSWORD_A 가 없어 로그인 점검은 건너뜁니다. (server/.env 에 설정)',
+    );
+    failed += 1;
+    return;
+  }
+  const a = await login('A', ea, pa);
+  const b = eb && pb ? await login('B', eb, pb) : null;
+  let mineA = [];
+  let mineB = [];
+  if (a) mineA = await readChecks('A', a);
+  if (b) mineB = await readChecks('B', b);
+
+  // --- A 와 B 사이: 서로의 프로젝트는 못 본다(둘 다 일반 사용자일 때) ---
+  if (a && b && a.user.role !== 'admin' && b.user.role !== 'admin') {
+    const onlyA = mineA.filter((id) => !mineB.includes(id));
+    const onlyB = mineB.filter((id) => !mineA.includes(id));
+    console.log(`      (A 만 접근 ${onlyA.length}개, B 만 접근 ${onlyB.length}개)`);
+    for (const [who, label, ids] of [
+      [b, 'B', onlyA],
+      [a, 'A', onlyB],
+    ]) {
+      for (const id of ids.slice(0, 3)) {
+        const rs = await Promise.all(
+          ['chat', 'polls', 'activities', 'dashboard'].map((p) =>
+            call('GET', `/projects/${id}/${p}`, { token: who.token }),
+          ),
+        );
+        check(
+          `${label}: 접근 권한이 없는 프로젝트의 채팅·투표·활동·대시보드는 403`,
+          rs.every((r) => r.status === 403),
+          rs.map((r) => r.status).join(),
+        );
+      }
+    }
+    if (onlyA.length + onlyB.length === 0) {
+      console.log('      (두 계정이 모든 프로젝트를 공유해 권한 분리는 확인하지 못했습니다)');
+    }
+  }
+
+  // --- 정리: 로그인으로 생긴 세션을 닫는다 ---
+  for (const [label, who] of [
+    ['A', a],
+    ['B', b],
+  ]) {
+    if (!who) continue;
+    const out = await call('POST', '/auth/logout', { cookie: who.cookie });
+    check(
+      `${label}: 로그아웃(세션 폐기)`,
+      out.status === 204 || out.status === 200,
+      `HTTP ${out.status}`,
+    );
+  }
+}
+
+try {
+  await main();
+} catch (err) {
+  failed += 1;
+  console.log(`ERROR ${err.message}`);
+}
+console.log(failed === 0 ? '\nALL PASSED' : `\n${failed} FAILED`);
+process.exit(failed === 0 ? 0 : 1);

@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "test": "vitest run",
     "smoke": "node --env-file=.env scripts/smoke.mjs",
+    "verify:prod": "node --env-file=.env scripts/verify-prod.mjs",
     "migrate": "node --env-file=.env ../node_modules/node-pg-migrate/bin/node-pg-migrate.js -m db/migrations -d DIRECT_URL"
   },
   "dependencies": {
