@@ -14,10 +14,12 @@ export const toNotification = (row) =>
     createdAt: row.created_at,
   };
 
+// 작업 알림은 작업을 거쳐, 채팅 멘션 알림(task_id 없음)은 project_id 로 프로젝트를 구한다.
 const SELECT = `
-  SELECT n.*, t.project_id, a.name AS actor_name
+  SELECT n.id, n.user_id, n.type, n.task_id, n.actor_id, n.message, n.is_read, n.created_at,
+         COALESCE(t.project_id, n.project_id) AS project_id, a.name AS actor_name
   FROM notifications n
-  JOIN tasks t ON t.id = n.task_id
+  LEFT JOIN tasks t ON t.id = n.task_id
   LEFT JOIN users a ON a.id = n.actor_id`;
 
 // rows: [{ userId, type, taskId, actorId, message }] — 한 번에 여러 건을 넣고 만든 행(작업·배정자 정보 포함)을 돌려준다.
@@ -26,15 +28,16 @@ const SELECT = `
 export async function insertMany(rows, client = { query }) {
   if (rows.length === 0) return [];
   const { rows: created } = await client.query(
-    `INSERT INTO notifications (user_id, type, task_id, actor_id, message)
-     SELECT * FROM unnest($1::uuid[], $2::notification_type[], $3::uuid[], $4::uuid[], $5::text[])
+    `INSERT INTO notifications (user_id, type, task_id, actor_id, message, project_id)
+     SELECT * FROM unnest($1::uuid[], $2::notification_type[], $3::uuid[], $4::uuid[], $5::text[], $6::uuid[])
      RETURNING id`,
     [
       rows.map((r) => r.userId),
       rows.map((r) => r.type),
-      rows.map((r) => r.taskId),
+      rows.map((r) => r.taskId ?? null),
       rows.map((r) => r.actorId ?? null),
       rows.map((r) => r.message),
+      rows.map((r) => r.projectId ?? null),
     ],
   );
   const { rows: inserted } = await client.query(

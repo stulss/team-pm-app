@@ -234,3 +234,78 @@ describe('실시간', () => {
     expect(emitToProject).not.toHaveBeenCalled();
   });
 });
+
+describe('멘션 (M12b)', () => {
+  const mention = (who, body, ids) =>
+    api('post', `/projects/${pid}/chat`, who, { body, ...(ids && { mentionIds: ids }) });
+  const notes = async (who) => (await api('get', '/notifications', who)).body.data;
+
+  it('고른 멤버가 mentions 로 저장되고 목록에도 이름 스냅샷과 함께 나온다', async () => {
+    const sent = await mention('owner', '@멤버 확인 부탁해요', [people.member.id]);
+    expect(sent.status).toBe(201);
+    expect(sent.body.mentions).toEqual([{ id: people.member.id, name: '멤버' }]);
+    expect((await feed()).data[0].mentions).toEqual([{ id: people.member.id, name: '멤버' }]);
+    expect((await say('owner', '멘션 없음')).body.mentions).toEqual([]);
+  });
+
+  it('멘션된 사람에게 mention 알림이 가고, 작업 없이 프로젝트로 연결된다', async () => {
+    await mention('owner', '@멤버 확인 부탁해요', [people.member.id]);
+    const [n] = await notes('member');
+    expect(n).toMatchObject({
+      type: 'mention',
+      taskId: null,
+      projectId: pid,
+      actor: { name: '소유자' },
+      message: "소유자님이 '채팅 프로젝트' 채팅에서 회원님을 언급했습니다.",
+    });
+    expect(await notes('owner')).toEqual([]);
+  });
+
+  it('멘션하지 않은 메시지는 알림이 없고, 본인 멘션은 허용하되 알림이 없다', async () => {
+    await say('owner', '그냥 메시지');
+    await mention('member', '@멤버 나 자신', [people.member.id]);
+    expect(await notes('member')).toEqual([]);
+  });
+
+  it('비멤버·본문에 이름 없음·없는 사용자·11명은 400 INVALID_MENTION, 메시지도 저장되지 않음', async () => {
+    const before = (await feed()).data.length;
+    const bad = [
+      mention('owner', '@외부인 들어와요', [people.outsider.id]),
+      mention('owner', '이름이 본문에 없음', [people.member.id]),
+      mention('owner', '@누군가', [crypto.randomUUID()]),
+    ];
+    for (const res of await Promise.all(bad)) {
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_MENTION');
+    }
+    const tooMany = await mention(
+      'owner',
+      '@멤버',
+      Array.from({ length: 11 }, () => crypto.randomUUID()),
+    );
+    expect(tooMany.status).toBe(400);
+    expect((await feed()).data).toHaveLength(before);
+    expect(await notes('outsider')).toEqual([]);
+  });
+
+  it('같은 ID 를 여러 번 보내도 한 번만 멘션·알림, 멤버에서 제거되면 멘션할 수 없다', async () => {
+    const sent = await mention('owner', '@멤버 두 번', [people.member.id, people.member.id]);
+    expect(sent.body.mentions).toHaveLength(1);
+    expect(await notes('member')).toHaveLength(1);
+    await api('delete', `/projects/${pid}/members/${people.member.id}`, 'owner');
+    const after = await mention('owner', '@멤버 또', [people.member.id]);
+    expect(after.status).toBe(400);
+  });
+
+  it('보관된 프로젝트에서는 멘션 메시지도 409 이고 알림이 가지 않는다', async () => {
+    await api('patch', `/projects/${pid}`, 'owner', { status: 'archived' });
+    expect((await mention('owner', '@멤버 보관', [people.member.id])).status).toBe(409);
+    expect(await notes('member')).toEqual([]);
+  });
+
+  it('메시지를 삭제해도 이미 간 알림은 남는다(철회 없음)', async () => {
+    const sent = await mention('owner', '@멤버 지울 멘션', [people.member.id]);
+    await api('delete', `/projects/${pid}/chat/${sent.body.id}`, 'owner');
+    expect(await notes('member')).toHaveLength(1);
+  });
+});

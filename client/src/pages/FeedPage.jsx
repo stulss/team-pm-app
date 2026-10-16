@@ -86,7 +86,9 @@ export default function FeedPage() {
           >
             {data.notifications.items.map((n) => (
               <li key={n.id}>
-                <Link to={taskLink(n.projectId, n.taskId)}>{n.message}</Link>
+                <Link to={n.taskId ? taskLink(n.projectId, n.taskId) : `/projects/${n.projectId}`}>
+                  {n.message}
+                </Link>
                 <span className="muted small">{formatWhen(n.createdAt)}</span>
               </li>
             ))}

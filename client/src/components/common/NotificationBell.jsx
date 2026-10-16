@@ -52,7 +52,7 @@ export default function NotificationBell() {
   const openNotification = (n) => {
     if (!n.isRead) read.mutate(n.id);
     setOpen(false);
-    navigate(`/projects/${n.projectId}?task=${n.taskId}`);
+    navigate(n.taskId ? `/projects/${n.projectId}?task=${n.taskId}` : `/projects/${n.projectId}`);
   };
 
   return (

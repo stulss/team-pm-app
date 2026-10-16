@@ -228,10 +228,11 @@ export const chatRepo = {
       seq: Number(row.seq),
       body: row.body,
       author: row.author_id ? { id: row.author_id, name: row.author_name } : null,
+      mentions: row.mentions ?? [],
       createdAt: row.created_at,
     },
   _withName: (m) => ({ ...m, author_name: store.users.find((u) => u.id === m.author_id)?.name }),
-  async insert({ projectId, authorId, body }) {
+  async insert({ projectId, authorId, body, mentions = [] }) {
     chatSeq += 1;
     const row = {
       id: crypto.randomUUID(),
@@ -239,6 +240,7 @@ export const chatRepo = {
       project_id: projectId,
       author_id: authorId,
       body,
+      mentions: mentions.map((x) => ({ ...x })),
       created_at: new Date(),
     };
     store.chat.push(row);
@@ -875,7 +877,7 @@ const addDays = (isoDate, n) => {
 
 const withNotificationNames = (n) => ({
   ...n,
-  project_id: store.tasks.find((t) => t.id === n.task_id)?.project_id,
+  project_id: store.tasks.find((t) => t.id === n.task_id)?.project_id ?? n.project_id,
   actor_name: store.users.find((u) => u.id === n.actor_id)?.name ?? null,
 });
 
@@ -886,7 +888,8 @@ export const notificationsRepo = {
         id: crypto.randomUUID(),
         user_id: r.userId,
         type: r.type,
-        task_id: r.taskId,
+        task_id: r.taskId ?? null,
+        project_id: r.projectId ?? null,
         actor_id: r.actorId ?? null,
         message: r.message,
         is_read: false,

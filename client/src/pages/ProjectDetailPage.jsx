@@ -103,119 +103,125 @@ export default function ProjectDetailPage() {
         </p>
       )}
 
-      <div className="card">
-        {editing ? (
-          <EditForm
-            project={project}
-            busy={update.isPending}
-            onCancel={() => setEditing(false)}
-            onSave={(body) => update.mutate(body)}
-          />
-        ) : (
-          <>
-            <div className="row between">
-              <h1>
-                {project.name} {archived && <span className="badge badge-archived">보관됨</span>}
-              </h1>
-              {canManage && (
-                <div className="row">
-                  <button type="button" className="secondary" onClick={() => setEditing(true)}>
-                    수정
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={update.isPending}
-                    onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
-                  >
-                    {archived ? '보관 해제' : '보관'}
-                  </button>
-                  <button
-                    type="button"
-                    className="danger"
-                    disabled={remove.isPending}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
-                        )
-                      ) {
-                        remove.mutate();
-                      }
-                    }}
-                  >
-                    삭제
-                  </button>
-                </div>
-              )}
-            </div>
-            {project.description && <p>{project.description}</p>}
-          </>
-        )}
-      </div>
-
-      {mutationError && (
-        <p role="alert" className="error">
-          {errorMessage(mutationError)}
-        </p>
-      )}
-
-      <div className="card">
-        <h2>멤버 ({project.members.length})</h2>
-        <ul className="members">
-          {project.members.map((m) => (
-            <li key={m.id}>
-              <span>
-                {m.name} <span className="muted">{m.email}</span>{' '}
-                {m.isOwner && <span className="badge badge-owner">소유자</span>}
-                {!m.isActive && <span className="badge badge-archived">비활성</span>}
-              </span>
-              {canManage && !m.isOwner && (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={removeMember.isPending}
-                  onClick={() => removeMember.mutate(m.id)}
-                >
-                  제거
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-        {canManage && (
-          <div>
-            <span className="field-label">멤버 추가</span>
-            {canSearchUsers(user) && (
-              <UserSearch
-                excludeIds={project.members.map((m) => m.id)}
-                disabled={addMember.isPending}
-                onPick={(u) => addMember.mutate({ userId: u.id })}
+      <div className="project-layout">
+        <div className="project-main">
+          <div className="card">
+            {editing ? (
+              <EditForm
+                project={project}
+                busy={update.isPending}
+                onCancel={() => setEditing(false)}
+                onSave={(body) => update.mutate(body)}
               />
+            ) : (
+              <>
+                <div className="row between">
+                  <h1>
+                    {project.name}{' '}
+                    {archived && <span className="badge badge-archived">보관됨</span>}
+                  </h1>
+                  {canManage && (
+                    <div className="row">
+                      <button type="button" className="secondary" onClick={() => setEditing(true)}>
+                        수정
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={update.isPending}
+                        onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
+                      >
+                        {archived ? '보관 해제' : '보관'}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        disabled={remove.isPending}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+                            )
+                          ) {
+                            remove.mutate();
+                          }
+                        }}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {project.description && <p>{project.description}</p>}
+              </>
             )}
-            <MemberEmailAdd
-              disabled={addMember.isPending}
-              onAdd={(email) => addMember.mutate({ email })}
-            />
           </div>
-        )}
-      </div>
 
-      <ProjectDashboard projectId={project.id} />
+          {mutationError && (
+            <p role="alert" className="error">
+              {errorMessage(mutationError)}
+            </p>
+          )}
 
-      <TaskSection project={project} archived={archived} />
+          <ProjectDashboard projectId={project.id} />
 
-      <div className="card">
-        <ChatPanel project={project} archived={archived} />
-      </div>
+          <TaskSection project={project} archived={archived} />
 
-      <div className="card">
-        <PollPanel project={project} archived={archived} />
-      </div>
+          <div className="card">
+            <PollPanel project={project} archived={archived} />
+          </div>
+        </div>
+        <aside className="project-side" aria-label="프로젝트 사이드">
+          <div className="card">
+            <ChatPanel project={project} archived={archived} />
+          </div>
 
-      <div className="card">
-        <ActivityFeed projectId={project.id} actions={<ExportCsvButton project={project} />} />
-        {canManage && <ShareLinks projectId={project.id} />}
+          <div className="card">
+            <ActivityFeed projectId={project.id} actions={<ExportCsvButton project={project} />} />
+            {canManage && <ShareLinks projectId={project.id} />}
+          </div>
+
+          <div className="card">
+            <h2>멤버 ({project.members.length})</h2>
+            <ul className="members">
+              {project.members.map((m) => (
+                <li key={m.id}>
+                  <span>
+                    {m.name} <span className="muted">{m.email}</span>{' '}
+                    {m.isOwner && <span className="badge badge-owner">소유자</span>}
+                    {!m.isActive && <span className="badge badge-archived">비활성</span>}
+                  </span>
+                  {canManage && !m.isOwner && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={removeMember.isPending}
+                      onClick={() => removeMember.mutate(m.id)}
+                    >
+                      제거
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {canManage && (
+              <div>
+                <span className="field-label">멤버 추가</span>
+                {canSearchUsers(user) && (
+                  <UserSearch
+                    excludeIds={project.members.map((m) => m.id)}
+                    disabled={addMember.isPending}
+                    onPick={(u) => addMember.mutate({ userId: u.id })}
+                  />
+                )}
+                <MemberEmailAdd
+                  disabled={addMember.isPending}
+                  onAdd={(email) => addMember.mutate({ email })}
+                />
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
     </>
   );

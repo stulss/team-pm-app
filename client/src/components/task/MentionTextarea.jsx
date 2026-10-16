@@ -10,6 +10,7 @@ export default function MentionTextarea({
   onMentionsChange,
   members,
   meId,
+  onKeyDown: outerKeyDown,
   ...textareaProps
 }) {
   const ref = useRef(null);
@@ -45,7 +46,10 @@ export default function MentionTextarea({
   };
 
   const onKeyDown = (e) => {
-    if (!trigger || candidates.length === 0) return;
+    if (!trigger || candidates.length === 0) {
+      outerKeyDown?.(e);
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActive((i) => (i + 1) % candidates.length);
@@ -59,6 +63,8 @@ export default function MentionTextarea({
       e.preventDefault();
       e.stopPropagation(); // 모달이 같이 닫히지 않게
       setTrigger(null);
+    } else {
+      outerKeyDown?.(e);
     }
   };
 

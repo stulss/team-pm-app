@@ -429,7 +429,7 @@ td.overdue {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(190px, 1fr));
   gap: 0.75rem;
   overflow-x: auto;
   padding-bottom: 0.5rem;
@@ -1099,4 +1099,49 @@ mark {
 }
 .poll-form {
   margin: 0.5rem 0;
+}
+
+/* 프로젝트 화면 2단 레이아웃: 본문(작업·투표) + 사이드(채팅·활동 기록·멤버) */
+.page:has(.project-layout) {
+  max-width: 1280px;
+}
+.project-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1rem;
+  align-items: start;
+}
+.project-main,
+.project-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+@media (max-width: 960px) {
+  .project-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.chat-form .mention-box {
+  flex: 1;
+  min-width: 0;
+}
+.chat-form .mention-list {
+  top: auto;
+  bottom: 100%;
+  margin: 0 0 2px;
+}
+.chat-body .mention {
+  font-weight: 600;
+}
+
+/* 사이드는 폭이 좁으므로 활동 기록의 시각을 본문 아래로 내린다 */
+.project-side .activity-list {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+.project-side .activity-list li {
+  flex-direction: column;
+  gap: 0.1rem;
 }

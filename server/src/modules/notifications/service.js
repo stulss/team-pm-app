@@ -81,6 +81,25 @@ export async function notifyMentioned({ task, actor, userIds }) {
   }
 }
 
+// 채팅에서 멘션된 사용자 (본인 제외, 활성 프로젝트 멤버만). 작업이 없으므로 프로젝트에 연결한다.
+export async function notifyChatMentioned({ project, actor, userIds }) {
+  try {
+    const candidates = [...new Set(userIds)].filter((id) => id !== actor.id);
+    const recipients = await repo.filterNotifiable(project.id, candidates);
+    await createAndPush(
+      recipients.map((userId) => ({
+        userId,
+        type: 'mention',
+        projectId: project.id,
+        actorId: actor.id,
+        message: `${actor.name}님이 '${project.name}' 채팅에서 회원님을 언급했습니다.`,
+      })),
+    );
+  } catch (err) {
+    logger.error({ err: err.message }, 'chat mention notification failed');
+  }
+}
+
 export async function list(user, { unread, page, limit }) {
   const { rows, total } = await repo.list(user.id, { unread, limit, offset: (page - 1) * limit });
   return { data: rows.map(repo.toNotification), meta: { page, limit, total } };

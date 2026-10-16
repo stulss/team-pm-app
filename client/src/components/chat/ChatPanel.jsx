@@ -4,6 +4,8 @@ import { deleteChat, listChat, sendChat } from '../../api/chat.js';
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { formatWhen } from '../../constants/activity.js';
+import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
+import MentionTextarea from '../task/MentionTextarea.jsx';
 
 const MAX_LENGTH = 2000;
 
@@ -34,11 +36,13 @@ export default function ChatPanel({ project, archived = false }) {
   }, [newestId]);
 
   const [text, setText] = useState('');
+  const [mentions, setMentions] = useState([]);
   const refresh = () => queryClient.invalidateQueries({ queryKey: key });
   const send = useMutation({
-    mutationFn: (body) => sendChat(project.id, body),
+    mutationFn: (body) => sendChat(project.id, body, activeMentionIds(body, mentions)),
     onSuccess: () => {
       setText('');
+      setMentions([]);
       refresh();
     },
   });
@@ -97,7 +101,7 @@ export default function ChatPanel({ project, archived = false }) {
                     </button>
                   )}
                 </div>
-                <p className="chat-body">{m.body}</p>
+                <p className="chat-body">{renderWithMentions(m.body, m.mentions)}</p>
               </li>
             ))}
           </ul>
@@ -118,13 +122,18 @@ export default function ChatPanel({ project, archived = false }) {
             submit();
           }}
         >
-          <textarea
+          <MentionTextarea
             rows={2}
             maxLength={MAX_LENGTH}
             aria-label="채팅 메시지"
-            placeholder="메시지를 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)"
+            placeholder="메시지 (@멘션, Enter 전송)"
+            title="Enter 전송, Shift+Enter 줄바꿈, @ 로 멤버 멘션"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={setText}
+            mentions={mentions}
+            onMentionsChange={setMentions}
+            members={project.members}
+            meId={user.id}
             onKeyDown={(e) => {
               // 한글 조합 중의 Enter 는 글자 확정이므로 전송하지 않는다.
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

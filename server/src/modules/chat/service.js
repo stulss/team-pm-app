@@ -1,6 +1,7 @@
 import { forbidden, notFound } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 import { assertWritable } from '../tasks/service.js';
+import { resolveMentions } from '../comments/service.js';
 import * as repo from './repository.js';
 
 // 삭제는 작성자, 프로젝트 소유자, Admin.
@@ -16,10 +17,12 @@ export async function list(projectId, { limit, before }) {
   };
 }
 
-export async function send(project, user, body) {
+export async function send(project, user, body, mentionIds) {
   assertWritable(project);
+  // 댓글 멘션(M11)과 같은 검증: 활성 프로젝트 멤버여야 하고 본문에 @이름 이 있어야 한다.
+  const mentions = await resolveMentions(project, body, mentionIds);
   const message = repo.toMessage(
-    await repo.insert({ projectId: project.id, authorId: user.id, body }),
+    await repo.insert({ projectId: project.id, authorId: user.id, body, mentions }),
   );
   // 상한 정리는 부가 작업이다. 실패해도 메시지 전송은 성공시킨다.
   try {

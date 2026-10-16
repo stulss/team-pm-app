@@ -1,4 +1,4 @@
-import { query } from '../../config/db.js';
+import { query, withTransaction } from '../../config/db.js';
 
 export const RETENTION_DAYS = 90;
 export const MAX_PER_PROJECT = 5000;
@@ -9,23 +9,37 @@ export const toMessage = (row) =>
     seq: Number(row.seq),
     body: row.body,
     author: row.author_id ? { id: row.author_id, name: row.author_name } : null,
+    mentions: row.mentions ?? [],
     createdAt: row.created_at,
   };
 
 const SELECT = `
-  SELECT m.*, u.name AS author_name
+  SELECT m.*, u.name AS author_name,
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', cm.user_id, 'name', cm.name)
+                            ORDER BY cm.created_at, cm.user_id)
+            FROM chat_message_mentions cm WHERE cm.message_id = m.id),
+           '[]'::json) AS mentions
   FROM chat_messages m
   LEFT JOIN users u ON u.id = m.author_id`;
 
-export async function insert({ projectId, authorId, body }) {
-  const { rows } = await query(
-    `WITH ins AS (
-       INSERT INTO chat_messages (project_id, author_id, body) VALUES ($1, $2, $3) RETURNING *
-     )
-     SELECT ins.*, u.name AS author_name FROM ins LEFT JOIN users u ON u.id = ins.author_id`,
-    [projectId, authorId, body],
-  );
-  return rows[0];
+// 메시지와 멘션을 한 트랜잭션으로 저장한다. mentions: [{ id, name }]
+export async function insert({ projectId, authorId, body, mentions = [] }) {
+  const id = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'INSERT INTO chat_messages (project_id, author_id, body) VALUES ($1, $2, $3) RETURNING id',
+      [projectId, authorId, body],
+    );
+    if (mentions.length > 0) {
+      await client.query(
+        `INSERT INTO chat_message_mentions (message_id, user_id, name)
+         SELECT $1, * FROM unnest($2::uuid[], $3::text[])`,
+        [rows[0].id, mentions.map((m) => m.id), mentions.map((m) => m.name)],
+      );
+    }
+    return rows[0].id;
+  });
+  return findById(projectId, id);
 }
 
 export async function findById(projectId, id) {

@@ -64,6 +64,8 @@ erDiagram
     projects ||--o{ activity_logs : logs
     projects ||--o{ chat_messages : has
     users ||--o{ chat_messages : writes
+    chat_messages ||--o{ chat_message_mentions : mentions
+    users ||--o{ chat_message_mentions : "is mentioned"
     projects ||--o{ polls : has
     polls ||--o{ poll_options : offers
     poll_options ||--o{ poll_votes : receives
@@ -136,7 +138,8 @@ erDiagram
         uuid id PK
         uuid user_id FK
         enum type "task_assigned|due_soon|comment_added|task_overdue|mention"
-        uuid task_id FK
+        uuid task_id FK "nullable(채팅 멘션 알림은 NULL)"
+        uuid project_id FK "nullable, 채팅 멘션 알림에만 채움(작업 알림은 작업에서 구함)"
         uuid actor_id FK "nullable"
         text message
         boolean is_read
@@ -182,6 +185,12 @@ erDiagram
         uuid poll_id PK
         uuid option_id PK
         uuid user_id PK
+        timestamptz created_at
+    }
+    chat_message_mentions {
+        uuid message_id PK
+        uuid user_id PK
+        varchar name "멘션 시점의 이름(본문의 @이름 과 대응)"
         timestamptz created_at
     }
     chat_messages {
@@ -232,6 +241,7 @@ erDiagram
 - 인덱스: `(user_id, created_at DESC)` — "나를 멘션한 글" 모아보기(M14)용.
 
 **notifications**
+- 마이그레이션 013: 채팅 멘션 알림은 작업이 없으므로 `task_id` 를 NULL 허용으로 바꾸고 `project_id`(`ON DELETE CASCADE`, NULL 허용)를 더한다. 작업 알림은 이전처럼 `task_id` 로 작업을 거쳐 프로젝트를 구하고(`COALESCE(tasks.project_id, notifications.project_id)`), 채팅 멘션 알림만 `project_id` 를 직접 채운다.
 - 인덱스: `(user_id, is_read, created_at DESC)`
 - 보관: 90일 이후 정리(cron)
 
@@ -265,6 +275,9 @@ erDiagram
 - `CREATE EXTENSION pg_trgm` 후 `projects.name`, `tasks.title`, `tasks.description`, `comments.body`, `chat_messages.body` 에 `gin_trgm_ops` GIN 인덱스를 만든다. 새 테이블은 없다.
 - 인덱스는 저장 용량을 늘리므로(무료 범위) 검색 대상을 위 5개 열로 한정한다. 2글자 검색어는 인덱스 이점이 작아 느릴 수 있다 — 그래서 결과 수와 호출 횟수를 제한한다.
 
+**chat_message_mentions** (M12b 채팅 멘션, 마이그레이션 013)
+- `comment_mentions`(M11)와 같은 방식이다: 채팅 메시지가 누구를 멘션했는지 **명시적으로** 저장한다. PK `(message_id, user_id)`, `message_id` `ON DELETE CASCADE`(메시지가 삭제·정리되면 함께 사라짐), `user_id` `ON DELETE CASCADE`. `name` 은 멘션 시점의 이름. 인덱스 `(user_id, created_at DESC)`, RLS.
+
 **chat_messages** (M12 프로젝트 채팅)
 - 프로젝트당 채팅방 1개(별도 방 테이블 없음 — `project_id` 가 곧 방). DM·스레드·수정·파일 첨부는 없다.
 - `project_id` `ON DELETE CASCADE`, `author_id` `ON DELETE SET NULL`(화면에는 "알 수 없는 사용자").
@@ -274,6 +287,7 @@ erDiagram
 - 보관: **90일** 이후 정리(일일 cron). 그 밖에 **프로젝트당 최근 5000건**까지만 유지한다 — 새 메시지를 저장한 뒤 그보다 오래된 메시지를 지운다(소프트 상한, 저장 용량 보호).
 - 삭제는 **실제 삭제**(소프트 삭제 아님): 작성자·프로젝트 소유자·Admin. 보관 프로젝트에서는 작성·삭제 불가(읽기만).
 - 채팅 내용은 활동 기록에 남기지 않는다.
+- 메시지에서 멘션한 사람은 `chat_message_mentions` 에 저장한다(M12b).
 
 **share_links** (M10b 히스토리 공유)
 - 프로젝트 활동 기록을 **로그인 없이 읽기 전용**으로 공유하는 링크. 링크 주소의 토큰은 32바이트 난수이고, DB 에는 **SHA-256 해시만** 저장한다(원문은 만들 때 한 번만 보여 준다 — 이후 다시 볼 수 없고, 잃어버리면 폐기하고 새로 만든다).
@@ -408,7 +422,8 @@ erDiagram
 | POST | `/projects/:id/chat` | 메시지 보내기 `{ body }` (1~2000자) | 멤버 (보관 프로젝트 409) |
 | DELETE | `/projects/:id/chat/:messageId` | 메시지 삭제 | 작성자·소유자·Admin (보관 프로젝트 409) |
 
-> 구현 규칙(M12): 응답은 `{ data: [{ id, seq, body, author: {id,name}|null, createdAt }], nextCursor }`(최신순, 화면에서 뒤집어 아래가 최신이 되게 그린다). 보내기는 201 로 메시지 하나를 돌려준다. 프로젝트 멤버(와 Admin)만 읽고 쓸 수 있고, 멤버에서 제거되면 즉시 불가. 보내기는 **사용자당 분당 30건**으로 제한한다(429 `RATE_LIMITED`, 운영에서만 동작). 저장 후 `chat:created` `{ projectId, message }` 를 프로젝트 방 전체(요청자 소켓 제외)에 보내고, 삭제는 `chat:deleted` `{ projectId, messageId }` 를 보낸다. 클라이언트는 이벤트를 받으면 채팅 목록을 다시 불러온다. **멘션은 채팅에 적용하지 않는다**(이번 범위 밖 — 알림의 `task_id` 완화도 함께 보류).
+> 구현 규칙(M12): 응답은 `{ data: [{ id, seq, body, author: {id,name}|null, createdAt }], nextCursor }`(최신순, 화면에서 뒤집어 아래가 최신이 되게 그린다). 보내기는 201 로 메시지 하나를 돌려준다. 프로젝트 멤버(와 Admin)만 읽고 쓸 수 있고, 멤버에서 제거되면 즉시 불가. 보내기는 **사용자당 분당 30건**으로 제한한다(429 `RATE_LIMITED`, 운영에서만 동작). 저장 후 `chat:created` `{ projectId, message }` 를 프로젝트 방 전체(요청자 소켓 제외)에 보내고, 삭제는 `chat:deleted` `{ projectId, messageId }` 를 보낸다. 클라이언트는 이벤트를 받으면 채팅 목록을 다시 불러온다. **채팅 멘션(M12b)**: 보내기 본문은 `{ body, mentionIds?: uuid[] }`(최대 10명)이고 응답·목록·`chat:created` 의 메시지에는 `mentions: [{id,name}]` 가 붙는다. 검증은 댓글 멘션(M11)과 같다 — 대상은 **활성 프로젝트 멤버**여야 하고 본문에 그 사람의 `@이름` 이 실제로 있어야 하며(아니면 400 `INVALID_MENTION`, 메시지도 저장되지 않음) 중복 ID 는 합치고 본인 멘션은 허용하되 알림이 가지 않는다. 멘션된 사람에게 `mention` 알림 "{보낸 사람}님이 '{프로젝트 이름}' 채팅에서 회원님을 언급했습니다."(작업 없음, `projectId` 로 연결)가 가고, 알림을 누르면 그 프로젝트 화면으로 이동한다. 채팅 메시지는 수정할 수 없으므로 "새로 추가된 멘션만 알림" 규칙은 필요 없다. 모아보기(M14)의 "나를 멘션한 댓글"은 **댓글만** 보여 주고 채팅 멘션은 알림으로만 알린다.
+> 화면 배치(M12b): 프로젝트 상세 화면은 **2단 레이아웃**이다 — 왼쪽(본문)에 프로젝트 정보·대시보드·작업·투표, 오른쪽 **사이드**에 채팅·활동 기록(+공유 링크)·멤버를 둔다. 좁은 화면(모바일)에서는 사이드가 본문 아래로 내려와 한 줄로 쌓인다.
 
 #### 히스토리 공유 (M10b)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -575,6 +590,7 @@ erDiagram
 | 마감일이 오늘·내일 & 미완료 (cron, 매일 1회) | 담당자 | `due_soon` (`due_notified_at` 로 1회만) |
 | 마감 경과 & 미완료 (cron, 매일 오전) | 담당자 | `task_overdue` |
 | 내 담당 작업에 댓글 | 담당자·작성자 (댓글 작성자 제외, **그 댓글에서 멘션된 사람은 제외**) | `comment_added` |
+| 채팅에서 `@이름` 으로 멘션 (M12b) | 멘션된 활성 프로젝트 멤버 (본인 제외) | `mention` — 작업 없이 프로젝트에 연결(`task_id` NULL) |
 | 댓글에서 `@이름` 으로 멘션 | 멘션된 활성 프로젝트 멤버 (본인 제외) | `mention` — 같은 댓글에서 `comment_added` 와 겹치면 `mention` 하나만 보낸다 |
 
 > 구현 규칙(M7): 알림은 부가 기능이라 생성에 실패해도 원래 요청을 깨뜨리지 않는다. 수신자는 활성 사용자이면서 해당 프로젝트 멤버여야 한다. 생성 즉시 `notification:new` 를 수신자의 개인 방(`user:{id}`)으로 푸시한다. 마감 알림은 `GET /api/cron/daily`(Vercel Cron, 하루 1회, `Authorization: Bearer CRON_SECRET`) 가 만든다 — 마감일이 오늘·내일인 미완료 작업은 `due_soon`, 오늘 이전은 `task_overdue`. 각각 `due_notified_at` / `overdue_notified_at` 으로 한 번만 알리고(대상 확보와 알림 생성은 한 트랜잭션), 마감일이 바뀌면 둘 다 초기화한다. 완료·담당자 없음·보관된 프로젝트·비활성/제거된 담당자의 작업은 제외한다. "오늘"은 `APP_TIMEZONE`(기본 Asia/Seoul) 기준이다. 같은 Cron 이 90일 지난 알림과 만료된 refresh 토큰을 정리한다. 클라이언트는 알림을 누르면 `/projects/:id?task=:taskId` 로 이동해 해당 작업을 연다.
@@ -708,7 +724,7 @@ team-pm-app/
 |---|---|---|
 | **M10** | 활동 기록(히스토리) | 프로젝트 타임라인 + 작업별 변경 이력(`activity_logs`, §1.2·§2.2) |
 | **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기(클라이언트 생성), 읽기 전용 공유 링크(토큰 해시 저장·필수 만료·폐기·조회수, 공개 응답에서 멤버 정보 제외) — `share_links`, §1.2·§2.2 |
-| **M11** | 멘션 | 댓글의 `@이름` 자동완성 → 대상 멤버 알림(`mention` 타입, 마이그레이션 009 `comment_mentions`), 프로젝트 멤버만 멘션 가능. 채팅 멘션은 M12 범위에서 제외(필요해지면 그때 알림의 `task_id` 를 선택값으로 완화) |
+| **M11** | 멘션 | 댓글의 `@이름` 자동완성 → 대상 멤버 알림(`mention` 타입, 마이그레이션 009 `comment_mentions`), 프로젝트 멤버만 멘션 가능. 채팅 멘션은 M12b 에서 추가(알림의 `task_id` 를 선택값으로 완화, 마이그레이션 013) |
 | **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 2000자·프로젝트당 5000건·90일 보관·분당 30건 제한(`chat_messages`, 마이그레이션 010, §1.2·§2.2) |
 | **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(SQL 권한 필터, `pg_trgm` 인덱스, 마이그레이션 011, §1.2·§2.2) |
 | **M14** | 모아보기 | 내 마감 작업·멘션·안 읽은 알림·내가 없는 동안의 활동을 한 화면에 모은 피드(`GET /feed`, 마이그레이션 없음, §2.2) |

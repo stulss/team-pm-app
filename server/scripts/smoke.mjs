@@ -1764,6 +1764,84 @@ try {
       orphan.body === '유령의 말' && orphan.author === null,
     );
 
+    // 채팅 멘션 (M12b): chat_message_mentions SQL, 작업 없는 mention 알림, 제약을 실제 DB 로 확인
+    await db.query('DELETE FROM notifications WHERE user_id = $1', [people.member.id]);
+    const cm = await call('POST', `/projects/${cpid}/chat`, {
+      token: t('manager'),
+      body: { body: '@smoke-member 채팅 멘션', mentionIds: [people.member.id] },
+    });
+    check(
+      '채팅 멘션 보내기 (201), 응답에 mentions(id,name)',
+      cm.status === 201 &&
+        JSON.stringify(cm.body.mentions) ===
+          JSON.stringify([{ id: people.member.id, name: 'smoke-member' }]),
+      JSON.stringify(cm.body),
+    );
+    const cmRow = await db.query(
+      'SELECT user_id, name FROM chat_message_mentions WHERE message_id = $1',
+      [cm.body.id],
+    );
+    check(
+      'chat_message_mentions 에 (메시지, 사용자, 이름 스냅샷) 저장',
+      cmRow.rowCount === 1 &&
+        cmRow.rows[0].user_id === people.member.id &&
+        cmRow.rows[0].name === 'smoke-member',
+    );
+    const cmNotes = (await call('GET', '/notifications', { token: t('member') })).body.data;
+    check(
+      '채팅 멘션 알림: mention 타입, 작업 없음(taskId null), projectId 로 연결',
+      cmNotes.length === 1 &&
+        cmNotes[0].type === 'mention' &&
+        cmNotes[0].taskId === null &&
+        cmNotes[0].projectId === cpid &&
+        cmNotes[0].message.includes('채팅에서 회원님을 언급'),
+      JSON.stringify(cmNotes),
+    );
+    const listedMention = (
+      await call('GET', `/projects/${cpid}/chat`, { token: t('member') })
+    ).body.data.find((m) => m.id === cm.body.id);
+    check(
+      '채팅 목록에도 mentions 포함 (json_agg)',
+      listedMention?.mentions?.[0]?.id === people.member.id,
+    );
+    const badMention = await call('POST', `/projects/${cpid}/chat`, {
+      token: t('manager'),
+      body: { body: '@smoke-outsider 들어와', mentionIds: [people.outsider.id] },
+    });
+    check(
+      '비멤버 멘션은 400 INVALID_MENTION',
+      badMention.status === 400 && badMention.body.error.code === 'INVALID_MENTION',
+    );
+    let targetRejected = false;
+    try {
+      await db.query(
+        "INSERT INTO notifications (user_id, type, message) VALUES ($1, 'mention', 'x')",
+        [people.member.id],
+      );
+    } catch {
+      targetRejected = true;
+    }
+    check('task_id 도 project_id 도 없는 알림은 DB 제약이 거부', targetRejected);
+    await db.query('DELETE FROM chat_messages WHERE id = $1', [cm.body.id]);
+    check(
+      '메시지 삭제 시 chat_message_mentions CASCADE',
+      (await db.query('SELECT 1 FROM chat_message_mentions WHERE message_id = $1', [cm.body.id]))
+        .rowCount === 0,
+    );
+    check(
+      'chat_message_mentions 인덱스 + RLS',
+      (
+        await db.query(
+          "SELECT 1 FROM pg_indexes WHERE indexname = 'chat_message_mentions_user_created_idx'",
+        )
+      ).rowCount === 1 &&
+        (
+          await db.query(
+            "SELECT 1 FROM pg_class WHERE relname = 'chat_message_mentions' AND relrowsecurity",
+          )
+        ).rowCount === 1,
+    );
+
     // 보관 프로젝트는 읽기 전용
     await call('PATCH', `/projects/${cpid}`, { token: t('manager'), body: { status: 'archived' } });
     const archivedSend = await say('manager', '보관 후');

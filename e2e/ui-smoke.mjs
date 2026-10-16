@@ -283,8 +283,9 @@ try {
   const column = (p, status) => p.locator(`section[data-status="${status}"]`);
   // 포인터로 source 를 target 위로 끌어다 놓는다. where: 'center' | 'top'
   const drag = async (p, source, target, where = 'center') => {
-    // 화면 밖의 카드는 마우스 이벤트를 받지 못하므로 먼저 스크롤한다.
-    await source.scrollIntoViewIfNeeded();
+    // 화면 밖의 카드는 마우스 이벤트를 받지 못하므로 먼저 스크롤한다. 화면 가장자리 근처에서 끌면
+    // 드래그 라이브러리가 창을 자동 스크롤해 놓을 위치가 어긋나므로, 끌 카드를 화면 가운데로 둔다.
+    await source.evaluate((el) => el.scrollIntoView({ block: 'center' }));
     await target.scrollIntoViewIfNeeded();
     const s = await source.boundingBox();
     const t = await target.boundingBox();
@@ -999,6 +1000,64 @@ try {
     },
   );
   await step(
+    '채팅 멘션: @ 로 고르면 강조되고, 멘션된 사람에게 알림이 가며 누르면 프로젝트로 이동',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const before = await unread(rtMember);
+      const mChat = rtManager.getByRole('region', { name: '프로젝트 채팅' });
+      const uChat = rtMember.getByRole('region', { name: '프로젝트 채팅' });
+      const box = mChat.getByLabel('채팅 메시지');
+      await box.click();
+      await box.pressSequentially('@ui-me', { delay: 40 });
+      const list = mChat.getByRole('listbox', { name: '멘션 후보' });
+      await list.waitFor();
+      if ((await list.getByRole('option').count()) !== 1)
+        throw new Error('후보가 한 명으로 좁혀지지 않음');
+      await rtManager.keyboard.press('Enter'); // 후보 선택(전송 아님)
+      await list.waitFor({ state: 'detached' });
+      if ((await mChat.locator('.chat-body').count()) !== 0)
+        throw new Error('후보를 고르다 전송됨');
+      if (!(await box.inputValue()).startsWith('@ui-member ')) {
+        throw new Error(`선택 후 본문이 이상함: ${await box.inputValue()}`);
+      }
+      await box.pressSequentially('채팅 멘션 확인', { delay: 10 });
+      await rtManager.keyboard.press('Enter'); // 이번에는 전송
+      await mChat.locator('.chat-body .mention', { hasText: '@ui-member' }).waitFor();
+      await uChat
+        .locator('.chat-body .mention', { hasText: '@ui-member' })
+        .waitFor({ timeout: 5000 });
+
+      await pollUntil(async () => (await unread(rtMember)) === before + 1, '채팅 멘션 알림 배지');
+      await rtMember.locator('.bell-button').click();
+      const panel = rtMember.getByRole('dialog', { name: '알림 목록' });
+      const note = panel.getByRole('button', { name: /채팅에서 회원님을 언급했습니다/ });
+      await note.waitFor();
+      await note.click();
+      await rtMember.waitForURL(
+        (u) => u.pathname.startsWith('/projects/') && !u.search.includes('task='),
+      );
+      await rtMember.getByRole('region', { name: '프로젝트 채팅' }).waitFor();
+      // 읽음 처리 후 정리(뒤 단계에 영향 없게)
+      await pollUntil(async () => (await unread(rtMember)) === before, '읽음 처리');
+    },
+  );
+  await step('레이아웃: 채팅·활동 기록·멤버는 오른쪽 사이드, 작업·투표는 본문에 있음', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    const side = rtMember.locator('.project-side');
+    const main = rtMember.locator('.project-main');
+    await side.getByRole('region', { name: '프로젝트 채팅' }).waitFor();
+    await side.getByRole('region', { name: '활동 기록' }).waitFor();
+    await side.getByRole('heading', { name: /^멤버/ }).waitFor();
+    await main.getByRole('region', { name: '투표', exact: true }).waitFor();
+    const mainBox = await main.boundingBox();
+    const sideBox = await side.boundingBox();
+    if (!(sideBox.x > mainBox.x + mainBox.width - 1))
+      throw new Error('사이드가 본문 오른쪽에 있지 않음');
+    if ((await main.getByRole('region', { name: '프로젝트 채팅' }).count()) !== 0) {
+      throw new Error('채팅이 본문에 있음');
+    }
+  });
+  await step(
     '통합검색: 상단 검색창으로 작업·댓글을 찾고, 결과를 누르면 그 작업이 열림',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');
@@ -1337,7 +1396,12 @@ try {
     admin.once('dialog', (d) => d.accept());
     await admin.goto(projectUrl);
     await admin.getByRole('heading', { name: `ui-${run}-개편` }).waitFor();
-    await admin.getByRole('button', { name: '삭제' }).click();
+    // 프로젝트 머리 카드의 삭제 버튼(채팅·투표의 삭제 버튼과 구분)
+    await admin
+      .locator('.project-main > .card')
+      .first()
+      .getByRole('button', { name: '삭제' })
+      .click();
     await admin.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
     const { rowCount } = await db.query('SELECT 1 FROM projects WHERE name = $1', [
       `ui-${run}-개편`,
