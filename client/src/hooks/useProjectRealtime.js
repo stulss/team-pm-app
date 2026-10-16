@@ -13,6 +13,8 @@ export function useProjectRealtime(projectId) {
     if (!projectId) return undefined;
     const socket = connectSocket();
 
+    const refetchActivities = () =>
+      queryClient.invalidateQueries({ queryKey: ['activities', projectId] });
     const refetchTasks = () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
       queryClient.invalidateQueries({ queryKey: ['mytasks'] });
@@ -42,6 +44,7 @@ export function useProjectRealtime(projectId) {
       refetchTasks();
       refetchProject();
       queryClient.invalidateQueries({ queryKey: ['comments'] });
+      refetchActivities();
     };
     const onDisconnect = markOffline;
 
@@ -57,6 +60,7 @@ export function useProjectRealtime(projectId) {
       'member:removed': refetchProject,
       'project:updated': refetchProject,
       'project:deleted': refetchProject,
+      'activity:created': refetchActivities,
     };
 
     socket.on('connect', onConnect);

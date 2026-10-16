@@ -803,3 +803,37 @@ button.bell-item.unread {
     font-size: 16px;
   }
 }
+
+/* 활동 기록 */
+.activity h2 {
+  margin-top: 0;
+}
+.activity-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+.activity-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.activity-list li:last-child {
+  border-bottom: 0;
+}
+.activity-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.activity-list time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  .activity-list li {
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+}

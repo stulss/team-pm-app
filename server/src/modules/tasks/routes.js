@@ -7,6 +7,12 @@ import { requireTaskAccess } from '../../middleware/requireTaskAccess.js';
 import { STATUSES } from './repository.js';
 import { emitToProject } from '../../sockets/emitter.js';
 import { notifyTaskAssigned } from '../notifications/service.js';
+import {
+  record,
+  recordTaskCreated,
+  recordTaskMoved,
+  recordTaskUpdated,
+} from '../activity/service.js';
 import * as service from './service.js';
 
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -85,6 +91,7 @@ projectTasksRouter.post('/', requireProjectMember(), validate(createBody), async
   const task = await service.create(req.project, req.user, req.body);
   await emitToProject(req, req.project.id, 'task:created', { projectId: req.project.id, task });
   await notifyTaskAssigned({ task, actor: req.user });
+  await recordTaskCreated({ project: req.project, task, actor: req.user });
   res.status(201).json(task);
 });
 
@@ -108,6 +115,7 @@ tasksRouter.patch('/:id', requireTaskAccess(), validate(patchBody), async (req, 
   if (task.assignee?.id !== (req.task.assignee_id ?? undefined)) {
     await notifyTaskAssigned({ task, actor: req.user });
   }
+  await recordTaskUpdated({ project: req.project, before: req.task, after: task, actor: req.user });
   res.json(task);
 });
 
@@ -121,6 +129,7 @@ tasksRouter.patch('/:id/move', requireTaskAccess(), validate(moveBody), async (r
     movedBy: req.user.id,
     task,
   });
+  await recordTaskMoved({ project: req.project, before: req.task, after: task, actor: req.user });
   res.json(task);
 });
 
@@ -129,6 +138,13 @@ tasksRouter.delete('/:id', requireTaskAccess(), async (req, res) => {
   await emitToProject(req, req.project.id, 'task:deleted', {
     projectId: req.project.id,
     taskId: req.task.id,
+  });
+  await record({
+    projectId: req.project.id,
+    taskId: req.task.id,
+    actorId: req.user.id,
+    action: 'task.deleted',
+    meta: { title: req.task.title },
   });
   res.status(204).end();
 });

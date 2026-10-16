@@ -16,6 +16,7 @@ import { commentsRouter, taskCommentsRouter } from './modules/comments/routes.js
 import { notificationsRouter } from './modules/notifications/routes.js';
 import { cronRouter } from './modules/cron/routes.js';
 import { dashboardRouter, projectDashboardRouter } from './modules/dashboard/routes.js';
+import { projectActivityRouter } from './modules/activity/routes.js';
 
 export const app = express();
 
@@ -56,6 +57,7 @@ api.use('/users', usersRouter);
 api.use('/projects', projectsRouter);
 api.use('/projects/:id/tasks', projectTasksRouter);
 api.use('/projects/:id/dashboard', projectDashboardRouter);
+api.use('/projects/:id/activities', projectActivityRouter);
 api.use('/tasks/:id/comments', taskCommentsRouter);
 api.use('/tasks', tasksRouter);
 api.use('/comments', commentsRouter);

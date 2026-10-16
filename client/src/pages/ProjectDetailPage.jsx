@@ -17,6 +17,7 @@ import UserSearch from '../components/project/UserSearch.jsx';
 import MemberEmailAdd from '../components/project/MemberEmailAdd.jsx';
 import TaskSection from '../components/task/TaskSection.jsx';
 import ProjectDashboard from '../components/dashboard/ProjectDashboard.jsx';
+import ActivityFeed from '../components/activity/ActivityFeed.jsx';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -199,6 +200,10 @@ export default function ProjectDetailPage() {
       <ProjectDashboard projectId={project.id} />
 
       <TaskSection project={project} archived={archived} />
+
+      <div className="card">
+        <ActivityFeed projectId={project.id} />
+      </div>
     </>
   );
 }

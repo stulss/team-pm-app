@@ -16,7 +16,7 @@ export const toComment = (row) =>
   };
 
 const SELECT = `
-  SELECT c.*, u.name AS author_name, t.project_id
+  SELECT c.*, u.name AS author_name, t.project_id, t.title AS task_title
   FROM comments c
   JOIN users u ON u.id = c.author_id
   JOIN tasks t ON t.id = c.task_id`;

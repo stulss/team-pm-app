@@ -132,9 +132,10 @@ erDiagram
     }
     activity_logs {
         uuid id PK
+        bigint seq "순번(커서 페이지네이션용)"
         uuid project_id FK
-        uuid task_id FK "nullable"
-        uuid actor_id FK
+        uuid task_id "nullable, FK 없음(작업이 지워져도 기록 유지)"
+        uuid actor_id FK "nullable, 탈퇴/삭제 시 NULL"
         varchar action "task.created|task.moved|..."
         jsonb meta
         timestamptz created_at
@@ -177,9 +178,22 @@ erDiagram
 - 인덱스: `(user_id, is_read, created_at DESC)`
 - 보관: 90일 이후 정리(cron)
 
-**activity_logs** (선택 기능이지만 MVP에서 단순 기록 권장)
-- 칸반 이동, 담당자 변경 등 이력. 대시보드/타임라인 확장 기반
-- 인덱스: `(project_id, created_at DESC)`
+**activity_logs** (M10 활동 기록)
+- 프로젝트에서 일어난 변경의 시간순 기록. 팀원이 모두 보는 타임라인과 작업별 변경 이력의 기반이다.
+- `project_id` 는 `ON DELETE CASCADE`, `actor_id` 는 `ON DELETE SET NULL`(사용자가 지워져도 기록 유지, 화면에는 "알 수 없는 사용자"). `task_id` 는 FK 를 걸지 않는다(작업이 삭제돼도 "작업 삭제" 기록과 이전 기록이 남아야 한다).
+- `seq` = `bigint GENERATED ALWAYS AS IDENTITY`. 커서 페이지네이션(`seq < 마지막 seq`, 내림차순)에 쓴다 — `created_at` 은 마이크로초라 JS 로 왕복하면 어긋난다.
+- 인덱스: `(project_id, seq DESC)`, `(task_id, seq DESC) WHERE task_id IS NOT NULL`
+- 이름·제목은 **그 시점의 값을 meta 에 복사**해 둔다(이름이 바뀌거나 멤버가 제거돼도 기록이 읽힌다). 댓글 **본문은 저장하지 않는다**(수정·삭제된 내용이 기록에 남지 않게).
+- 기록하는 action 과 meta:
+  - `project.created` `{name}`, `project.updated` `{changes: {name?, status?}}`(각 `{from,to}`)
+  - `member.added` / `member.removed` `{user: {id, name}}`
+  - `task.created` `{title, status, assignee?: {id, name}}`
+  - `task.updated` `{title, changes: {title?, status?, priority?, dueDate?, assignee?, description?: true}}`(각 `{from,to}`, 담당자는 `{id,name}|null`, 설명은 내용 대신 변경 사실만)
+  - `task.moved` `{title, from, to}` — **상태(컬럼)가 바뀐 이동만** 기록. 같은 컬럼 안의 순서 변경은 노이즈라 기록하지 않는다.
+  - `task.deleted` `{title}`
+  - `comment.created` / `comment.deleted` `{taskTitle}`(댓글 수정은 기록하지 않음)
+- 기록은 요청의 본 동작이 성공한 뒤에 별도로 저장한다(같은 트랜잭션이 아님). 기록 저장이 실패해도 요청은 실패시키지 않고 로그만 남긴다 → 드물게 기록이 빠질 수 있다.
+- 보관: 180일 이후 정리(cron, 알림 정리와 같은 일일 작업)
 
 ### 1.3 대시보드 지표 정의
 
@@ -266,6 +280,13 @@ erDiagram
 | DELETE | `/comments/:id` | 삭제 | 작성자/Admin/Manager |
 
 > 구현 규칙(M6): 권한표의 "댓글 수정: Admin/Manager 모두"와 API 표의 "수정: 작성자"가 달랐고, **수정은 작성자만**으로 확정했다(남의 글을 고치지 않는다). 삭제는 작성자·Admin·Manager(프로젝트 멤버). 삭제는 소프트 삭제이며 응답에서는 `body: "삭제된 댓글"`, `deleted: true` 로 가리고 목록에는 남긴다. 수정된 댓글은 `edited: true`. 댓글은 최대 5000자, 앞뒤 공백 제거, 본문은 문자열로만 저장·렌더링한다(HTML 해석 안 함). 보관된 프로젝트에서는 작성·수정·삭제가 409. 작업 응답에는 삭제되지 않은 댓글 수 `commentCount` 가 포함된다. 변경은 `comment:created/updated/deleted` 로 프로젝트 방에 전달된다.
+
+#### Activities (M10)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects/:id/activities` | 활동 기록(최신순). `?limit`(1~50, 기본 30) `&before=<seq>`(커서) `&taskId=` `&action=` | 멤버 |
+
+> 구현 규칙(M10): 응답은 `{ data: [{ id, seq, action, taskId, actor: {id,name}|null, meta, createdAt }], nextCursor }` 이고 `nextCursor` 가 null 이면 끝이다. `taskId` 를 주면 그 작업의 변경 이력만 돌려준다(작업 상세 모달의 "변경 이력"). 프로젝트 멤버(와 Admin)만 볼 수 있고, 멤버에서 제거되면 즉시 볼 수 없다. 기록을 저장한 뒤 `activity:created` `{ projectId, taskId }` 를 프로젝트 방 전체(요청자 포함)에 보내고, 클라이언트는 이를 받으면 활동 목록을 다시 불러온다(작업·댓글 이벤트는 기록 저장을 기다리지 않고 먼저 나간다).
 
 #### Notifications
 | 메서드 | 경로 | 설명 | 권한 |
@@ -384,6 +405,7 @@ erDiagram
 |---|---|---|---|
 | C→S | `project:join` | `{ projectId }` | 보드 진입 시 (ack로 성공/실패) |
 | C→S | `project:leave` | `{ projectId }` | 보드 이탈 |
+| S→C | `activity:created` | `{ projectId, taskId }` | 활동 기록이 저장됨(요청자 포함 전원). 클라이언트는 활동 목록을 다시 불러온다 |
 | S→C | `task:created` | `{ task }` | 작업 생성 |
 | S→C | `task:updated` | `{ task }` | 필드 수정 |
 | S→C | `task:moved` | `{ taskId, status, position, movedBy }` | 칸반 이동 |
@@ -538,6 +560,22 @@ team-pm-app/
 | **M9** (2~3일) | 마무리·검증 | 입력 검증 보강, 레이트리밋/helmet/CORS, 에러·빈 상태 UI, 반응형, 통합/E2E 테스트, Supabase 백업(PITR 여부는 요금제 확인)·로그 | 핵심 플로우 E2E 통과 |
 | **M9.5** (0.5일) | **최종 배포** | 프로덕션 환경변수·HTTPS 점검, 최종 스모크 테스트 | 프로덕션 확정 → **최종본** |
 
+### 확장 단계 (최종 제출 이후) — 협업 기능
+
+공개 서비스로 운영하기 위해 단계별로 하나씩 추가한다. 각 단계는 설계 문서 수정 → 구현 → 테스트 → 배포 검증 → 사용자 승인 순으로 끝낸다. 권한은 항상 프로젝트 멤버십을 따른다.
+
+| 단계 | 기능 | 핵심 내용 |
+|---|---|---|
+| **M10** | 활동 기록(히스토리) | 프로젝트 타임라인 + 작업별 변경 이력(`activity_logs`, §1.2·§2.2) |
+| **M10b** | 히스토리 공유 | 활동 기록 CSV 내보내기, 읽기 전용 공유 링크(토큰 해시 저장·만료·폐기, 댓글 본문 제외) |
+| **M11** | 멘션 | 댓글·채팅의 `@이름` → 대상 사용자 알림(`mention` 알림 종류), 프로젝트 멤버만 멘션 가능 |
+| **M12** | 프로젝트 채팅 | 프로젝트당 채팅방 1개, 실시간(Socket.io)·이력 조회, 보관 프로젝트는 읽기 전용, 메시지 길이·개수 상한 |
+| **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(권한 필터 필수, `pg_trgm`) |
+| **M14** | 모아보기 | 내 배정·멘션·마감·안 읽은 알림·최근 활동을 한 화면에 모은 피드 |
+| **M15** | 투표 | 프로젝트 안 투표(선택지·마감·복수 선택 여부), 실시간 집계, 1인 1표 서버 보장 |
+
+> 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.
+
 > 총 예상: 약 3~4주(1인 기준). **M1~M5가 MVP 핵심**이며, M6~M8은 독립적이라 순서 교체 가능(단, 단계 경계를 넘으면 점검 범위가 달라짐).
 >
 > **배포 시 유의**: 프론트와 API를 하나의 Vercel 프로젝트(동일 오리진)로 배포하므로 `SameSite=Strict` refresh 쿠키 문제가 생기지 않는다. 대신 함수는 상시 프로세스가 아니므로 메모리 상태(소켓 룸, 캐시, 스케줄러)에 의존하지 않는다.
@@ -557,7 +595,7 @@ team-pm-app/
 
 ## 6. 향후 확장 (범위 외)
 
-초대 링크, 이메일 알림, 파일 첨부, 서브태스크/라벨, 커스텀 칸반 컬럼, @멘션 알림, 작업 검색 전문 인덱스, 감사 로그 UI, Redis adapter(다중 인스턴스), 다국어(i18n)
+초대 링크, 이메일 알림, 파일 첨부, 서브태스크/라벨, 커스텀 칸반 컬럼, 감사 로그 UI(관리자용), 1:1 DM, 다국어(i18n). (멘션·통합검색·채팅·모아보기·투표·히스토리 공유는 위 "확장 단계" 로 이동)
 
 ## 7. 확인이 필요한 열린 질문
 

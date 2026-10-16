@@ -75,6 +75,24 @@ const apiLogin = async (k) =>
 
 await db.connect();
 const browser = await chromium.launch({ executablePath: CHROME, headless: !process.env.HEADED });
+// 개발 서버(Vite)는 처음 열 때 화면이 다시 그려지거나 새로고침돼, 방금 입력한 값이 사라질 수 있다.
+// 모든 fill 을 "입력 → 값이 유지되는지 확인 → 아니면 잠시 뒤 다시 입력" 으로 바꿔 이 경쟁을 흡수한다.
+let fillPatched = false;
+const stabilizeFill = (page) => {
+  if (fillPatched) return;
+  fillPatched = true;
+  const Locator = page.locator('body').constructor;
+  const original = Locator.prototype.fill;
+  Locator.prototype.fill = async function stableFill(value, options) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await original.call(this, value, options);
+      await new Promise((r) => setTimeout(r, 150));
+      if ((await this.inputValue().catch(() => value)) === value) return;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    throw new Error(`입력값이 유지되지 않음: ${value}`);
+  };
+};
 const newPage = async () => {
   const ctx = await browser.newContext({
     viewport: { width: 1400, height: 1000 },
@@ -83,6 +101,7 @@ const newPage = async () => {
       : {},
   });
   const page = await ctx.newPage();
+  stabilizeFill(page);
   page.setDefaultTimeout(T);
   page.on('pageerror', (e) => console.log('      [pageerror]', e.message));
   return page;
@@ -539,6 +558,18 @@ try {
     );
     return token;
   };
+  // 개발 서버(Vite)는 처음 열 때 화면이 다시 그려지거나 새로고침돼 입력값이 사라질 수 있다.
+  // 네트워크가 잠잠해진 뒤 입력하고, 값이 유지되는지 확인한다(안 되면 다시 입력).
+  const settle = (p) => p.waitForLoadState('networkidle');
+  const fillStable = async (locator, value) => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await locator.fill(value);
+      await locator.page().waitForTimeout(200);
+      if ((await locator.inputValue()) === value) return;
+      await settle(locator.page());
+    }
+    throw new Error(`입력값이 유지되지 않음: ${value}`);
+  };
   await step('이메일 인증 링크: 인증 완료 화면, 같은 링크를 다시 열면 실패 화면', async () => {
     await db.query('UPDATE users SET email_verified_at = NULL WHERE email = $1', [
       emailOf('mailuser'),
@@ -552,28 +583,48 @@ try {
   });
   await step('비밀번호 찾기: 이메일을 넣으면 가입 여부와 관계없이 같은 안내', async () => {
     await mailer.goto(`${BASE}/login`);
+    await settle(mailer);
     await mailer.getByRole('link', { name: '비밀번호를 잊으셨나요?' }).click();
-    await mailer.getByLabel('이메일').fill(`nobody-${run}@example.test`);
+    await mailer.getByRole('heading', { name: '비밀번호 찾기' }).waitFor();
+    await settle(mailer);
+    const input = mailer.getByLabel('이메일');
+    const address = `nobody-${run}@example.test`;
+    await fillStable(input, address);
+    const requested = [];
+    mailer.on('request', (r) => {
+      if (r.url().includes('/auth/forgot-password')) requested.push(r.postData());
+    });
     await mailer.getByRole('button', { name: '재설정 링크 보내기' }).click();
-    await mailer.getByRole('heading', { name: '메일을 확인해 주세요' }).waitFor();
+    try {
+      await mailer.getByRole('heading', { name: '메일을 확인해 주세요' }).waitFor();
+    } catch (e) {
+      console.log('      [진단] 요청 수:', requested.length, '입력값:', await input.inputValue());
+      console.log(
+        '      [진단] 화면:',
+        (await mailer.locator('body').innerText()).split('\n').join(' | '),
+      );
+      throw e;
+    }
   });
   await step('비밀번호 재설정: 확인 불일치 오류 → 설정 완료 → 새 비밀번호로만 로그인', async () => {
     const token = await putToken('reset');
     await mailer.goto(`${BASE}/reset-password?token=${token}`);
-    await mailer.getByLabel('새 비밀번호 (8자 이상)').fill('N3w-secure-pass');
-    await mailer.getByLabel('새 비밀번호 확인').fill('different-pass-1');
+    await settle(mailer);
+    await fillStable(mailer.getByLabel('새 비밀번호 (8자 이상)'), 'N3w-secure-pass');
+    await fillStable(mailer.getByLabel('새 비밀번호 확인'), 'different-pass-1');
     await mailer.getByRole('button', { name: '비밀번호 바꾸기' }).click();
     await mailer.getByRole('alert').filter({ hasText: '서로 다릅니다' }).waitFor();
-    await mailer.getByLabel('새 비밀번호 확인').fill('N3w-secure-pass');
+    await fillStable(mailer.getByLabel('새 비밀번호 확인'), 'N3w-secure-pass');
     await mailer.getByRole('button', { name: '비밀번호 바꾸기' }).click();
     await mailer.getByRole('heading', { name: '비밀번호를 바꿨습니다' }).waitFor();
 
     await mailer.goto(`${BASE}/login`);
-    await mailer.getByLabel('이메일').fill(emailOf('mailuser'));
-    await mailer.getByLabel('비밀번호').fill(PASSWORD);
+    await settle(mailer);
+    await fillStable(mailer.getByLabel('이메일'), emailOf('mailuser'));
+    await fillStable(mailer.getByLabel('비밀번호'), PASSWORD);
     await mailer.getByRole('button', { name: '로그인' }).click();
     await mailer.getByRole('alert').filter({ hasText: '올바르지 않습니다' }).waitFor();
-    await mailer.getByLabel('비밀번호').fill('N3w-secure-pass');
+    await fillStable(mailer.getByLabel('비밀번호'), 'N3w-secure-pass');
     await mailer.getByRole('button', { name: '로그인' }).click();
     await mailer.getByRole('link', { name: '프로젝트', exact: true }).waitFor();
   });
@@ -581,8 +632,9 @@ try {
     const expired = await putToken('reset', -1000);
     const fresh = await newPage();
     await fresh.goto(`${BASE}/reset-password?token=${expired}`);
-    await fresh.getByLabel('새 비밀번호 (8자 이상)').fill('Another-pass-9');
-    await fresh.getByLabel('새 비밀번호 확인').fill('Another-pass-9');
+    await settle(fresh);
+    await fillStable(fresh.getByLabel('새 비밀번호 (8자 이상)'), 'Another-pass-9');
+    await fillStable(fresh.getByLabel('새 비밀번호 확인'), 'Another-pass-9');
     await fresh.getByRole('button', { name: '비밀번호 바꾸기' }).click();
     await fresh.getByRole('alert').filter({ hasText: '만료되었거나 이미 사용' }).waitFor();
     await fresh.goto(`${BASE}/reset-password`);
@@ -805,6 +857,41 @@ try {
     await column(rtMember, 'todo')
       .locator('[data-task-id]', { hasText: '끊긴 동안 생성' })
       .waitFor({ timeout: 15000 });
+  });
+  await step(
+    '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const feed = rtMember.getByRole('region', { name: '활동 기록' });
+      await feed.scrollIntoViewIfNeeded();
+      // 앞선 단계의 동작이 이미 기록돼 있다 (보고 있는 화면의 새로고침 없이 갱신된 상태)
+      await feed.getByText('옮겼습니다').first().waitFor({ timeout: 5000 });
+      await feed.getByText('“실시간 작업”').first().waitFor({ timeout: 5000 });
+      await feed.getByText('삭제했습니다').first().waitFor({ timeout: 5000 });
+      await feed.getByText('댓글을 남겼습니다').first().waitFor({ timeout: 5000 });
+      if ((await feed.getByText('ui-manager').count()) === 0) {
+        throw new Error('행위자 이름이 보이지 않음');
+      }
+      // 지금 이 순간 일어나는 변경도 새로고침 없이 나타난다
+      await addTask(rtManager, '활동 실시간 확인');
+      await feed.getByText('“활동 실시간 확인”').first().waitFor({ timeout: 5000 });
+      // 댓글 본문은 기록에 나오지 않는다
+      if ((await feed.getByText('<b>굵게</b>').count()) !== 0) {
+        throw new Error('댓글 본문이 활동 기록에 노출됨');
+      }
+    },
+  );
+  await step('활동 기록: 작업 모달의 "변경 이력"에 그 작업의 기록만 보임', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await card(rtManager, '활동 실시간 확인').click();
+    const dialog = rtManager.getByRole('dialog');
+    const history = dialog.getByRole('region', { name: '변경 이력' });
+    await history.getByText('만들었습니다').waitFor({ timeout: 5000 });
+    if ((await history.getByText('“둘째”').count()) !== 0) {
+      throw new Error('다른 작업의 기록이 섞여 있음');
+    }
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await dialog.waitFor({ state: 'detached' });
   });
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');

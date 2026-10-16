@@ -3,6 +3,7 @@ import { env } from '../../config/env.js';
 import { emitToUser } from '../../sockets/emitter.js';
 import { notFound } from '../../utils/errors.js';
 import * as authRepo from '../auth/repository.js';
+import * as activityRepo from '../activity/repository.js';
 import * as repo from './repository.js';
 import { logger } from '../../utils/logger.js';
 
@@ -109,5 +110,6 @@ export async function runDailyJobs({ today = todayIn() } = {}) {
 
   result.notificationsDeleted = await repo.deleteOlderThan(repo.RETENTION_DAYS);
   result.tokensDeleted = await authRepo.deleteExpired();
+  result.activitiesDeleted = await activityRepo.deleteOlderThan(activityRepo.RETENTION_DAYS);
   return result;
 }

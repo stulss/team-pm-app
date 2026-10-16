@@ -1167,6 +1167,153 @@ try {
     );
   }
 
+  // --- 활동 기록 (M10): SQL(커서·필터·SET NULL·CASCADE·정리)과 라우트 훅을 실제 DB 로 확인
+  {
+    const activityRepo = await import('../src/modules/activity/repository.js');
+    const apid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-activity', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const feed = (qs = '', who = 'manager') =>
+      call('GET', `/projects/${apid}/activities${qs}`, { token: t(who) });
+    const mk = await call('POST', `/projects/${apid}/tasks`, {
+      token: t('member'),
+      body: { title: 'smoke-act-task', assigneeId: people.manager.id },
+    });
+    const atid = mk.body.id;
+    await call('PATCH', `/tasks/${atid}`, {
+      token: t('member'),
+      body: { priority: 'high', dueDate: '2030-01-31', description: 'smoke-secret-desc' },
+    });
+    await call('PATCH', `/tasks/${atid}/move`, { token: t('member'), body: { status: 'review' } });
+    const ac = await call('POST', `/tasks/${atid}/comments`, {
+      token: t('member'),
+      body: { body: 'smoke-secret-comment' },
+    });
+    await call('DELETE', `/comments/${ac.body.id}`, { token: t('manager') });
+    await call('POST', `/projects/${apid}/members`, {
+      token: t('manager'),
+      body: { userId: people.outsider.id },
+    });
+    await call('DELETE', `/projects/${apid}/members/${people.outsider.id}`, {
+      token: t('manager'),
+    });
+    await call('DELETE', `/tasks/${atid}`, { token: t('member') });
+
+    const all = await feed('?limit=50');
+    const seen = all.body.data.map((a) => a.action);
+    check(
+      '활동 기록이 최신순으로 쌓임 (프로젝트 생성 → 작업 생성/수정/이동 → 댓글 → 멤버 → 삭제)',
+      all.status === 200 &&
+        JSON.stringify(seen) ===
+          JSON.stringify([
+            'task.deleted',
+            'member.removed',
+            'member.added',
+            'comment.deleted',
+            'comment.created',
+            'task.moved',
+            'task.updated',
+            'task.created',
+            'project.created',
+          ]),
+      JSON.stringify(seen),
+    );
+    const upd = all.body.data.find((a) => a.action === 'task.updated');
+    check(
+      'meta(jsonb)가 객체로 돌아오고 바뀐 항목만 {from,to}, 설명은 사실만',
+      upd?.meta?.changes?.priority?.to === 'high' &&
+        upd.meta.changes.dueDate?.to === '2030-01-31' &&
+        upd.meta.changes.description === true &&
+        !upd.meta.changes.status,
+      JSON.stringify(upd?.meta),
+    );
+    const leak = await db.query(
+      "SELECT 1 FROM activity_logs WHERE project_id = $1 AND (meta::text LIKE '%smoke-secret%')",
+      [apid],
+    );
+    check('댓글 본문·설명 내용은 DB 에 기록되지 않음', leak.rowCount === 0);
+    const del = all.body.data.find((a) => a.action === 'task.deleted');
+    check(
+      '삭제된 작업의 기록은 남고 작업 ID·제목을 유지 (task_id FK 없음)',
+      del?.taskId === atid && del.meta.title === 'smoke-act-task',
+    );
+
+    const pages = [];
+    let cursor;
+    for (let i = 0; i < 10; i += 1) {
+      const r = await feed(`?limit=4${cursor ? `&before=${cursor}` : ''}`);
+      pages.push(...r.body.data);
+      cursor = r.body.nextCursor;
+      if (!cursor) break;
+    }
+    const seqs = pages.map((a) => a.seq);
+    check(
+      '커서 페이지네이션: 중복·누락 없이 9건, seq 내림차순',
+      pages.length === 9 &&
+        new Set(pages.map((a) => a.id)).size === 9 &&
+        seqs.every((v, i) => i === 0 || v < seqs[i - 1]),
+      JSON.stringify(seqs),
+    );
+    const onlyTask = await feed(`?taskId=${atid}`);
+    check(
+      'taskId 필터는 그 작업의 기록만',
+      onlyTask.body.data.length === 6 && onlyTask.body.data.every((a) => a.taskId === atid),
+      String(onlyTask.body.data.length),
+    );
+    const onlyMoved = await feed('?action=task.moved');
+    check('action 필터', onlyMoved.body.data.length === 1);
+    check(
+      '멤버·Admin 은 조회 가능, 비멤버는 403',
+      (await feed('', 'member')).status === 200 &&
+        (await feed('', 'admin')).status === 200 &&
+        (await feed('', 'outsider')).status === 403,
+    );
+
+    // 사용자가 지워져도 기록은 남고 actor 만 NULL 이 된다
+    const temp = await call('POST', '/auth/register', {
+      body: { email: emailOf('actor'), password: 'S3cure!pass', name: 'smoke-actor' },
+    });
+    await db.query(
+      "INSERT INTO activity_logs (project_id, actor_id, action, meta) VALUES ($1, $2, 'project.updated', '{}')",
+      [apid, temp.body.user.id],
+    );
+    await db.query('DELETE FROM users WHERE id = $1', [temp.body.user.id]);
+    const orphan = await db.query(
+      "SELECT actor_id FROM activity_logs WHERE project_id = $1 AND action = 'project.updated'",
+      [apid],
+    );
+    check(
+      '사용자 삭제 시 기록은 유지되고 actor_id 는 NULL',
+      orphan.rowCount === 1 && orphan.rows[0].actor_id === null,
+    );
+    const orphanApi = (await feed('?action=project.updated')).body.data[0];
+    check('API 는 actor 를 null 로 돌려줌', orphanApi && orphanApi.actor === null);
+
+    // 보관 기간 정리
+    await db.query(
+      "INSERT INTO activity_logs (project_id, action, created_at) VALUES ($1, 'task.created', now() - interval '200 days')",
+      [apid],
+    );
+    const removed = await activityRepo.deleteOlderThan(activityRepo.RETENTION_DAYS);
+    check(
+      '180일 지난 기록만 정리됨',
+      removed >= 1 && (await feed('?limit=50')).body.data.length === 10,
+    );
+    const rlsOn = await db.query(
+      "SELECT 1 FROM pg_class WHERE relname = 'activity_logs' AND relrowsecurity",
+    );
+    check('activity_logs RLS 활성화', rlsOn.rowCount === 1);
+
+    await call('DELETE', `/projects/${apid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 활동 기록 CASCADE',
+      (await db.query('SELECT 1 FROM activity_logs WHERE project_id = $1', [apid])).rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

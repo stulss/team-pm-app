@@ -28,6 +28,10 @@ vi.mock('../modules/comments/repository.js', async () => ({
   ...(await vi.importActual('../modules/comments/repository.js')),
   ...(await import('./helpers/memoryRepos.js')).commentsRepo,
 }));
+vi.mock('../modules/activity/repository.js', async () => ({
+  ...(await vi.importActual('../modules/activity/repository.js')),
+  ...(await import('./helpers/memoryRepos.js')).activityRepo,
+}));
 vi.mock('../modules/notifications/repository.js', async () => ({
   ...(await vi.importActual('../modules/notifications/repository.js')),
   ...(await import('./helpers/memoryRepos.js')).notificationsRepo,

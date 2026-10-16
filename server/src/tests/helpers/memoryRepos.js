@@ -14,6 +14,7 @@ export const store = {
   comments: [],
   notifications: [],
   emailTokens: [],
+  activities: [],
 };
 
 export function reset() {
@@ -25,6 +26,8 @@ export function reset() {
   store.comments = [];
   store.notifications = [];
   store.emailTokens = [];
+  store.activities = [];
+  activitySeq = 0;
 }
 
 const pub = (u) => ({
@@ -153,6 +156,53 @@ export const authRepo = {
     if (!t) return null;
     t.used_at = new Date();
     return t.user_id;
+  },
+};
+
+let activitySeq = 0;
+export const activityRepo = {
+  RETENTION_DAYS: 180,
+  toActivity: (row) =>
+    row && {
+      id: row.id,
+      seq: Number(row.seq),
+      action: row.action,
+      taskId: row.task_id,
+      actor: row.actor_id ? { id: row.actor_id, name: row.actor_name } : null,
+      meta: row.meta,
+      createdAt: row.created_at,
+    },
+  async insert({ projectId, taskId = null, actorId = null, action, meta = {} }) {
+    activitySeq += 1;
+    store.activities.push({
+      id: crypto.randomUUID(),
+      seq: activitySeq,
+      project_id: projectId,
+      task_id: taskId,
+      actor_id: actorId,
+      action,
+      meta: JSON.parse(JSON.stringify(meta)),
+      created_at: new Date(),
+    });
+  },
+  async list(projectId, { limit, before, taskId, action }) {
+    return store.activities
+      .filter(
+        (a) =>
+          a.project_id === projectId &&
+          (before === undefined || a.seq < before) &&
+          (!taskId || a.task_id === taskId) &&
+          (!action || a.action === action),
+      )
+      .sort((a, b) => b.seq - a.seq)
+      .slice(0, limit + 1)
+      .map((a) => ({ ...a, actor_name: store.users.find((u) => u.id === a.actor_id)?.name }));
+  },
+  async deleteOlderThan(days) {
+    const cutoff = Date.now() - days * 86400_000;
+    const before = store.activities.length;
+    store.activities = store.activities.filter((a) => a.created_at.getTime() >= cutoff);
+    return before - store.activities.length;
   },
 };
 
@@ -419,6 +469,7 @@ const withAuthor = (c) => ({
   ...c,
   author_name: store.users.find((u) => u.id === c.author_id)?.name,
   project_id: store.tasks.find((t) => t.id === c.task_id)?.project_id,
+  task_title: store.tasks.find((t) => t.id === c.task_id)?.title,
 });
 
 export const commentsRepo = {

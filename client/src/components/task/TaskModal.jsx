@@ -12,6 +12,7 @@ import {
 } from '../../constants/task.js';
 import Modal from '../common/Modal.jsx';
 import CommentSection from './CommentSection.jsx';
+import ActivityFeed from '../activity/ActivityFeed.jsx';
 
 // task 가 있으면 수정, 없으면 생성. members 는 담당자 후보(프로젝트 멤버).
 export default function TaskModal({
@@ -164,6 +165,9 @@ export default function TaskModal({
         </div>
       </form>
       {editing && <CommentSection taskId={task.id} ownerId={ownerId} readOnly={readOnly} />}
+      {editing && (
+        <ActivityFeed projectId={projectId} taskId={task.id} title="변경 이력" limit={10} />
+      )}
     </Modal>
   );
 }
