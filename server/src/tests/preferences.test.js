@@ -5,6 +5,7 @@ import { bearer, register } from './helpers/setup.js';
 import {
   ACCENTS,
   DEFAULT_PREFERENCES,
+  NOTIFICATION_KEYS,
   DENSITIES,
   THEMES,
   VIEWS,
@@ -13,6 +14,7 @@ import {
 import {
   ACCENTS as CLIENT_ACCENTS,
   DENSITIES as CLIENT_DENSITIES,
+  NOTIFICATIONS as CLIENT_NOTIFICATIONS,
   THEMES as CLIENT_THEMES,
   VIEWS as CLIENT_VIEWS,
 } from '../../../client/src/constants/preferences.js';
@@ -71,6 +73,7 @@ describe('설정 저장', () => {
       accent: 'teal',
       density: 'compact',
       defaultView: 'board',
+      notifications: DEFAULT_PREFERENCES.notifications,
     });
     expect((await me()).preferences).toEqual(next.body.user.preferences);
   });
@@ -101,6 +104,10 @@ describe('설정 저장', () => {
       { theme: 'dark', extra: 1 },
       { theme: 123 },
       { theme: null },
+      { notifications: {} },
+      { notifications: { assigned: 'no' } },
+      { notifications: { sms: true } },
+      { notifications: true },
     ];
     for (const body of bad) {
       expect((await patch(body)).status, JSON.stringify(body)).toBe(400);
@@ -129,6 +136,38 @@ describe('설정 저장', () => {
   });
 });
 
+describe('알림 설정', () => {
+  it('키 단위로 병합되어 나머지 알림 설정은 유지된다', async () => {
+    const first = await patch({ notifications: { comment: false } });
+    expect(first.body.user.preferences.notifications).toEqual({
+      assigned: true,
+      due: true,
+      comment: false,
+      mention: true,
+    });
+    const second = await patch({ notifications: { mention: false }, theme: 'dark' });
+    expect(second.body.user.preferences.notifications).toEqual({
+      assigned: true,
+      due: true,
+      comment: false,
+      mention: false,
+    });
+    expect(second.body.user.preferences.theme).toBe('dark');
+    const third = await patch({ notifications: { comment: true } });
+    expect(third.body.user.preferences.notifications.comment).toBe(true);
+    expect(third.body.user.preferences.notifications.mention).toBe(false);
+  });
+
+  it('withDefaults 는 알림 설정에서 불리언이 아닌 값을 기본값으로 대체한다', () => {
+    expect(withDefaults({ notifications: { assigned: 'x', due: false } }).notifications).toEqual({
+      assigned: true,
+      due: false,
+      comment: true,
+      mention: true,
+    });
+  });
+});
+
 describe('withDefaults / 클라이언트 목록', () => {
   it('저장된 값이 허용 목록에 없으면 기본값으로 대체하고, 없는 값에도 안전하다', () => {
     expect(withDefaults({ theme: 'neon', accent: 'blue', extra: 1 })).toEqual({
@@ -144,5 +183,6 @@ describe('withDefaults / 클라이언트 목록', () => {
     expect(CLIENT_ACCENTS.map((t) => t.value)).toEqual(ACCENTS);
     expect(CLIENT_DENSITIES.map((t) => t.value)).toEqual(DENSITIES);
     expect(CLIENT_VIEWS.map((t) => t.value)).toEqual(VIEWS);
+    expect(CLIENT_NOTIFICATIONS.map((t) => t.value)).toEqual(NOTIFICATION_KEYS);
   });
 });

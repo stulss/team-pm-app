@@ -27,11 +27,28 @@ export const VIEWS = [
   { value: 'timeline', label: '타임라인' },
 ];
 
+// 알림 종류별 받기 여부(앱 안 알림). key 는 서버의 NOTIFICATION_KEYS 와 같다.
+export const NOTIFICATIONS = [
+  { value: 'assigned', label: '작업 배정', hint: '나에게 작업이 배정되면 알립니다.' },
+  {
+    value: 'due',
+    label: '마감 임박·지연',
+    hint: '내 작업의 마감이 다가오거나 지났을 때 하루 한 번 알립니다.',
+  },
+  {
+    value: 'comment',
+    label: '댓글',
+    hint: '내가 맡았거나 만든 작업에 새 댓글·답글이 달리면 알립니다.',
+  },
+  { value: 'mention', label: '멘션', hint: '댓글이나 채팅에서 누군가 나를 @로 언급하면 알립니다.' },
+];
+
 export const DEFAULT_PREFERENCES = {
   theme: 'system',
   accent: 'indigo',
   density: 'comfortable',
   defaultView: 'board',
+  notifications: { assigned: true, due: true, comment: true, mention: true },
 };
 
 // 화면에 적용한다: <html> 의 data 속성이 CSS 토큰을 바꾼다. 로그인 전에도 깜빡임 없이 쓰려고

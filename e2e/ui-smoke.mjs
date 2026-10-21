@@ -1819,7 +1819,8 @@ try {
       const second = await selected();
       if (first === second) throw new Error('선택이 옮겨지지 않음');
       await rtManager.keyboard.press('ArrowUp');
-      if ((await selected()) !== first) throw new Error('위로 돌아오지 않음');
+      const third = await selected();
+      if (third !== first) throw new Error(`위로 돌아오지 않음: ${first} → ${second} → ${third}`);
       await rtManager.keyboard.type('사용자');
       await option(rtManager, /통합검색 결과 전체 보기/).waitFor(); // 목록이 입력에 맞게 갱신된 뒤에 확인한다
       if ((await option(rtManager, /사용자 관리/).count()) !== 0) {
@@ -1957,10 +1958,127 @@ try {
     await setPage.getByRole('button', { name: '이름 저장' }).click();
     await setPage.locator('.side-user-info').getByText('ui-설정바꾼이름').waitFor();
   });
+  // ---- 알림 설정·프로젝트 설정 (M23·M24): 같은 전용 계정으로 이어서 확인한다
+  let memberToken;
+  const unreadOf = async () => {
+    const token = await apiLogin('settings');
+    return (await apiCall('GET', '/notifications/unread-count', token)).body.count;
+  };
+  const assignToSettingsUser = async (title, projectId = settingsProjectId) => {
+    const ownerToken = await apiLogin('settings');
+    const me = (await apiCall('GET', '/auth/me', ownerToken)).body.user;
+    const r = await apiCall('POST', `/projects/${projectId}/tasks`, memberToken, {
+      title,
+      assigneeId: me.id,
+    });
+    if (r.status !== 201) throw new Error(`작업 생성 실패: ${r.status}`);
+  };
+  await step(
+    '알림 설정: 작업 배정 알림을 끄면 새 배정 알림이 오지 않고, 켜면 다시 온다',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const ownerToken = await apiLogin('settings');
+      memberToken = await apiLogin('member');
+      const memberId = (await apiCall('GET', '/auth/me', memberToken)).body.user.id;
+      const added = await apiCall('POST', `/projects/${settingsProjectId}/members`, ownerToken, {
+        userId: memberId,
+      });
+      if (added.status !== 201) throw new Error(`멤버 추가 실패: ${added.status}`);
+
+      await setPage.goto(`${BASE}/settings`);
+      const sw = setPage.getByRole('switch', { name: '작업 배정 알림 받기' });
+      await sw.waitFor();
+      const base = await unreadOf();
+      await assignToSettingsUser('알림 켠 상태 배정');
+      await pollUntil(async () => (await unreadOf()) === base + 1, '켠 상태에서는 알림이 옴');
+
+      await sw.click();
+      await pollUntil(async () => !(await sw.isChecked()), '배정 알림 꺼짐');
+      await setPage.getByRole('status').filter({ hasText: '저장했습니다' }).first().waitFor();
+      await sw.locator('xpath=ancestor::label').getByText('꺼짐').waitFor();
+      await assignToSettingsUser('알림 끈 상태 배정');
+      await new Promise((r) => setTimeout(r, 600));
+      if ((await unreadOf()) !== base + 1) throw new Error('끈 알림이 만들어짐');
+
+      await sw.click();
+      await pollUntil(async () => sw.isChecked(), '배정 알림 켜짐');
+      await setPage.getByRole('status').filter({ hasText: '저장했습니다' }).first().waitFor();
+      await assignToSettingsUser('알림 다시 켠 뒤 배정');
+      await pollUntil(async () => (await unreadOf()) === base + 2, '다시 켜면 알림이 옴');
+    },
+  );
+  await step(
+    '프로젝트 설정: 알림 끄기·고정이 목록·사이드바·헤더에 반영되고 알림이 차단됨',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const ownerToken = await apiLogin('settings');
+      // 더 최근에 만든 두 번째 프로젝트: 고정 전에는 이 프로젝트가 사이드바 맨 위
+      const second = await apiCall('POST', '/projects', ownerToken, {
+        name: `ui-${run}-설정확인2`,
+      });
+      const firstName = `ui-${run}-설정확인`;
+      const secondName = `ui-${run}-설정확인2`;
+
+      await setPage.goto(`${BASE}/settings`);
+      const projects = setPage.getByRole('region', { name: '프로젝트' });
+      await projects.getByRole('switch', { name: `${firstName} 알림 끄기` }).waitFor();
+      const side = setPage.getByRole('navigation', { name: '내 프로젝트' });
+      const order = async () => (await side.locator('a').allTextContents()).map((t) => t.trim());
+      await pollUntil(
+        async () => (await order())[0] === secondName,
+        '고정 전: 최신 프로젝트가 먼저',
+      );
+
+      // 오래된 첫 프로젝트를 고정 → 사이드바 맨 위로
+      const pinSwitch = projects.getByRole('switch', { name: `${firstName} 고정` });
+      await pinSwitch.click();
+      await pollUntil(async () => pinSwitch.isChecked(), '고정 스위치 켜짐');
+      await pollUntil(
+        async () => (await order())[0] === firstName,
+        '고정한 프로젝트가 사이드바 맨 위',
+      );
+      // 알림 끄기 → 사이드바에 표시되고, 배정 알림이 만들어지지 않는다
+      const muteSwitch = projects.getByRole('switch', { name: `${firstName} 알림 끄기` });
+      await muteSwitch.click();
+      await pollUntil(async () => muteSwitch.isChecked(), '알림 끄기 스위치 켜짐');
+      await pollUntil(
+        async () =>
+          (await side.locator('a', { hasText: firstName }).locator('.side-flag').count()) === 2,
+        '사이드바에 고정·음소거 표시',
+      );
+      const base = await unreadOf();
+      await assignToSettingsUser('음소거한 프로젝트 배정');
+      await new Promise((r) => setTimeout(r, 600));
+      if ((await unreadOf()) !== base) throw new Error('음소거한 프로젝트의 알림이 만들어짐');
+      // 다른 프로젝트(두 번째)에서는 계속 온다 — 멤버로 추가해야 작업을 만들 수 있다
+      const memberId = (await apiCall('GET', '/auth/me', memberToken)).body.user.id;
+      await apiCall('POST', `/projects/${second.body.id}/members`, ownerToken, {
+        userId: memberId,
+      });
+      await assignToSettingsUser('다른 프로젝트 배정', second.body.id);
+      await pollUntil(async () => (await unreadOf()) === base + 1, '다른 프로젝트 알림은 계속 옴');
+
+      // 프로젝트 화면 헤더의 토글도 같은 설정을 보여 주고 바꾼다
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      const header = setPage.locator('.project-actions');
+      await header.getByRole('button', { name: '고정 해제' }).waitFor();
+      await header.getByRole('button', { name: '알림 켜기' }).click();
+      await header.getByRole('button', { name: '알림 끄기' }).waitFor();
+      await header.getByRole('button', { name: '고정 해제' }).click();
+      await header.getByRole('button', { name: '고정하기' }).waitFor();
+
+      // 목록 페이지: 고정을 풀면 최신 프로젝트가 다시 먼저
+      await setPage.goto(`${BASE}/`);
+      await setPage.getByRole('main').getByRole('link', { name: secondName }).waitFor();
+      const firstCard = await setPage.locator('main .project-card h2').first().textContent();
+      if (firstCard?.trim() !== secondName) throw new Error(`목록 첫 카드: ${firstCard}`);
+    },
+  );
   await step(
     '설정: 비밀번호 변경은 현재 비밀번호 검증·확인 일치가 필요하고, 바꾼 뒤 새 비밀번호로만 로그인됨',
     async () => {
       if (!setPage) throw new Error('준비 단계 실패');
+      await setPage.goto(`${BASE}/settings`);
       const card = setPage.getByRole('region', { name: '보안' });
       await card.getByLabel('현재 비밀번호').fill('wrong-password');
       await card.getByLabel('새 비밀번호 (8자 이상)').fill(NEW_PASSWORD);

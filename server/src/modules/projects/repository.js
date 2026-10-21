@@ -11,6 +11,9 @@ export const toProject = (row) =>
     updatedAt: row.updated_at,
     ...(row.member_count !== undefined && { memberCount: row.member_count }),
     ...(row.owner_name !== undefined && { ownerName: row.owner_name }),
+    ...(row.my_pinned !== undefined && {
+      mySettings: { muted: row.my_muted, pinned: row.my_pinned },
+    }),
   };
 
 export const toMember = (row) => ({
@@ -25,13 +28,11 @@ export const toMember = (row) => ({
 
 // Admin 은 전체, 그 외는 멤버로 속한 프로젝트만.
 export async function listForUser(user, { status, limit, offset }) {
-  const params = [];
+  const params = [user.id];
   const where = [];
-  let join = '';
-  if (user.role !== 'admin') {
-    params.push(user.id);
-    join = `JOIN project_members me ON me.project_id = p.id AND me.user_id = $${params.length}`;
-  }
+  // 내 멤버 행(없을 수 있음: 멤버가 아닌 Admin). 일반 사용자는 멤버인 프로젝트만 본다.
+  const join = 'LEFT JOIN project_members me ON me.project_id = p.id AND me.user_id = $1';
+  if (user.role !== 'admin') where.push('me.user_id IS NOT NULL');
   if (status) {
     params.push(status);
     where.push(`p.status = $${params.length}`);
@@ -40,12 +41,13 @@ export async function listForUser(user, { status, limit, offset }) {
 
   const { rows } = await query(
     `SELECT p.*, o.name AS owner_name,
+            COALESCE(me.muted, false) AS my_muted, COALESCE(me.pinned, false) AS my_pinned,
             (SELECT count(*)::int FROM project_members m WHERE m.project_id = p.id) AS member_count
      FROM projects p
      JOIN users o ON o.id = p.owner_id
      ${join}
      ${whereSql}
-     ORDER BY p.created_at DESC
+     ORDER BY COALESCE(me.pinned, false) DESC, p.created_at DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
@@ -162,4 +164,24 @@ export async function filterActiveUserIds(ids) {
     ids,
   ]);
   return rows.map((r) => r.id);
+}
+
+export async function getMySettings(projectId, userId) {
+  const { rows } = await query(
+    'SELECT muted, pinned FROM project_members WHERE project_id = $1 AND user_id = $2',
+    [projectId, userId],
+  );
+  return rows[0] ?? { muted: false, pinned: false };
+}
+
+// 멤버가 아니면 null. 받은 키만 바꾼다.
+export async function updateMySettings(projectId, userId, { muted, pinned }) {
+  const { rows } = await query(
+    `UPDATE project_members
+        SET muted = COALESCE($3, muted), pinned = COALESCE($4, pinned)
+      WHERE project_id = $1 AND user_id = $2
+      RETURNING muted, pinned`,
+    [projectId, userId, muted ?? null, pinned ?? null],
+  );
+  return rows[0] ?? null;
 }

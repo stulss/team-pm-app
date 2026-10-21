@@ -3124,6 +3124,198 @@ try {
     people.member.token = changed.body.accessToken;
   }
 
+  // --- 알림 설정 (M23): 끈 알림 종류는 insertMany 의 SQL(JOIN users + CASE)에서 걸러진다
+  {
+    const npid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-notif', memberIds: [people.member.id, people.manager2.id] },
+      })
+    ).body.id;
+    const noti = async (who) =>
+      (await call('GET', '/notifications?limit=100', { token: t(who) })).body.data;
+    const setPref = (who, notifications) =>
+      call('PATCH', '/users/me/preferences', { token: t(who), body: { notifications } });
+    const mk = async (title, body = {}) =>
+      (
+        await call('POST', `/projects/${npid}/tasks`, {
+          token: t('manager'),
+          body: { title, ...body },
+        })
+      ).body;
+    const count = async (who, type) => (await noti(who)).filter((n) => n.type === type).length;
+
+    const merged1 = await setPref('member', { assigned: false });
+    const merged2 = await setPref('member', { comment: false });
+    check(
+      '알림 설정은 키 단위로 병합 저장된다 (jsonb 중첩 병합)',
+      merged1.status === 200 &&
+        merged2.body.user.preferences.notifications.assigned === false &&
+        merged2.body.user.preferences.notifications.comment === false &&
+        merged2.body.user.preferences.notifications.mention === true,
+    );
+
+    // 배정: 끈 사람(member)은 안 오고 켠 사람(manager2)은 온다 — 한 번의 생성 흐름에서 각자 판단
+    const before = {
+      member: await count('member', 'task_assigned'),
+      m2: await count('manager2', 'task_assigned'),
+    };
+    const t1 = await mk('smoke-notif 배정1', { assigneeId: people.member.id });
+    await mk('smoke-notif 배정2', { assigneeId: people.manager2.id });
+    check(
+      '배정 알림을 끈 사용자에게는 만들어지지 않고, 켠 사용자에게는 만들어진다',
+      (await count('member', 'task_assigned')) === before.member &&
+        (await count('manager2', 'task_assigned')) === before.m2 + 1,
+    );
+
+    // 댓글: member(담당자)의 댓글 알림이 꺼져 있다
+    const cBefore = await count('member', 'comment_added');
+    await call('POST', `/tasks/${t1.id}/comments`, {
+      token: t('manager2'),
+      body: { body: '댓글' },
+    });
+    check(
+      '댓글 알림을 끈 담당자에게는 댓글 알림이 가지 않는다',
+      (await count('member', 'comment_added')) === cBefore,
+    );
+
+    // 멘션: 켜져 있으면 오고(채팅), 끄면 안 온다
+    const mBefore = await count('member', 'mention');
+    await call('POST', `/projects/${npid}/chat`, {
+      token: t('manager'),
+      body: { body: '@smoke-member 확인', mentionIds: [people.member.id] },
+    });
+    const mentionOn = (await count('member', 'mention')) === mBefore + 1;
+    await setPref('member', { mention: false });
+    await call('POST', `/projects/${npid}/chat`, {
+      token: t('manager'),
+      body: { body: '@smoke-member 또', mentionIds: [people.member.id] },
+    });
+    check(
+      '멘션 알림은 켜면 오고 끄면 오지 않는다',
+      mentionOn && (await count('member', 'mention')) === mBefore + 1,
+    );
+
+    // 마감(크론): due 를 끈 사용자는 임박·지연 알림이 없다. 켠 사용자는 받는다.
+    const day = (n) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return d.toLocaleDateString('sv-SE');
+    };
+    await setPref('member', { due: false });
+    await mk('smoke-notif 마감 끈 사람', { assigneeId: people.member.id, dueDate: day(-1) });
+    await mk('smoke-notif 마감 켠 사람', { assigneeId: people.manager2.id, dueDate: day(-1) });
+    const cronRes = await fetch(BASE.replace('/api/v1', '') + '/api/cron/daily', {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    check(
+      '마감 알림(due)을 끈 사용자에게는 크론이 알림을 만들지 않고 켠 사용자에게는 만든다',
+      cronRes.status === 200 &&
+        (await noti('member')).every((n) => n.type !== 'task_overdue' && n.type !== 'due_soon') &&
+        (await noti('manager2')).some((n) => n.type === 'task_overdue'),
+    );
+
+    await call('DELETE', `/projects/${npid}`, { token: t('manager') });
+  }
+
+  // --- 프로젝트 설정 (M24): 내 멤버 행의 muted·pinned, 목록 정렬 SQL, 음소거 알림 차단 SQL 을 실제 DB 로 확인
+  {
+    // 앞선 알림 설정 검사가 바꿔 둔 member 의 설정을 되돌린다
+    await db.query(`UPDATE users SET preferences = '{}'::jsonb WHERE id = $1`, [people.member.id]);
+    const mkP = async (name) =>
+      (
+        await call('POST', '/projects', {
+          token: t('manager'),
+          body: { name, memberIds: [people.member.id, people.manager2.id] },
+        })
+      ).body.id;
+    const p1 = await mkP('smoke-pset-1');
+    const p2 = await mkP('smoke-pset-2');
+    const setS = (who, id, body) =>
+      call('PATCH', `/projects/${id}/my-settings`, { token: t(who), body });
+    const names = async (who) =>
+      (await call('GET', '/projects?limit=100', { token: t(who) })).body.data
+        .filter((p) => p.name.startsWith('smoke-pset-'))
+        .map((p) => p.name);
+
+    check(
+      '기본 mySettings 는 둘 다 꺼짐 (목록·상세)',
+      (await call('GET', `/projects/${p1}`, { token: t('member') })).body.mySettings.pinned ===
+        false &&
+        (await call('GET', '/projects?limit=100', { token: t('member') })).body.data.every(
+          (p) => p.mySettings && p.mySettings.muted === false,
+        ),
+    );
+    check(
+      '최신 프로젝트가 먼저 (고정 전)',
+      (await names('member')).join() === 'smoke-pset-2,smoke-pset-1',
+    );
+    const pinned = await setS('member', p1, { pinned: true });
+    check(
+      '고정하면 목록 맨 위로 오고(SQL ORDER BY), 다른 사용자의 순서는 그대로',
+      pinned.status === 200 &&
+        (await names('member')).join() === 'smoke-pset-1,smoke-pset-2' &&
+        (await names('manager2')).join() === 'smoke-pset-2,smoke-pset-1',
+    );
+    const partial = await setS('member', p1, { muted: true });
+    check(
+      '일부만 바꾸면 나머지는 유지된다',
+      partial.body.muted === true && partial.body.pinned === true,
+    );
+    check(
+      '허용되지 않은 키·빈 객체는 400, 비멤버·멤버 아닌 Admin 은 403',
+      (await setS('member', p1, {})).status === 400 &&
+        (await setS('member', p1, { admin: true })).status === 400 &&
+        (await setS('outsider', p1, { muted: true })).status === 403 &&
+        (await setS('admin', p1, { muted: true })).status === 403,
+    );
+    const adminList = await call('GET', '/projects?limit=100', { token: t('admin') });
+    check(
+      'Admin 은 멤버가 아니어도 목록에서 모두 보고 mySettings 는 꺼짐 (LEFT JOIN)',
+      adminList.status === 200 &&
+        adminList.body.data.filter((p) => p.name.startsWith('smoke-pset-')).length === 2 &&
+        adminList.body.data.every((p) => p.mySettings.muted === false),
+    );
+
+    // 음소거(member, p1): 작업 배정·댓글·채팅 멘션은 오지 않고, 다른 프로젝트(p2)는 온다
+    const cnt = async (who, type) =>
+      (await call('GET', '/notifications?limit=100', { token: t(who) })).body.data.filter(
+        (n) => n.type === type,
+      ).length;
+    const a0 = await cnt('member', 'task_assigned');
+    const m0 = await cnt('member', 'mention');
+    const mkT = async (id, title) =>
+      (
+        await call('POST', `/projects/${id}/tasks`, {
+          token: t('manager'),
+          body: { title, assigneeId: people.member.id },
+        })
+      ).body;
+    const tMuted = await mkT(p1, 'smoke-pset 음소거 프로젝트');
+    await call('POST', `/projects/${p1}/chat`, {
+      token: t('manager'),
+      body: { body: '@smoke-member 음소거', mentionIds: [people.member.id] },
+    });
+    await call('POST', `/tasks/${tMuted.id}/comments`, {
+      token: t('manager2'),
+      body: { body: '댓글' },
+    });
+    check(
+      '음소거한 프로젝트의 배정·채팅 멘션·댓글 알림은 만들어지지 않는다',
+      (await cnt('member', 'task_assigned')) === a0 &&
+        (await cnt('member', 'mention')) === m0 &&
+        (await cnt('member', 'comment_added')) === 0,
+    );
+    await mkT(p2, 'smoke-pset 일반 프로젝트');
+    check('다른 프로젝트의 알림은 계속 온다', (await cnt('member', 'task_assigned')) === a0 + 1);
+    await setS('member', p1, { muted: false });
+    await mkT(p1, 'smoke-pset 음소거 해제 후');
+    check('음소거를 풀면 다시 온다', (await cnt('member', 'task_assigned')) === a0 + 2);
+
+    await call('DELETE', `/projects/${p1}`, { token: t('manager') });
+    await call('DELETE', `/projects/${p2}`, { token: t('manager') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

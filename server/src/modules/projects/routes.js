@@ -61,8 +61,21 @@ projectsRouter.post('/', validate(createBody), async (req, res) => {
 });
 
 projectsRouter.get('/:id', requireProjectMember(), async (req, res) => {
-  res.json(await service.detail(req.project));
+  res.json(await service.detail(req.project, req.user.id));
 });
+
+// 내 프로젝트 설정(알림 음소거·고정). 본인에게만 적용되는 개인 설정이라 보관된 프로젝트에서도 바꿀 수 있다.
+const mySettingsBody = z
+  .strictObject({ muted: z.boolean().optional(), pinned: z.boolean().optional() })
+  .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' });
+projectsRouter.patch(
+  '/:id/my-settings',
+  requireProjectMember(),
+  validate(mySettingsBody),
+  async (req, res) => {
+    res.json(await service.updateMySettings(req.project, req.user, req.body));
+  },
+);
 
 projectsRouter.patch('/:id', requireProjectManager(), validate(patchBody), async (req, res) => {
   const prev = { name: req.project.name, status: req.project.status }; // 수정 전 값

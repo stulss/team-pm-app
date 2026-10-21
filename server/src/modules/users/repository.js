@@ -104,7 +104,13 @@ export async function markEmailVerified(id) {
 // 받은 키만 덮어쓴다(jsonb 병합). 허용 키 검증은 라우트의 zod 가 한다.
 export async function updatePreferences(id, patch) {
   const { rows } = await query(
-    `UPDATE users SET preferences = preferences || $2::jsonb, updated_at = now()
+    `UPDATE users
+       SET preferences = (preferences || ($2::jsonb - 'notifications'))
+             || CASE WHEN $2::jsonb ? 'notifications'
+                     THEN jsonb_build_object('notifications',
+                            COALESCE(preferences->'notifications', '{}'::jsonb) || ($2::jsonb->'notifications'))
+                     ELSE '{}'::jsonb END,
+           updated_at = now()
      WHERE id = $1 RETURNING ${PUBLIC_COLUMNS}`,
     [id, JSON.stringify(patch)],
   );

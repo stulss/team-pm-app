@@ -64,7 +64,17 @@ export function AuthProvider({ children }) {
       // 화면에는 먼저 적용하고(낙관적), 서버 저장이 실패하면 되돌린다.
       async savePreferences(patch) {
         const before = user;
-        setUser({ ...user, preferences: { ...user.preferences, ...patch } });
+        const { notifications, ...rest } = patch;
+        setUser({
+          ...user,
+          preferences: {
+            ...user.preferences,
+            ...rest,
+            ...(notifications && {
+              notifications: { ...user.preferences.notifications, ...notifications },
+            }),
+          },
+        });
         try {
           const data = await updatePreferences(patch);
           setUser(data.user);

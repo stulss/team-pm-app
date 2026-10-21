@@ -133,7 +133,11 @@ export const usersRepo = {
   async updatePreferences(id, patch) {
     const u = store.users.find((x) => x.id === id);
     if (!u) return null;
-    u.preferences = { ...(u.preferences ?? {}), ...patch };
+    const { notifications, ...rest } = patch;
+    u.preferences = { ...(u.preferences ?? {}), ...rest };
+    if (notifications) {
+      u.preferences.notifications = { ...(u.preferences.notifications ?? {}), ...notifications };
+    }
     return pub(u);
   },
   async updateProfile(id, { name, passwordHash }) {
@@ -776,19 +780,37 @@ export const projectsRepo = {
     return store.members.filter((m) => m.project_id === projectId).length;
   },
   async listForUser(user, { status, limit, offset }) {
+    const mine = (p) => store.members.find((m) => m.project_id === p.id && m.user_id === user.id);
     let rows = store.projects.filter(
       (p) =>
         (user.role === 'admin' ||
           store.members.some((m) => m.project_id === p.id && m.user_id === user.id)) &&
         (!status || p.status === status),
     );
-    rows = [...rows].sort((a, b) => b.created_at - a.created_at);
+    rows = [...rows].sort(
+      (a, b) =>
+        Number(Boolean(mine(b)?.pinned)) - Number(Boolean(mine(a)?.pinned)) ||
+        b.created_at - a.created_at,
+    );
     const withExtras = rows.map((p) => ({
       ...p,
+      my_muted: Boolean(mine(p)?.muted),
+      my_pinned: Boolean(mine(p)?.pinned),
       owner_name: store.users.find((u) => u.id === p.owner_id)?.name,
       member_count: store.members.filter((m) => m.project_id === p.id).length,
     }));
     return { rows: withExtras.slice(offset, offset + limit), total: rows.length };
+  },
+  async getMySettings(projectId, userId) {
+    const m = store.members.find((x) => x.project_id === projectId && x.user_id === userId);
+    return { muted: Boolean(m?.muted), pinned: Boolean(m?.pinned) };
+  },
+  async updateMySettings(projectId, userId, { muted, pinned }) {
+    const m = store.members.find((x) => x.project_id === projectId && x.user_id === userId);
+    if (!m) return null;
+    if (muted !== undefined) m.muted = muted;
+    if (pinned !== undefined) m.pinned = pinned;
+    return { muted: Boolean(m.muted), pinned: Boolean(m.pinned) };
   },
   async findById(id) {
     return store.projects.find((p) => p.id === id) ?? null;
@@ -1134,7 +1156,24 @@ const withNotificationNames = (n) => ({
 });
 
 export const notificationsRepo = {
+  // 실제 insertMany 와 같은 규칙: 받는 사람이 끈 알림 종류는 만들지 않는다
   async insertMany(rows) {
+    const KEY = {
+      task_assigned: 'assigned',
+      due_soon: 'due',
+      task_overdue: 'due',
+      comment_added: 'comment',
+      mention: 'mention',
+    };
+    const projectOf = (r) => r.projectId ?? store.tasks.find((t) => t.id === r.taskId)?.project_id;
+    rows = rows.filter(
+      (r) =>
+        store.users.find((u) => u.id === r.userId)?.preferences?.notifications?.[KEY[r.type]] !==
+          false &&
+        !store.members.some(
+          (m) => m.user_id === r.userId && m.project_id === projectOf(r) && m.muted,
+        ),
+    );
     return rows.map((r, i) => {
       const row = {
         id: crypto.randomUUID(),

@@ -3,6 +3,9 @@ import { http } from './http.js';
 const data = (res) => res.data;
 
 export const listProjects = (params) => http.get('/projects', { params }).then(data);
+// 내 프로젝트 설정(알림 음소거·고정). 일부만 보낸다.
+export const updateMySettings = (id, patch) =>
+  http.patch(`/projects/${id}/my-settings`, patch).then(data);
 export const getProject = (id) => http.get(`/projects/${id}`).then(data);
 export const createProject = (body) => http.post('/projects', body).then(data);
 export const updateProject = (id, body) => http.patch(`/projects/${id}`, body).then(data);

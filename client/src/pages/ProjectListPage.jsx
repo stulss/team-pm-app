@@ -93,6 +93,18 @@ export default function ProjectListPage() {
               <h2>
                 <Link to={`/projects/${p.id}`}>{p.name}</Link>
               </h2>
+              {p.mySettings?.pinned && (
+                <span className="badge" title="고정한 프로젝트">
+                  <Icon name="pin" size={12} />
+                  고정
+                </span>
+              )}
+              {p.mySettings?.muted && (
+                <span className="badge" title="알림을 꺼 둔 프로젝트">
+                  <Icon name="bellOff" size={12} />
+                  알림 꺼짐
+                </span>
+              )}
             </div>
             {p.description && <p className="muted clamp">{p.description}</p>}
             <div className="project-card-meta">

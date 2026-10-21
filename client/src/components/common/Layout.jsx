@@ -97,6 +97,8 @@ export default function Layout() {
                   <NavLink to={`/projects/${p.id}`} title={p.name}>
                     <Avatar name={p.name} size="xs" shape="square" />
                     <span className="side-project-name">{p.name}</span>
+                    {p.mySettings?.pinned && <Icon name="pin" size={13} className="side-flag" />}
+                    {p.mySettings?.muted && <Icon name="bellOff" size={13} className="side-flag" />}
                   </NavLink>
                 </li>
               ))}

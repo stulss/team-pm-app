@@ -156,7 +156,14 @@ export default function CommandPalette({ open, onClose }) {
     if (e.nativeEvent.isComposing) return; // 한글 조합 중의 Enter·화살표는 입력 확정용이다
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      setActive(moveIndex(current, e.key === 'ArrowDown' ? 1 : -1, items.length));
+      // 이전 선택에서 이어 계산해, 키를 빠르게 연속으로 눌러도 렌더링 전의 값으로 어긋나지 않게 한다
+      setActive((a) =>
+        moveIndex(
+          Math.min(a, Math.max(items.length - 1, 0)),
+          e.key === 'ArrowDown' ? 1 : -1,
+          items.length,
+        ),
+      );
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (items[current]) run(items[current]);

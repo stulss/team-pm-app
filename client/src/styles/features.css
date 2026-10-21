@@ -1499,3 +1499,104 @@ dialog.palette::backdrop {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 스위치(켜기/끄기) */
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 550;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  z-index: 1; /* 시각용 트랙이 투명한 입력을 가리지 않게 */
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background-color 0.15s;
+}
+
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s;
+}
+
+.switch input:checked + .switch-track {
+  background: var(--primary);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+}
+
+.switch:has(input:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 999px;
+}
+
+/* 설정: 프로젝트별 개인 설정 목록 */
+.project-settings {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-settings li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-4);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--border);
+}
+
+.project-settings li:first-child {
+  border-top: 0;
+}
+
+.project-settings-name {
+  display: flex;
+  align-items: center;
+  flex: 1 1 12rem;
+  gap: var(--s-2);
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.side-flag {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.side-flag + .side-flag {
+  margin-left: 0;
+}

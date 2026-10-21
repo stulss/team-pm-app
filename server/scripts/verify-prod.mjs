@@ -60,6 +60,9 @@ async function readChecks(label, who) {
   check(
     `${label}: 내 설정(preferences)에 기본값이 채워져 있음 (M22)`,
     Boolean(prefs) &&
+      ['assigned', 'due', 'comment', 'mention'].every(
+        (k) => typeof prefs.notifications?.[k] === 'boolean',
+      ) &&
       ['system', 'light', 'dark'].includes(prefs.theme) &&
       ['indigo', 'blue', 'teal', 'green', 'rose', 'orange'].includes(prefs.accent) &&
       ['comfortable', 'compact'].includes(prefs.density) &&
@@ -71,6 +74,12 @@ async function readChecks(label, who) {
     projects.status === 200 && Array.isArray(projects.body?.data),
   );
   const mine = (projects.body?.data ?? []).map((p) => p.id);
+  check(
+    `${label}: 프로젝트 목록에 mySettings(고정·음소거)가 있음 (M24)`,
+    (projects.body?.data ?? []).every(
+      (p) => typeof p.mySettings?.muted === 'boolean' && typeof p.mySettings?.pinned === 'boolean',
+    ),
+  );
   console.log(`      (${label}: 접근 가능한 프로젝트 ${mine.length}개)`);
 
   const feed = await call('GET', '/feed', { token: t });

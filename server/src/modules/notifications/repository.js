@@ -29,7 +29,27 @@ export async function insertMany(rows, client = { query }) {
   if (rows.length === 0) return [];
   const { rows: created } = await client.query(
     `INSERT INTO notifications (user_id, type, task_id, actor_id, message, project_id)
-     SELECT * FROM unnest($1::uuid[], $2::notification_type[], $3::uuid[], $4::uuid[], $5::text[], $6::uuid[])
+     SELECT i.user_id, i.type, i.task_id, i.actor_id, i.message, i.project_id
+     FROM unnest($1::uuid[], $2::notification_type[], $3::uuid[], $4::uuid[], $5::text[], $6::uuid[])
+          AS i(user_id, type, task_id, actor_id, message, project_id)
+     JOIN users u ON u.id = i.user_id
+     -- 받는 사람이 설정에서 끈 알림 종류는 만들지 않는다 (설정이 없으면 받는다)
+     WHERE COALESCE(
+             (u.preferences->'notifications'->>(
+                CASE i.type
+                  WHEN 'task_assigned' THEN 'assigned'
+                  WHEN 'due_soon' THEN 'due'
+                  WHEN 'task_overdue' THEN 'due'
+                  WHEN 'comment_added' THEN 'comment'
+                  WHEN 'mention' THEN 'mention'
+                END))::boolean,
+             true)
+       -- 받는 사람이 음소거한 프로젝트(작업이 속한 프로젝트 또는 직접 지정한 프로젝트)의 알림도 만들지 않는다
+       AND NOT EXISTS (
+             SELECT 1 FROM project_members pm
+              WHERE pm.user_id = i.user_id AND pm.muted
+                AND pm.project_id = COALESCE(i.project_id,
+                                             (SELECT t.project_id FROM tasks t WHERE t.id = i.task_id)))
      RETURNING id`,
     [
       rows.map((r) => r.userId),

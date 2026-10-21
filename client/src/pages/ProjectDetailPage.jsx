@@ -8,6 +8,7 @@ import {
   deleteProject,
   getProject,
   removeProjectMember,
+  updateMySettings,
   updateProject,
 } from '../api/projects.js';
 import { errorMessage } from '../api/http.js';
@@ -62,6 +63,10 @@ export default function ProjectDetailPage() {
   });
   const removeMember = useMutation({
     mutationFn: (userId) => removeProjectMember(id, userId),
+    onSuccess: refresh,
+  });
+  const mySettings = useMutation({
+    mutationFn: (patch) => updateMySettings(id, patch),
     onSuccess: refresh,
   });
   const remove = useMutation({
@@ -129,40 +134,66 @@ export default function ProjectDetailPage() {
                     {project.members.length}명
                   </p>
                 </div>
-                {canManage && (
-                  <div className="project-actions">
-                    <button type="button" className="secondary" onClick={() => setEditing(true)}>
-                      <Icon name="edit" size={15} />
-                      수정
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={update.isPending}
-                      onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
-                    >
-                      <Icon name="archive" size={15} />
-                      {archived ? '보관 해제' : '보관'}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger-ghost"
-                      disabled={remove.isPending}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
-                          )
-                        ) {
-                          remove.mutate();
-                        }
-                      }}
-                    >
-                      <Icon name="trash" size={15} />
-                      삭제
-                    </button>
-                  </div>
-                )}
+                <div className="project-actions">
+                  {project.mySettings && (
+                    <>
+                      <button
+                        type="button"
+                        className="secondary"
+                        aria-pressed={project.mySettings.pinned}
+                        disabled={mySettings.isPending}
+                        onClick={() => mySettings.mutate({ pinned: !project.mySettings.pinned })}
+                      >
+                        <Icon name="pin" size={15} />
+                        {project.mySettings.pinned ? '고정 해제' : '고정하기'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        aria-pressed={project.mySettings.muted}
+                        disabled={mySettings.isPending}
+                        onClick={() => mySettings.mutate({ muted: !project.mySettings.muted })}
+                      >
+                        <Icon name={project.mySettings.muted ? 'bellOff' : 'bell'} size={15} />
+                        {project.mySettings.muted ? '알림 켜기' : '알림 끄기'}
+                      </button>
+                    </>
+                  )}
+                  {canManage && (
+                    <>
+                      <button type="button" className="secondary" onClick={() => setEditing(true)}>
+                        <Icon name="edit" size={15} />
+                        수정
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={update.isPending}
+                        onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
+                      >
+                        <Icon name="archive" size={15} />
+                        {archived ? '보관 해제' : '보관'}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-ghost"
+                        disabled={remove.isPending}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+                            )
+                          ) {
+                            remove.mutate();
+                          }
+                        }}
+                      >
+                        <Icon name="trash" size={15} />
+                        삭제
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>

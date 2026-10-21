@@ -337,8 +337,11 @@ erDiagram
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
 
+**project_members.muted / pinned** (M24 프로젝트 설정, 마이그레이션 020)
+- 멤버 **개인**의 프로젝트별 설정. `muted`(알림 음소거)가 켜진 프로젝트에서 생기는 알림(배정·댓글·멘션·마감, 채팅 멘션 포함)은 그 사람에게 **만들어지지 않는다**(`insertMany` 의 SQL 이 작업·프로젝트로 프로젝트를 찾아 확인). `pinned` 는 목록·사이드바에서 맨 위에 둔다. 다른 멤버에게는 보이지 않는다.
+
 **users.preferences** (M22 설정, 마이그레이션 019)
-- 사용자별 개인 설정을 `users.preferences`(jsonb, 기본 `{}`, `CHECK (jsonb_typeof = 'object')`)에 둔다. 계정에 저장되므로 기기를 바꿔도 유지된다. 서버가 **허용 키·값만** zod 로 받는다(임의 JSON 저장 방지): `theme`(`system`·`light`·`dark`), `accent`(`indigo`·`blue`·`teal`·`green`·`rose`·`orange`), `density`(`comfortable`·`compact`), `defaultView`(`board`·`list`·`calendar`·`timeline`). 응답의 `user.preferences` 는 저장된 값에 기본값을 채워 항상 모든 키를 가진다(저장된 값이 허용 목록에 없으면 기본값으로 대체). 이후 단계(M23 알림 설정)에서 키가 늘어난다.
+- 사용자별 개인 설정을 `users.preferences`(jsonb, 기본 `{}`, `CHECK (jsonb_typeof = 'object')`)에 둔다. 계정에 저장되므로 기기를 바꿔도 유지된다. 서버가 **허용 키·값만** zod 로 받는다(임의 JSON 저장 방지): `theme`(`system`·`light`·`dark`), `accent`(`indigo`·`blue`·`teal`·`green`·`rose`·`orange`), `density`(`comfortable`·`compact`), `defaultView`(`board`·`list`·`calendar`·`timeline`). 응답의 `user.preferences` 는 저장된 값에 기본값을 채워 항상 모든 키를 가진다(저장된 값이 허용 목록에 없으면 기본값으로 대체). `notifications`(M23)는 알림 종류별 받기 여부 `{ assigned, due, comment, mention }`(모두 기본 `true`)이며 PATCH 로 일부만 보내면 **키 단위로 병합**된다(`due` 는 마감 임박·지연 둘 다).
 
 **comments.parent_id** (M20 댓글 스레드, 마이그레이션 018)
 - 댓글에 **한 단계** 답글을 단다. `comments.parent_id`(nullable)가 원 댓글을 가리키고, `(task_id, parent_id)` → `comments(task_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 작업의 댓글에는 답글을 달 수 없게** DB 가 보장한다(이를 위해 `comments` 에 `UNIQUE (task_id, id)` 추가). `CHECK (parent_id IS NULL OR parent_id <> id)`.
@@ -432,7 +435,7 @@ erDiagram
 | PATCH | `/users/:id/role` | 역할 변경 | Admin |
 | PATCH | `/users/:id/status` | 활성/비활성 | Admin |
 | PATCH | `/users/me` | 내 프로필(이름/비밀번호) 수정 | 본인 |
-| PATCH | `/users/me/preferences` | 내 설정 일부 수정(M22) `{ theme?, accent?, density?, defaultView? }` — 빈 객체·허용되지 않은 키·값은 400. 응답 `{ user }` 의 `preferences` 는 기본값이 채워진 전체 설정 | 본인 |
+| PATCH | `/users/me/preferences` | 내 설정 일부 수정(M22) `{ theme?, accent?, density?, defaultView?, notifications?: { assigned?, due?, comment?, mention? } }` — 빈 객체·허용되지 않은 키·값은 400. 응답 `{ user }` 의 `preferences` 는 기본값이 채워진 전체 설정 | 본인 |
 
 #### Projects
 | 메서드 | 경로 | 설명 | 권한 |
@@ -507,6 +510,13 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+#### Project settings (M24)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| PATCH | `/projects/:id/my-settings` | 내 프로젝트 설정 일부 수정 `{ muted?, pinned? }` → `{ muted, pinned }` (빈 객체·허용되지 않은 키는 400) | 멤버(멤버가 아닌 Admin 은 403) |
+
+> 구현 규칙(M24): 프로젝트 목록(`GET /projects`)·상세(`GET /projects/:id`) 응답에 `mySettings: { muted, pinned }` 가 붙는다. 목록은 **고정한 프로젝트가 먼저**, 그다음 만든 순(최신 먼저)이다. 보관된 프로젝트에서도 바꿀 수 있다(개인 설정). 실시간 이벤트·활동 기록은 없다.
 
 #### Reactions (M19)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -873,8 +883,8 @@ team-pm-app/
 | **M20** | 댓글 스레드 | 댓글에 한 단계 답글, 원 댓글 작성자에게 알림(`comments.parent_id`, 마이그레이션 018, §1.2·§2.2) |
 | **M21** | Ctrl+K 명령 팔레트 | 서버 변경 없는 클라이언트 기능. `Ctrl+K`(Mac `⌘K`) 또는 상단 "빠른 실행" 버튼으로 연다. 항목: 페이지 이동(관리자만 사용자 관리), 프로젝트 화면에서는 "이 프로젝트에 작업 만들기"·"작업 보기: 보드/목록/캘린더/타임라인"(주소의 `?new=task`·`?view=` 로 전달하고 사용자가 탭을 직접 누르면 탭 선택이 우선), 활성 프로젝트로 바로 가기, 2자 이상 입력하면 기존 통합검색(`GET /search`, 권한 필터 그대로)의 작업·댓글·채팅 결과. ↑↓ 이동·Enter 실행·Esc 닫기, 한글 조합 중 Enter 는 무시 |
 | **M22** | 설정 페이지(화면 설정·내 계정) | `/settings`: 테마(시스템/라이트/다크)·포인트 색·밀도·기본 작업 보기(계정에 저장, `users.preferences`, 마이그레이션 019), 이름·비밀번호 변경(기존 `PATCH /users/me`) |
-| **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기 — 서버의 알림 생성이 설정을 따른다 |
-| **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 사이드바 고정 — 사용자·프로젝트 단위 설정 |
+| **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
+| **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 목록·사이드바 상단 고정(`project_members.muted·pinned`, 마이그레이션 020, 개인 설정, §1.2·§2.2) |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 
 > 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.

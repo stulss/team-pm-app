@@ -1,5 +1,5 @@
 import { withTransaction } from '../../config/db.js';
-import { badRequest, conflict, notFound } from '../../utils/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../utils/errors.js';
 import * as repo from './repository.js';
 import * as usersRepo from '../users/repository.js';
 import * as tasksRepo from '../tasks/repository.js';
@@ -40,12 +40,23 @@ export async function create(user, { name, description, memberIds }) {
     await repo.addMembers(client, row.id, wanted); // 생성자는 항상 멤버
     return row;
   });
-  return detail(project);
+  return detail(project, user.id);
 }
 
-export async function detail(project) {
+// userId 가 있으면 그 사용자의 개인 설정(mySettings)을 함께 돌려준다.
+export async function detail(project, userId) {
   const members = await repo.listMembers(project.id);
-  return { ...repo.toProject(project), members: members.map(repo.toMember) };
+  return {
+    ...repo.toProject(project),
+    ...(userId && { mySettings: await repo.getMySettings(project.id, userId) }),
+    members: members.map(repo.toMember),
+  };
+}
+
+export async function updateMySettings(project, user, patch) {
+  const settings = await repo.updateMySettings(project.id, user.id, patch);
+  if (!settings) throw forbidden('프로젝트 멤버만 개인 설정을 바꿀 수 있습니다.');
+  return settings;
 }
 
 export async function update(project, patch) {
