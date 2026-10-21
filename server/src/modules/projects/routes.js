@@ -9,9 +9,16 @@ import {
 import { emitToProject, emitToUser, removeUserFromProjectRoom } from '../../sockets/emitter.js';
 import { record } from '../activity/service.js';
 import * as usersRepo from '../users/repository.js';
+import { KEY_PATTERN } from './key.js';
 import * as service from './service.js';
 
 const name = z.string().trim().min(1, '프로젝트 이름을 입력해 주세요.').max(100);
+// 작업 키의 앞부분(TPM-12 의 TPM). 소문자로 보내도 대문자로 바꿔 검사한다.
+const projectKey = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(KEY_PATTERN, '프로젝트 키는 영문으로 시작하는 2~10자의 영문·숫자입니다.');
 const description = z.string().trim().max(2000);
 
 const listQuery = z.object({
@@ -21,12 +28,14 @@ const listQuery = z.object({
 });
 const createBody = z.object({
   name,
+  key: projectKey.optional(),
   description: description.optional(),
   memberIds: z.array(z.uuid()).max(50).default([]),
 });
 const patchBody = z
   .object({
     name: name.optional(),
+    key: projectKey.optional(),
     description: description.optional(),
     status: z.enum(['active', 'archived']).optional(),
   })
@@ -78,12 +87,13 @@ projectsRouter.patch(
 );
 
 projectsRouter.patch('/:id', requireProjectManager(), validate(patchBody), async (req, res) => {
-  const prev = { name: req.project.name, status: req.project.status }; // 수정 전 값
+  const prev = { name: req.project.name, status: req.project.status, key: req.project.key }; // 수정 전 값
   const project = await service.update(req.project, req.body);
   await emitToProject(req, project.id, 'project:updated', { projectId: project.id, project });
   const changes = {};
   if (project.name !== prev.name) changes.name = { from: prev.name, to: project.name };
   if (project.status !== prev.status) changes.status = { from: prev.status, to: project.status };
+  if (project.key !== prev.key) changes.key = { from: prev.key, to: project.key };
   if (Object.keys(changes).length > 0) {
     await record({
       projectId: project.id,

@@ -8,6 +8,8 @@ export const toTask = (row) =>
   row && {
     id: row.id,
     projectId: row.project_id,
+    number: row.number ?? null,
+    key: row.project_key && row.number ? `${row.project_key}-${row.number}` : null,
     ...(row.project_name !== undefined && { projectName: row.project_name }),
     title: row.title,
     description: row.description,
@@ -28,7 +30,7 @@ export const toTask = (row) =>
   };
 
 const SELECT = `
-  SELECT t.*, a.name AS assignee_name, p.name AS project_name,
+  SELECT t.*, a.name AS assignee_name, p.name AS project_name, p.key AS project_key,
          (SELECT count(*)::int FROM comments c
            WHERE c.task_id = t.id AND c.deleted_at IS NULL) AS comment_count,
          (SELECT count(*)::int FROM checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
@@ -46,6 +48,15 @@ const SELECT = `
   FROM tasks t
   LEFT JOIN users a ON a.id = t.assignee_id
   JOIN projects p ON p.id = t.project_id`;
+
+// 작업 키(프로젝트 키 + 번호)로 찾는다. 키는 대문자로 비교한다.
+export async function findByKey(projectKey, number) {
+  const { rows } = await query(`${SELECT} WHERE p.key = $1 AND t.number = $2`, [
+    projectKey.toUpperCase(),
+    number,
+  ]);
+  return rows[0] ?? null;
+}
 
 export async function findById(id) {
   const { rows } = await query(`${SELECT} WHERE t.id = $1`, [id]);
@@ -140,12 +151,14 @@ export async function insertTask({
   createdBy,
 }) {
   const { rows } = await query(
-    `INSERT INTO tasks
+    // 번호는 프로젝트의 카운터를 올려서 받는다(행 잠금이라 동시에 만들어도 겹치지 않는다).
+    `WITH n AS (UPDATE projects SET task_seq = task_seq + 1 WHERE id = $1 RETURNING task_seq)
+     INSERT INTO tasks
        (project_id, title, description, status, priority, assignee_id, due_date, created_by,
-        position, completed_at, start_date)
+        position, completed_at, start_date, number)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
         COALESCE((SELECT max(position) FROM tasks WHERE project_id = $1 AND status = $4), 0) + $9,
-        CASE WHEN $4 = 'done' THEN now() END, $10)
+        CASE WHEN $4 = 'done' THEN now() END, $10, (SELECT task_seq FROM n))
      RETURNING id`,
     [
       projectId,

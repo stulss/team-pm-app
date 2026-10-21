@@ -13,6 +13,8 @@ import {
   recordTaskMoved,
   recordTaskUpdated,
 } from '../activity/service.js';
+import { badRequest, notFound } from '../../utils/errors.js';
+import { TASK_KEY_PATTERN } from '../projects/key.js';
 import * as service from './service.js';
 
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -106,6 +108,27 @@ tasksRouter.use(authenticate);
 tasksRouter.get('/mine', validate(mineQuery, 'query'), async (req, res) => {
   res.json(await service.listMine(req.user, req.query));
 });
+
+// 작업 키(TPM-12)로 조회. 키를 id 로 바꿔 requireTaskAccess 의 멤버 검사를 그대로 쓴다.
+tasksRouter.get(
+  '/key/:key',
+  async (req, res, next) => {
+    try {
+      const m = TASK_KEY_PATTERN.exec(req.params.key);
+      if (!m) throw badRequest('작업 키 형식이 올바르지 않습니다. 예: TPM-12');
+      const task = await service.findByKey(m[1], Number(m[2]));
+      if (!task) throw notFound('작업을 찾을 수 없습니다.');
+      req.params.id = task.id;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  },
+  requireTaskAccess(),
+  (req, res) => {
+    res.json(service.toResponse(req.task));
+  },
+);
 
 tasksRouter.get('/:id', requireTaskAccess(), (req, res) => {
   res.json(service.toResponse(req.task));

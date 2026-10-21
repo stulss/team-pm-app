@@ -31,6 +31,12 @@ const step = async (label, fn) => {
     console.log(`PASS  ${label}`);
   } catch (err) {
     failed += 1;
+    if (process.env.DEBUG_SHOT && globalThis.dbgPage) {
+      await globalThis.dbgPage
+        .screenshot({ path: process.env.DEBUG_SHOT + `/fail-${failed}.png` })
+        .catch(() => {});
+      console.log('      [url]', globalThis.dbgPage.url());
+    }
     console.log(`FAIL  ${label}\n      ${String(err.message).split('\n')[0]}`);
   }
 };
@@ -1886,6 +1892,7 @@ try {
   await step('설정: 사이드바에서 열고 테마·포인트 색·밀도가 바로 적용됨', async () => {
     await apiRegister('settings');
     setPage = await newPage();
+    globalThis.dbgPage = setPage;
     await login(setPage, 'settings');
     await setPage.locator('.side-nav').getByRole('link', { name: '설정' }).click();
     await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
@@ -2072,6 +2079,111 @@ try {
       await setPage.getByRole('main').getByRole('link', { name: secondName }).waitFor();
       const firstCard = await setPage.locator('main .project-card h2').first().textContent();
       if (firstCard?.trim() !== secondName) throw new Error(`목록 첫 카드: ${firstCard}`);
+    },
+  );
+  // ---- 작업 키 (M25)
+  let keyProject;
+  await step(
+    '작업 키: 카드·목록·모달에 TPM-12 형식으로 보이고 키·브랜치 이름을 복사할 수 있음',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const token = await apiLogin('settings');
+      keyProject = (await apiCall('GET', `/projects/${settingsProjectId}`, token)).body;
+      const tasks = (await apiCall('GET', `/projects/${settingsProjectId}/tasks?limit=50`, token))
+        .body.data;
+      const target = tasks.find((t) => t.title === '알림 켠 상태 배정');
+      if (!target?.key?.startsWith(`${keyProject.key}-`))
+        throw new Error(`작업 키 형식: ${target?.key}`);
+
+      await setPage.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      await setPage.getByRole('tab', { name: '보드' }).click();
+      await setPage
+        .locator(`[data-task-id="${target.id}"]`)
+        .getByText(target.key, { exact: true })
+        .waitFor();
+      await setPage.getByText(`프로젝트 키 ${keyProject.key}`).waitFor();
+
+      await setPage.locator(`[data-task-id="${target.id}"]`).click();
+      const dlg = setPage.getByRole('dialog', { name: '작업 수정' });
+      await dlg.getByText(target.key, { exact: true }).waitFor();
+      await dlg.getByRole('button', { name: '키 복사' }).click();
+      await dlg.getByRole('status').filter({ hasText: '복사했습니다' }).waitFor();
+      if ((await setPage.evaluate('navigator.clipboard.readText()')) !== target.key) {
+        throw new Error('클립보드에 키가 복사되지 않음');
+      }
+      await dlg.getByRole('button', { name: '브랜치 이름 복사' }).click();
+      await pollUntil(
+        async () =>
+          (await setPage.evaluate('navigator.clipboard.readText()')).startsWith(
+            target.key.toLowerCase(),
+          ),
+        '브랜치 이름 복사',
+      );
+      await dlg.getByRole('button', { name: '닫기', exact: true }).click();
+      await dlg.waitFor({ state: 'detached' });
+
+      await setPage.getByRole('tab', { name: '목록' }).click();
+      await setPage.getByText(target.key, { exact: false }).first().waitFor();
+      await setPage.getByRole('tab', { name: '보드' }).click();
+    },
+  );
+  await step('작업 키: 명령 팔레트에 키를 입력하면 그 작업이 바로 열림', async () => {
+    if (!keyProject) throw new Error('준비 단계 실패');
+    const token = await apiLogin('settings');
+    const tasks = (await apiCall('GET', `/projects/${settingsProjectId}/tasks?limit=50`, token))
+      .body.data;
+    const target = tasks.find((t) => t.title === '알림 다시 켠 뒤 배정');
+    await setPage.goto(`${BASE}/settings`);
+    await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor(); // 단축키는 화면이 뜬 뒤에 등록된다
+    await setPage.keyboard.press('Control+K');
+    await setPage.getByRole('dialog', { name: '명령 팔레트' }).waitFor();
+    await setPage.keyboard.type(target.key.toLowerCase());
+    const keyOption = setPage.getByRole('option', { name: /작업 열기/ });
+    await keyOption.waitFor({ timeout: 5000 }).catch(async () => {
+      const texts = await setPage.getByRole('option').allTextContents();
+      throw new Error(`키 항목이 없음 (입력 ${target.key.toLowerCase()}): ${texts.join(' | ')}`);
+    });
+    await setPage.keyboard.press('Enter');
+    await setPage.getByRole('dialog', { name: '작업 수정' }).getByLabel('제목').waitFor();
+    if (
+      (await setPage.getByRole('dialog', { name: '작업 수정' }).getByLabel('제목').inputValue()) !==
+      target.title
+    ) {
+      throw new Error('다른 작업이 열림');
+    }
+    await setPage
+      .getByRole('dialog', { name: '작업 수정' })
+      .getByRole('button', { name: '닫기', exact: true })
+      .click();
+  });
+  await step(
+    '작업 키: 소유자가 프로젝트 키를 바꾸면 모든 작업 키가 새 키로 보이고, 겹치는 키는 오류',
+    async () => {
+      if (!keyProject) throw new Error('준비 단계 실패');
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      await setPage.getByRole('button', { name: '수정', exact: true }).click();
+      await setPage.getByLabel('프로젝트 키').fill('ZZK');
+      await setPage.getByRole('button', { name: '저장', exact: true }).click();
+      await setPage.getByText('프로젝트 키 ZZK').waitFor();
+      await setPage.getByRole('tab', { name: '보드' }).click();
+      await setPage
+        .locator('.task-key', { hasText: /^ZZK-\d+$/ })
+        .first()
+        .waitFor();
+
+      // 다른 프로젝트가 쓰는 키로는 바꿀 수 없다
+      const token = await apiLogin('settings');
+      const other = await apiCall('POST', '/projects', token, {
+        name: `ui-${run}-키중복`,
+        key: 'DUPK',
+      });
+      if (other.status !== 201) throw new Error(`키 지정 생성 실패: ${other.status}`);
+      await setPage.getByRole('button', { name: '수정', exact: true }).click();
+      await setPage.getByLabel('프로젝트 키').fill('DUPK');
+      await setPage.getByRole('button', { name: '저장', exact: true }).click();
+      await setPage.getByRole('alert').filter({ hasText: '이미 사용 중인 프로젝트 키' }).waitFor();
+      await setPage.getByRole('button', { name: '취소', exact: true }).click();
     },
   );
   await step(

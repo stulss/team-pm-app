@@ -48,6 +48,7 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
       {...(overlay ? {} : sortable.listeners)}
       onClick={() => onOpen?.(task)}
     >
+      {task.key && <span className="task-key">{task.key}</span>}
       <strong className="task-card-title">{task.title}</strong>
       {task.labels?.length > 0 && (
         <div className="task-card-labels">

@@ -29,6 +29,7 @@ export function useProjectRealtime(projectId) {
     const refetchProject = () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', projectId] }); // 키 변경 등
     };
     // 작업이 바뀌면 열려 있는 모달의 체크리스트·단건 캐시도 함께 다시 불러온다
     const refetchTaskDetail = (payload) => {

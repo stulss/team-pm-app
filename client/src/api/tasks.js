@@ -10,4 +10,6 @@ export const updateTask = (id, body) => http.patch(`/tasks/${id}`, body).then(da
 export const deleteTask = (id) => http.delete(`/tasks/${id}`);
 export const listMyTasks = (params) => http.get('/tasks/mine', { params }).then(data);
 export const moveTask = (id, body) => http.patch(`/tasks/${id}/move`, body).then(data);
+// 작업 키(TPM-12)로 조회한다.
+export const getTaskByKey = (key) => http.get(`/tasks/key/${encodeURIComponent(key)}`).then(data);
 export const getTask = (id) => http.get(`/tasks/${id}`).then(data);

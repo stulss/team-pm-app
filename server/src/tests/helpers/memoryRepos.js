@@ -818,9 +818,20 @@ export const projectsRepo = {
   async isMember(projectId, userId) {
     return store.members.some((m) => m.project_id === projectId && m.user_id === userId);
   },
-  async insertProject(client, { name, description, ownerId }) {
+  async keyTaken(key) {
+    return store.projects.some((p) => p.key === key);
+  },
+  async insertProject(client, { name, description, ownerId, key }) {
+    if (store.projects.some((p) => p.key === key)) {
+      throw Object.assign(new Error('duplicate key'), {
+        code: '23505',
+        constraint: 'projects_key_key',
+      });
+    }
     const row = {
       id: crypto.randomUUID(),
+      key,
+      task_seq: 0,
       name,
       description: description ?? null,
       owner_id: ownerId,
@@ -841,7 +852,13 @@ export const projectsRepo = {
   async updateProject(id, patch) {
     const p = store.projects.find((x) => x.id === id);
     if (!p) return null;
-    for (const key of ['name', 'description', 'status']) {
+    if (patch.key !== undefined && store.projects.some((x) => x.id !== id && x.key === patch.key)) {
+      throw Object.assign(new Error('duplicate key'), {
+        code: '23505',
+        constraint: 'projects_key_key',
+      });
+    }
+    for (const key of ['name', 'description', 'status', 'key']) {
       if (patch[key] !== undefined) p[key] = patch[key];
     }
     p.updated_at = new Date();
@@ -898,6 +915,7 @@ const withNames = (t) => ({
   ...t,
   assignee_name: store.users.find((u) => u.id === t.assignee_id)?.name ?? null,
   project_name: store.projects.find((p) => p.id === t.project_id)?.name,
+  project_key: store.projects.find((p) => p.id === t.project_id)?.key,
   comment_count: store.comments.filter((c) => c.task_id === t.id && !c.deleted_at).length,
   blocked_by: store.deps
     .filter((d) => d.task_id === t.id)
@@ -960,10 +978,18 @@ export const tasksRepo = {
     );
     return { rows: rows.slice(offset, offset + limit).map(withNames), total: rows.length };
   },
+  async findByKey(projectKey, number) {
+    const p = store.projects.find((x) => x.key === projectKey.toUpperCase());
+    const t = p && store.tasks.find((x) => x.project_id === p.id && x.number === number);
+    return t ? withNames(t) : null;
+  },
   async insertTask(input) {
     const now = new Date(Date.now() + store.tasks.length);
+    const project = store.projects.find((p) => p.id === input.projectId);
+    project.task_seq = (project.task_seq ?? 0) + 1;
     const row = {
       id: crypto.randomUUID(),
+      number: project.task_seq,
       project_id: input.projectId,
       title: input.title,
       description: input.description ?? null,

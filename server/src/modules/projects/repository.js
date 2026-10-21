@@ -4,6 +4,7 @@ export const toProject = (row) =>
   row && {
     id: row.id,
     name: row.name,
+    key: row.key,
     description: row.description,
     ownerId: row.owner_id,
     status: row.status,
@@ -86,10 +87,15 @@ export async function countMembers(projectId) {
   return rows[0].n;
 }
 
-export async function insertProject(client, { name, description, ownerId }) {
+export async function keyTaken(key) {
+  const { rowCount } = await query('SELECT 1 FROM projects WHERE key = $1', [key]);
+  return rowCount > 0;
+}
+
+export async function insertProject(client, { name, description, ownerId, key }) {
   const { rows } = await client.query(
-    'INSERT INTO projects (name, description, owner_id) VALUES ($1, $2, $3) RETURNING *',
-    [name, description ?? null, ownerId],
+    'INSERT INTO projects (name, description, owner_id, key) VALUES ($1, $2, $3, $4) RETURNING *',
+    [name, description ?? null, ownerId, key],
   );
   return rows[0];
 }
@@ -103,7 +109,7 @@ export async function addMembers(client, projectId, userIds) {
   );
 }
 
-const PATCHABLE = { name: 'name', description: 'description', status: 'status' };
+const PATCHABLE = { name: 'name', description: 'description', status: 'status', key: 'key' };
 
 export async function updateProject(id, patch) {
   const sets = [];

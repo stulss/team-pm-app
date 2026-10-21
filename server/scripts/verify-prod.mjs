@@ -179,6 +179,19 @@ async function readChecks(label, who) {
     );
     const board = await call('GET', `/projects/${pid}/tasks?limit=5`, { token: t });
     const tasks = board.body?.data ?? [];
+    const proj = await call('GET', `/projects/${pid}`, { token: t });
+    check(
+      `${label}: 프로젝트 키가 있고 작업 응답에 number·key(키-번호)가 있음 (M25)`,
+      /^[A-Z][A-Z0-9]{1,9}$/.test(proj.body?.key ?? '') &&
+        tasks.every((x) => Number.isInteger(x.number) && x.key === `${proj.body.key}-${x.number}`),
+    );
+    if (tasks[0]) {
+      const byKey = await call('GET', `/tasks/key/${tasks[0].key}`, { token: t });
+      check(
+        `${label}: 작업 키로 조회하면 같은 작업 (M25)`,
+        byKey.status === 200 && byKey.body.id === tasks[0].id,
+      );
+    }
     check(
       `${label}: 작업 응답에 labels·checklist·startDate·blockedBy 가 있음`,
       board.status === 200 &&

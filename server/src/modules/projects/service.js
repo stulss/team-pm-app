@@ -4,6 +4,7 @@ import * as repo from './repository.js';
 import * as usersRepo from '../users/repository.js';
 import * as tasksRepo from '../tasks/repository.js';
 import { env } from '../../config/env.js';
+import { uniqueKey } from './key.js';
 
 // Admin, 또는 해당 프로젝트를 만든 소유자(시스템 역할과 무관)가 관리(수정/삭제/멤버 관리)할 수 있다.
 export const canManage = (user, project) => user.role === 'admin' || project.owner_id === user.id;
@@ -19,7 +20,10 @@ export async function list(user, { status, page, limit }) {
   return { data: rows.map(repo.toProject), meta: { page, limit, total } };
 }
 
-export async function create(user, { name, description, memberIds }) {
+const keyTakenError = () => conflict('KEY_TAKEN', '이미 사용 중인 프로젝트 키입니다.');
+const isKeyConflict = (err) => err?.code === '23505' && /key/.test(err.constraint ?? '');
+
+export async function create(user, { name, description, memberIds, key }) {
   if (user.role !== 'admin' && (await repo.countOwned(user.id)) >= env.MAX_PROJECTS_PER_USER) {
     throw limitReached(`프로젝트는 최대 ${env.MAX_PROJECTS_PER_USER}개까지 만들 수 있습니다.`);
   }
@@ -35,11 +39,27 @@ export async function create(user, { name, description, memberIds }) {
     ]);
   }
 
-  const project = await withTransaction(async (client) => {
-    const row = await repo.insertProject(client, { name, description, ownerId: user.id });
-    await repo.addMembers(client, row.id, wanted); // 생성자는 항상 멤버
-    return row;
-  });
+  // 키를 주지 않으면 이름에서 만든다. 동시에 같은 키를 잡으면(유일 제약) 다시 만든다.
+  let projectKey = key ?? (await uniqueKey(name, repo.keyTaken));
+  let project;
+  for (let attempt = 0; !project; attempt += 1) {
+    try {
+      project = await withTransaction(async (client) => {
+        const row = await repo.insertProject(client, {
+          name,
+          description,
+          ownerId: user.id,
+          key: projectKey,
+        });
+        await repo.addMembers(client, row.id, wanted); // 생성자는 항상 멤버
+        return row;
+      });
+    } catch (err) {
+      if (!isKeyConflict(err)) throw err;
+      if (key || attempt >= 3) throw keyTakenError();
+      projectKey = await uniqueKey(name, repo.keyTaken);
+    }
+  }
   return detail(project, user.id);
 }
 
@@ -60,7 +80,12 @@ export async function updateMySettings(project, user, patch) {
 }
 
 export async function update(project, patch) {
-  return repo.toProject(await repo.updateProject(project.id, patch));
+  try {
+    return repo.toProject(await repo.updateProject(project.id, patch));
+  } catch (err) {
+    if (isKeyConflict(err)) throw keyTakenError();
+    throw err;
+  }
 }
 
 export async function remove(project) {

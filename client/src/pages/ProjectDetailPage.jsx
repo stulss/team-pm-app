@@ -49,6 +49,7 @@ export default function ProjectDetailPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: key });
     queryClient.invalidateQueries({ queryKey: ['projects'] });
+    queryClient.invalidateQueries({ queryKey: ['tasks', id] }); // 프로젝트 키가 바뀌면 작업 키도 바뀐다
   };
   const update = useMutation({
     mutationFn: (body) => updateProject(id, body),
@@ -130,7 +131,8 @@ export default function ProjectDetailPage() {
                   </h1>
                   {project.description && <p>{project.description}</p>}
                   <p className="muted small">
-                    소유자 {project.members.find((m) => m.isOwner)?.name ?? '-'} · 멤버{' '}
+                    프로젝트 키 <strong>{project.key}</strong> · 소유자{' '}
+                    {project.members.find((m) => m.isOwner)?.name ?? '-'} · 멤버{' '}
                     {project.members.length}명
                   </p>
                 </div>
@@ -275,17 +277,34 @@ export default function ProjectDetailPage() {
 function EditForm({ project, busy, onSave, onCancel }) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? '');
+  const [key, setKey] = useState(project.key);
   return (
     <form
       className="stack"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ name, description });
+        onSave({ name, description, ...(key !== project.key && { key }) });
       }}
     >
       <label>
         이름
         <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label>
+        프로젝트 키
+        <input
+          required
+          minLength={2}
+          maxLength={10}
+          pattern="[A-Za-z][A-Za-z0-9]{1,9}"
+          title="영문으로 시작하는 2~10자의 영문·숫자"
+          value={key}
+          onChange={(e) => setKey(e.target.value.toUpperCase())}
+        />
+        <span className="muted small">
+          작업 키(예: {key || 'TPM'}-12)의 앞부분입니다. 바꾸면 이전 키로 적은 커밋·PR 은 연결되지
+          않습니다.
+        </span>
       </label>
       <label>
         설명

@@ -16,6 +16,7 @@ import TaskLabels from './TaskLabels.jsx';
 import ChecklistSection from './ChecklistSection.jsx';
 import DependencySection from './DependencySection.jsx';
 import ActivityFeed from '../activity/ActivityFeed.jsx';
+import { branchName } from '../../utils/taskKey.js';
 
 // 속성 입력(오른쪽 패널)은 왼쪽의 <form> 밖에 있지만 form 속성으로 같은 폼에 묶여
 // 저장 버튼과 Enter 로 함께 제출된다. 폼 안에 폼이 들어가는 것을 피하려고 이렇게 나눈다.
@@ -67,6 +68,17 @@ export default function TaskModal({
   });
   const remove = useMutation({ mutationFn: () => deleteTask(task.id), onSuccess: done });
   const error = save.error ?? remove.error;
+  const [copied, setCopied] = useState('');
+  // 키·브랜치 이름을 복사한다(클립보드를 못 쓰면 조용히 무시). GitHub 에 이 키를 쓰면 작업에 연결된다.
+  const copy = async (label, text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(''), 1800);
+    } catch {
+      /* 복사 실패는 무시 */
+    }
+  };
 
   // 현재 담당자가 (비활성 등으로) 후보에 없어도 선택값이 사라지지 않게 한다.
   const options = members.filter((m) => m.isActive || m.id === task?.assignee?.id);
@@ -82,6 +94,24 @@ export default function TaskModal({
             if (!readOnly) save.mutate();
           }}
         >
+          {editing && task.key && (
+            <div className="task-key-line">
+              <span className="task-key">{task.key}</span>
+              <button type="button" className="linklike small" onClick={() => copy('키', task.key)}>
+                키 복사
+              </button>
+              <button
+                type="button"
+                className="linklike small"
+                onClick={() => copy('브랜치 이름', branchName(task))}
+              >
+                브랜치 이름 복사
+              </button>
+              <span role="status" className="save-state">
+                {copied ? `${copied}을(를) 복사했습니다.` : ''}
+              </span>
+            </div>
+          )}
           <label>
             제목
             <input

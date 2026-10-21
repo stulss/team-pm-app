@@ -1600,3 +1600,32 @@ dialog.palette::backdrop {
 .side-flag + .side-flag {
   margin-left: 0;
 }
+
+/* 작업 키(TPM-12) */
+.task-key {
+  width: fit-content;
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-key.inline {
+  margin-right: 0.35rem;
+}
+
+.task-key-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+}
+
+.task-key-line .task-key {
+  padding: 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--primary-text);
+  background: var(--primary-soft);
+  border-radius: 999px;
+}

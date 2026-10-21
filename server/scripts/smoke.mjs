@@ -3316,6 +3316,134 @@ try {
     await call('DELETE', `/projects/${p2}`, { token: t('manager') });
   }
 
+  // --- 작업 키 (M25): 번호 카운터 동시성, 유일 제약, 형식 CHECK, 키 조회, 이전 코드용 DB 트리거를 실제 DB 로 확인
+  {
+    const kp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-key', key: 'smk', memberIds: [people.member.id] },
+    });
+    const kpid = kp.body.id;
+    check('프로젝트 키는 대문자로 저장된다', kp.status === 201 && kp.body.key === 'SMK');
+    const dupKey = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-key-dup', key: 'SMK' },
+    });
+    check(
+      '프로젝트 키가 겹치면 409 KEY_TAKEN (DB 유일 인덱스)',
+      dupKey.status === 409 && dupKey.body.error.code === 'KEY_TAKEN',
+    );
+    const auto = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'Smoke Key Auto' },
+    });
+    const auto2 = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'Smoke Key Auto' },
+    });
+    check(
+      '키를 주지 않으면 이름에서 만들고 겹치면 숫자를 붙인다',
+      /^SKA\d*$/.test(auto.body.key) && auto.body.key !== auto2.body.key,
+    );
+
+    // 동시에 8개를 만들어도 번호가 겹치지 않고 빈틈이 없다 (카운터 행 잠금)
+    const made = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        call('POST', `/projects/${kpid}/tasks`, {
+          token: t('member'),
+          body: { title: `smoke-key ${i}` },
+        }),
+      ),
+    );
+    const numbers = made.map((r) => r.body.number).sort((a, b) => a - b);
+    check(
+      '동시에 8개를 만들어도 번호는 1..8 로 겹치지 않는다',
+      made.every((r) => r.status === 201) && numbers.join() === '1,2,3,4,5,6,7,8',
+      numbers.join(),
+    );
+    check(
+      '작업 키는 프로젝트 키-번호',
+      made.every((r) => r.body.key === `SMK-${r.body.number}`),
+    );
+
+    const byKey = await call('GET', '/tasks/key/smk-3', { token: t('member') });
+    check(
+      '작업 키로 조회 (대소문자 무시)',
+      byKey.status === 200 && byKey.body.key === 'SMK-3' && byKey.body.projectId === kpid,
+    );
+    check(
+      '없는 키 404, 형식 오류 400, 비멤버 403',
+      (await call('GET', '/tasks/key/SMK-99', { token: t('member') })).status === 404 &&
+        (await call('GET', '/tasks/key/SMK3', { token: t('member') })).status === 400 &&
+        (await call('GET', '/tasks/key/SMK-3', { token: t('outsider') })).status === 403,
+    );
+
+    // 지워도 번호를 재사용하지 않는다
+    await call('DELETE', `/tasks/${made[7].body.id}`, { token: t('manager') });
+    const next = await call('POST', `/projects/${kpid}/tasks`, {
+      token: t('member'),
+      body: { title: 'smoke-key 다음' },
+    });
+    check('작업을 지워도 번호는 재사용되지 않는다', next.body.number === 9);
+
+    // DB 제약
+    let badFormat = false;
+    try {
+      await db.query(`UPDATE projects SET key = 'bad-key' WHERE id = $1`, [kpid]);
+    } catch {
+      badFormat = true;
+    }
+    let dupNumber = false;
+    try {
+      await db.query('UPDATE tasks SET number = 1 WHERE id = $1', [made[1].body.id]);
+    } catch {
+      dupNumber = true;
+    }
+    check('DB CHECK 가 잘못된 키 형식을 거부', badFormat);
+    check('DB 유일 제약이 프로젝트 안의 중복 번호를 거부', dupNumber);
+
+    // 이전 코드(키·번호를 모르는)가 만들어도 DB 트리거가 채운다 — 배포 순서 안전장치
+    const legacyProject = await db.query(
+      `INSERT INTO projects (name, owner_id) VALUES ('smoke-key-legacy', $1) RETURNING id, key`,
+      [people.manager.id],
+    );
+    const legacyTask = await db.query(
+      `INSERT INTO tasks (project_id, title, created_by, position) VALUES ($1, 'legacy', $2, 1024)
+       RETURNING number`,
+      [legacyProject.rows[0].id, people.manager.id],
+    );
+    check(
+      '이전 코드의 삽입도 DB 트리거가 키·번호를 채운다',
+      /^P\d+$/.test(legacyProject.rows[0].key) && legacyTask.rows[0].number === 1,
+    );
+
+    // 키 변경
+    const renamed = await call('PATCH', `/projects/${kpid}`, {
+      token: t('manager'),
+      body: { key: 'SMK2' },
+    });
+    const taken = await call('PATCH', `/projects/${kpid}`, {
+      token: t('manager'),
+      body: { key: auto.body.key },
+    });
+    check(
+      '소유자는 키를 바꿀 수 있고 겹치면 409, 일반 멤버는 403',
+      renamed.status === 200 &&
+        renamed.body.key === 'SMK2' &&
+        taken.status === 409 &&
+        (await call('PATCH', `/projects/${kpid}`, { token: t('member'), body: { key: 'ZZZ' } }))
+          .status === 403,
+    );
+    check(
+      '키를 바꾸면 작업 키도 새 키로 보인다',
+      (await call('GET', `/tasks/${made[0].body.id}`, { token: t('member') })).body.key ===
+        `SMK2-${made[0].body.number}`,
+    );
+
+    for (const id of [kpid, auto.body.id, auto2.body.id, legacyProject.rows[0].id]) {
+      await call('DELETE', `/projects/${id}`, { token: t('manager') });
+    }
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

@@ -337,6 +337,11 @@ erDiagram
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
 
+**projects.key / tasks.number** (M25 작업 키, 마이그레이션 021)
+- Linear·Jira 처럼 작업을 `TPM-12` 로 부른다. 프로젝트마다 **키**(`projects.key`, 대문자 영문 시작 2~10자 `^[A-Z][A-Z0-9]{1,9}$`, 전체에서 유일)를 갖고, 작업은 프로젝트 안에서 **번호**(`tasks.number`, 1부터, 프로젝트 안에서 유일 `UNIQUE (project_id, number)`)를 갖는다. 작업 키 = `{프로젝트 키}-{번호}`.
+- 번호는 `projects.task_seq` 카운터를 `UPDATE … RETURNING` 으로 올려 받으므로(행 잠금) 동시에 만들어도 중복되지 않는다. 작업을 지워도 번호는 재사용하지 않는다.
+- 프로젝트를 만들 때 키를 주지 않으면 이름에서 만든다(영문 단어 머리글자 또는 앞 글자, 영문이 없는 이름(한글 등)이면 `PP`, 겹치면 숫자를 붙임). 기존 프로젝트·작업은 마이그레이션이 `P1`, `P2`… 와 생성순 번호로 채운다. 키는 소유자·Admin 이 바꿀 수 있고(겹치면 409 `KEY_TAKEN`), 바꾸면 이전 키로 적은 커밋·PR 메시지는 더 이상 연결되지 않는다.
+
 **project_members.muted / pinned** (M24 프로젝트 설정, 마이그레이션 020)
 - 멤버 **개인**의 프로젝트별 설정. `muted`(알림 음소거)가 켜진 프로젝트에서 생기는 알림(배정·댓글·멘션·마감, 채팅 멘션 포함)은 그 사람에게 **만들어지지 않는다**(`insertMany` 의 SQL 이 작업·프로젝트로 프로젝트를 찾아 확인). `pinned` 는 목록·사이드바에서 맨 위에 둔다. 다른 멤버에게는 보이지 않는다.
 
@@ -510,6 +515,14 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+#### Task keys (M25)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/tasks/key/:key` | 작업 키(`TPM-12`, 대소문자 무시)로 작업 한 건 조회 — 응답은 `GET /tasks/:id` 와 같다 | 프로젝트 멤버 (없는 키 404, 비멤버 403, 형식 오류 400) |
+| PATCH | `/projects/:id` | `key` 도 바꿀 수 있다(소유자·Admin) | 소유자·Admin |
+
+> 구현 규칙(M25): 프로젝트 응답에 `key`, 작업 응답에 `number` 와 `key`(`TPM-12`)가 붙는다. 프로젝트 생성 요청의 `key` 는 선택이다.
 
 #### Project settings (M24)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -884,6 +897,8 @@ team-pm-app/
 | **M21** | Ctrl+K 명령 팔레트 | 서버 변경 없는 클라이언트 기능. `Ctrl+K`(Mac `⌘K`) 또는 상단 "빠른 실행" 버튼으로 연다. 항목: 페이지 이동(관리자만 사용자 관리), 프로젝트 화면에서는 "이 프로젝트에 작업 만들기"·"작업 보기: 보드/목록/캘린더/타임라인"(주소의 `?new=task`·`?view=` 로 전달하고 사용자가 탭을 직접 누르면 탭 선택이 우선), 활성 프로젝트로 바로 가기, 2자 이상 입력하면 기존 통합검색(`GET /search`, 권한 필터 그대로)의 작업·댓글·채팅 결과. ↑↓ 이동·Enter 실행·Esc 닫기, 한글 조합 중 Enter 는 무시 |
 | **M22** | 설정 페이지(화면 설정·내 계정) | `/settings`: 테마(시스템/라이트/다크)·포인트 색·밀도·기본 작업 보기(계정에 저장, `users.preferences`, 마이그레이션 019), 이름·비밀번호 변경(기존 `PATCH /users/me`) |
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
+| **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
+| **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅으로 받은 PR·커밋을 작업 키로 찾아 작업에 연결하고, PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다 |
 | **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 목록·사이드바 상단 고정(`project_members.muted·pinned`, 마이그레이션 020, 개인 설정, §1.2·§2.2) |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 

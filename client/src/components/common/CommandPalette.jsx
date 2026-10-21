@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { listProjects } from '../../api/projects.js';
 import { search } from '../../api/search.js';
+import { getTaskByKey } from '../../api/tasks.js';
+import { isTaskKey } from '../../utils/taskKey.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useDebounced } from '../../hooks/useDebounced.js';
 import { STATUS_LABELS } from '../../constants/task.js';
@@ -124,6 +126,23 @@ export default function CommandPalette({ open, onClose }) {
         });
       }
     }
+    const keyItem = isTaskKey(query)
+      ? [
+          {
+            id: 'task-key',
+            group: '작업 키',
+            label: `${query.trim().toUpperCase()} 작업 열기`,
+            run: async () => {
+              try {
+                const task = await getTaskByKey(query.trim());
+                navigate(`/projects/${task.projectId}?task=${task.id}`);
+              } catch {
+                window.alert('해당 작업을 찾을 수 없거나 볼 권한이 없습니다.');
+              }
+            },
+          },
+        ]
+      : [];
     const all = query.trim()
       ? [
           {
@@ -135,7 +154,14 @@ export default function CommandPalette({ open, onClose }) {
         ]
       : [];
 
-    return [...rankItems(here, query), ...rankItems(nav, query), ...jump, ...results, ...all];
+    return [
+      ...keyItem,
+      ...rankItems(here, query),
+      ...rankItems(nav, query),
+      ...jump,
+      ...results,
+      ...all,
+    ];
   }, [navigate, user.role, projectId, projects.data, found.data, searching, query]);
 
   const groups = groupItems(items);

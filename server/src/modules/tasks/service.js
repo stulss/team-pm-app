@@ -6,6 +6,7 @@ import * as repo from './repository.js';
 import { env } from '../../config/env.js';
 
 export const toResponse = repo.toTask;
+export const findByKey = (projectKey, number) => repo.findByKey(projectKey, number);
 
 // 보관된 프로젝트는 읽기 전용이다.
 export function assertWritable(project) {

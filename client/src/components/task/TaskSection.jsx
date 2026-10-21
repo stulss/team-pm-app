@@ -319,6 +319,7 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
               {data.data.map((t) => (
                 <tr key={t.id}>
                   <td className="wrap">
+                    {t.key && <span className="task-key inline">{t.key} </span>}
                     <button type="button" className="linklike title" onClick={() => onOpenTask(t)}>
                       {t.title}
                     </button>
