@@ -99,6 +99,19 @@ async function readChecks(label, who) {
     (await call('GET', '/search?q=a', { token: t })).status === 400,
   );
 
+  // M12b: 알림 조회는 작업 없는 알림(채팅 멘션)도 LEFT JOIN 으로 내려줘야 한다
+  const notis = await call('GET', '/notifications?limit=20', { token: t });
+  const notiRows = notis.body?.data ?? [];
+  check(
+    `${label}: 알림 목록 (200, projectId 포함)`,
+    notis.status === 200 && Array.isArray(notiRows) && notiRows.every((n) => 'projectId' in n),
+    `HTTP ${notis.status}`,
+  );
+  check(
+    `${label}: 안 읽은 알림 수 (200)`,
+    (await call('GET', '/notifications/unread-count', { token: t })).status === 200,
+  );
+
   // 프로젝트 하나(가장 최근)의 읽기 API
   if (mine.length > 0) {
     const pid = mine[0];
