@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../context/AuthContext.jsx';
 import { errorMessage } from '../api/http.js';
 import { errorCode } from '../api/auth.js';
 import ResendVerification from '../components/auth/ResendVerification.jsx';
+import GithubLoginButton from '../components/auth/GithubLoginButton.jsx';
+import { githubErrorMessage } from '../constants/githubLogin.js';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -11,7 +13,8 @@ export default function LoginPage() {
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [searchParams] = useSearchParams();
+  const [error, setError] = useState(githubErrorMessage(searchParams.get('github')));
   const [busy, setBusy] = useState(false);
   const [unverified, setUnverified] = useState(false);
 
@@ -34,6 +37,7 @@ export default function LoginPage() {
   return (
     <form className="card" onSubmit={onSubmit}>
       <h1>로그인</h1>
+      <GithubLoginButton />
       <label>
         이메일
         <input

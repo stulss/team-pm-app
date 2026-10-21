@@ -48,6 +48,7 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 | `DATABASE_URL` | Supabase **Transaction pooler** 연결 문자열 | 비밀. Vercel-Supabase 연동이 주입하는 `POSTGRES_URL` 을 fallback 으로 사용(복사 불필요) |
 | `DIRECT_URL` | Supabase Session pooler(5432). 마이그레이션 전용 | 비밀. fallback: `POSTGRES_URL_NON_POOLING` |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | JWT 서명 키(32자 이상) | 비밀. 환경별로 다른 값. `JWT_REFRESH_SECRET` 은 GitHub 웹훅 비밀(`HMAC(secret, "github-webhook:v{버전}:{연결 id}")`)의 파생 키이기도 하다 — **바꾸면 연결된 모든 저장소의 웹훅 Secret 을 다시 등록해야 한다**(화면의 "비밀 재발급"으로 새 값을 확인) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub 로그인(OAuth App). 둘 다 있어야 켜진다 | 비밀(secret). GitHub → Settings → Developer settings → OAuth Apps 에서 만들고 **Authorization callback URL** 을 `<APP_URL>/api/v1/auth/github/callback` 으로 등록한다. 없으면 로그인 화면에 버튼이 없다 |
 | `REDIS_URL` | Socket.io adapter·레이트리밋용 Redis | Marketplace 연동이 자동 주입 |
 | `CRON_SECRET` | Cron 엔드포인트 검증(16자 이상). 없으면 엔드포인트 비활성(503) | 비밀. Vercel Cron 이 `Authorization: Bearer` 로 보냄 |
 | `APP_TIMEZONE` | "오늘/내일" 마감 판정 시간대 | 기본 `Asia/Seoul` |

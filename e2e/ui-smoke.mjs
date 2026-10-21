@@ -650,6 +650,35 @@ try {
     await mailer.getByRole('button', { name: '로그인' }).click();
     await mailer.getByRole('link', { name: '프로젝트', exact: true }).waitFor();
   });
+  await step(
+    'GitHub 로그인: 켜져 있으면 로그인·가입 화면에 버튼이 보이고, 실패 사유가 안내됨',
+    async () => {
+      const gh = await newPage();
+      // 개발 서버에는 GitHub 키가 없으므로 공개 엔드포인트 응답만 켜진 것으로 바꾼다
+      await gh.route('**/api/v1/auth/providers', (route) =>
+        route.fulfill({ json: { github: true } }),
+      );
+      await gh.goto(`${BASE}/login?github=no_verified_email`);
+      await settle(gh);
+      const link = gh.getByRole('link', { name: 'GitHub 로 계속하기' });
+      await link.waitFor();
+      if (!(await link.getAttribute('href')).endsWith('/auth/github/start')) {
+        throw new Error('GitHub 로그인 링크 주소');
+      }
+      await gh.getByRole('alert').filter({ hasText: '인증된 기본 이메일이 없습니다' }).waitFor();
+      await gh.goto(`${BASE}/register`);
+      await gh.getByRole('link', { name: 'GitHub 로 가입하기' }).waitFor();
+
+      // 꺼져 있으면 버튼이 없다
+      const off = await newPage();
+      await off.goto(`${BASE}/login`);
+      await settle(off);
+      await off.getByRole('heading', { name: '로그인' }).waitFor();
+      if ((await off.getByRole('link', { name: /GitHub/ }).count()) !== 0) {
+        throw new Error('꺼져 있는데 GitHub 버튼이 보임');
+      }
+    },
+  );
   await step('재설정 링크: 만료된 링크는 오류, 링크 없이 열면 안내 화면', async () => {
     const expired = await putToken('reset', -1000);
     const fresh = await newPage();

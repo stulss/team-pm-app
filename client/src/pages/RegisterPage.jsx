@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext.jsx';
 import { errorMessage } from '../api/http.js';
 import ResendVerification from '../components/auth/ResendVerification.jsx';
+import GithubLoginButton from '../components/auth/GithubLoginButton.jsx';
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -51,6 +52,7 @@ export default function RegisterPage() {
   return (
     <form className="card" onSubmit={onSubmit}>
       <h1>회원가입</h1>
+      <GithubLoginButton label="GitHub 로 가입하기" />
       <label>
         이름
         <input

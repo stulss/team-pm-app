@@ -457,6 +457,9 @@ erDiagram
 | POST | `/auth/resend-verification` | 인증 메일 재발송 `{ email }`. 가입 여부와 무관하게 항상 202 | 공개(레이트리밋) |
 | POST | `/auth/forgot-password` | 비밀번호 재설정 메일 요청 `{ email }`. 항상 202 | 공개(레이트리밋) |
 | POST | `/auth/reset-password` | `{ token, password }` 로 새 비밀번호 설정(일회용·1시간). 기존 세션 모두 폐기 | 공개 |
+| GET | `/auth/providers` | 켜져 있는 로그인 수단 `{ github: boolean }` (GitHub OAuth 키가 있으면 true) | 공개 |
+| GET | `/auth/github/start` | GitHub 로그인 시작: `state` 쿠키를 심고 GitHub 승인 화면으로 302. 설정이 없으면 404 | 공개(레이트리밋) |
+| GET | `/auth/github/callback` | GitHub 가 돌려보내는 주소. `state` 검증 → 코드 교환 → 계정 찾기/연결/가입 → refresh 쿠키를 심고 `/` 로 302(실패는 `/login?github=<사유>`) | 공개(레이트리밋) |
 | POST | `/auth/logout` | 로그아웃(refresh 폐기). 쿠키 기반이라 access 토큰이 만료돼도 가능 | 공개(쿠키) |
 | GET | `/auth/me` | 내 정보 | 로그인 |
 
@@ -542,6 +545,8 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+> 구현 규칙(M27): 승인 범위는 `read:user user:email`. 콜백 주소는 `APP_URL`(없으면 운영 도메인) 기준 `/api/v1/auth/github/callback` 으로 고정해 Host 헤더 조작을 막는다. GitHub 응답에서 `verified && primary` 이메일이 없으면 거절한다. 액세스 토큰은 저장·로그하지 않고 이 요청 안에서만 쓰며, GitHub 호출은 8초 제한을 둔다. 이메일이 같아도 이미 *다른* `github_id` 가 연결된 계정에는 연결하지 않는다.
 
 #### GitHub (M26)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -938,6 +943,7 @@ team-pm-app/
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
 | **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
+| **M27** | GitHub 로그인 | GitHub OAuth App 으로 로그인/가입한다(`users.github_id`·`github_login`, 마이그레이션 023). GitHub 가 **인증했다고 알려 주는 기본 이메일**만 믿고, ① 같은 `github_id` 계정이 있으면 로그인 ② 같은 이메일의 기존 계정이 있으면 연결 후 로그인 ③ 없으면 새 계정(이메일 인증 완료로 간주, 가입 닫힘이면 거절). 비활성 계정은 거절. 비밀번호 없는 계정은 임의 해시를 두고 "비밀번호 찾기"로 나중에 설정할 수 있다. CSRF 는 `state`(10분짜리 httpOnly 쿠키)로 막는다. `GITHUB_CLIENT_ID`·`GITHUB_CLIENT_SECRET` 이 둘 다 있어야 켜진다 |
 | **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 목록·사이드바 상단 고정(`project_members.muted·pinned`, 마이그레이션 020, 개인 설정, §1.2·§2.2) |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 

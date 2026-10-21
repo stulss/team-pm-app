@@ -3673,6 +3673,74 @@ try {
     }
   }
 
+  // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인
+  {
+    const usersRepo = await import('../src/modules/users/repository.js');
+    const gid = 900000000 + Math.floor(Math.random() * 1000000);
+    const ghEmail = `smoke-${run}-gh@example.test`;
+
+    const prov = await call('GET', '/auth/providers');
+    check(
+      'GitHub 로그인: /auth/providers 가 공개로 켜짐 여부를 알려 준다',
+      prov.status === 200 && typeof prov.body.github === 'boolean',
+    );
+    if (!prov.body.github) {
+      check(
+        'GitHub 로그인: 키가 없으면 시작은 404',
+        (await fetch(`${BASE}/auth/github/start`, { redirect: 'manual' })).status === 404,
+      );
+    } else {
+      const start = await fetch(`${BASE}/auth/github/start`, { redirect: 'manual' });
+      check(
+        'GitHub 로그인: 시작은 GitHub 승인 화면으로 302 + state 쿠키',
+        start.status === 302 &&
+          start.headers.get('location').startsWith('https://github.com/login/oauth/authorize') &&
+          (start.headers.get('set-cookie') ?? '').includes('gh_oauth_state='),
+      );
+    }
+    const noState = await fetch(`${BASE}/auth/github/callback?code=x&state=forged`, {
+      redirect: 'manual',
+    });
+    check(
+      'GitHub 로그인: state 쿠키 없이 온 콜백은 로그인 화면으로 돌려보낸다(세션 없음)',
+      noState.status === 302 &&
+        /\/login\?github=(bad_state|disabled)$/.test(noState.headers.get('location')) &&
+        !(noState.headers.get('set-cookie') ?? '').includes('refresh_token='),
+    );
+
+    const created = await usersRepo.insertGithubUser(db, {
+      email: ghEmail,
+      passwordHash: 'x'.repeat(60),
+      name: 'smoke-gh',
+      githubId: gid,
+      login: 'smoke-gh',
+    });
+    check(
+      'GitHub 로그인: 가입 SQL 이 member 로 만들고 이메일을 인증 완료로 둔다',
+      created?.role === 'member' && created.email_verified_at !== null,
+    );
+    const found = await usersRepo.findByGithubId(gid);
+    check('GitHub 로그인: github_id 로 사용자를 찾는다', found?.email === ghEmail);
+
+    let dup = false;
+    try {
+      await db.query('UPDATE users SET github_id = $1 WHERE id = $2', [gid, people.member.id]);
+    } catch {
+      dup = true;
+    }
+    check('GitHub 로그인: DB 유일 인덱스가 같은 github_id 의 중복 연결을 거부', dup);
+
+    await usersRepo.linkGithub(people.outsider.id, gid + 1, 'smoke-link');
+    const linked = await db.query(
+      'SELECT github_id::text AS id, github_login FROM users WHERE id = $1',
+      [people.outsider.id],
+    );
+    check(
+      'GitHub 로그인: 기존 계정에 github_id·login 이 연결된다',
+      linked.rows[0].id === String(gid + 1) && linked.rows[0].github_login === 'smoke-link',
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

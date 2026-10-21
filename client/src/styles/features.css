@@ -1668,3 +1668,28 @@ dialog.palette::backdrop {
 .commit-ref {
   font-size: 0.75rem;
 }
+
+/* GitHub 로그인 (M27) */
+.github-login {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: var(--control-h);
+  padding: 0.4rem 0.9rem;
+  font-weight: 550;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  text-decoration: none;
+}
+
+.github-login:hover {
+  background: var(--surface-2);
+}
+
+.auth-divider {
+  margin: 0.25rem 0;
+  text-align: center;
+}

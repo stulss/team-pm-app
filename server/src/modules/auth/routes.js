@@ -6,6 +6,16 @@ import { authenticate } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { loginLimiter, mailLimiter, registerLimiter } from '../../middleware/rateLimit.js';
 import * as service from './service.js';
+import {
+  authorizeUrl,
+  fetchProfile,
+  githubEnabled,
+  loginWithProfile,
+  newState,
+  sameState,
+} from './github.js';
+import { appUrl } from '../../utils/mailTemplates.js';
+import { logger } from '../../utils/logger.js';
 
 export const COOKIE_NAME = 'refresh_token';
 
@@ -101,4 +111,49 @@ authRouter.post('/reset-password', validate(resetSchema), async (req, res) => {
   await service.resetPassword(req.body.token, req.body.password);
   res.clearCookie(COOKIE_NAME, refreshCookieOptions);
   res.json({ ok: true });
+});
+
+// ---- GitHub 로그인 (M27) ----
+const STATE_COOKIE = 'gh_oauth_state';
+// 콜백은 github.com 에서 넘어오는 요청이므로 state 쿠키는 Lax 여야 한다. 이 경로로만 전송된다.
+const stateCookieOptions = {
+  httpOnly: true,
+  secure: env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  path: '/api/v1/auth/github',
+};
+
+authRouter.get('/providers', (req, res) => {
+  res.json({ github: githubEnabled() });
+});
+
+authRouter.get('/github/start', loginLimiter, (req, res) => {
+  if (!githubEnabled()) {
+    return res
+      .status(404)
+      .json({ error: { code: 'NOT_FOUND', message: 'GitHub 로그인이 꺼져 있습니다.' } });
+  }
+  const state = newState();
+  res.cookie(STATE_COOKIE, state, { ...stateCookieOptions, maxAge: 10 * 60 * 1000 });
+  res.redirect(302, authorizeUrl(state));
+});
+
+authRouter.get('/github/callback', loginLimiter, async (req, res) => {
+  const back = (reason) => res.redirect(302, `${appUrl()}/login?github=${reason}`);
+  const expected = req.cookies?.[STATE_COOKIE];
+  res.clearCookie(STATE_COOKIE, stateCookieOptions);
+  if (!githubEnabled()) return back('disabled');
+  if (req.query.error) return back('denied');
+  if (!sameState(expected, req.query.state) || typeof req.query.code !== 'string') {
+    return back('bad_state');
+  }
+  try {
+    const session = await loginWithProfile(await fetchProfile(req.query.code));
+    setRefreshCookie(res, session.refreshToken);
+    res.redirect(302, `${appUrl()}/`);
+  } catch (err) {
+    if (err.code !== 'GITHUB_LOGIN_FAILED')
+      logger.error({ err: err.message }, 'github login failed');
+    back(err.code === 'GITHUB_LOGIN_FAILED' ? err.message : 'error');
+  }
 });

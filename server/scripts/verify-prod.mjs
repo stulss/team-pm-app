@@ -201,6 +201,13 @@ async function readChecks(label, who) {
           tasks.every((x) => Array.isArray(x.pullRequests)),
       );
     }
+    if (label === 'A') {
+      const prov = await call('GET', '/auth/providers', {});
+      check(
+        'GitHub 로그인: /auth/providers 가 공개로 응답 (M27)',
+        prov.status === 200 && typeof prov.body?.github === 'boolean',
+      );
+    }
     // 웹훅은 로그인 없이 서명으로만 통과한다 — 없는 연결은 존재 여부를 알리지 않고 401
     if (label === 'A') {
       const hook = await fetch(`${BASE_ORIGIN}/api/webhooks/github/${randomUUID()}`, {

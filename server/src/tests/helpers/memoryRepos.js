@@ -102,6 +102,32 @@ export const usersRepo = {
     store.users.push(user);
     return pub(user);
   },
+  async insertGithubUser(client, { email, passwordHash, name, githubId, login }) {
+    if (store.users.some((u) => u.email === email)) {
+      throw Object.assign(new Error('duplicate key'), { code: '23505' });
+    }
+    const user = {
+      id: crypto.randomUUID(),
+      email,
+      password_hash: passwordHash,
+      name,
+      role: store.users.length === 0 ? 'admin' : 'member',
+      is_active: true,
+      created_at: new Date(),
+      email_verified_at: new Date(),
+      github_id: githubId,
+      github_login: login,
+    };
+    store.users.push(user);
+    return pub(user);
+  },
+  async findByGithubId(githubId) {
+    return store.users.find((u) => String(u.github_id) === String(githubId)) ?? null;
+  },
+  async linkGithub(id, githubId, login) {
+    const u = store.users.find((x) => x.id === id);
+    if (u) Object.assign(u, { github_id: githubId, github_login: login });
+  },
   async countUsers() {
     return store.users.length;
   },

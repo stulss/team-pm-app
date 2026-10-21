@@ -42,6 +42,9 @@ const schema = z.object({
   MAIL_FROM_NAME: z.string().min(1).default('Team PM'),
   // 메일 링크의 기준 주소(예: https://team-pm-app-sand.vercel.app). 없으면 Vercel 운영 도메인 변수를 쓴다.
   APP_URL: z.url().optional(),
+  // GitHub 로그인(OAuth App). 둘 다 있어야 켜진다. 콜백: <APP_URL>/api/v1/auth/github/callback
+  GITHUB_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
   // 공개 가입을 열어 두므로 무료 DB 용량을 지키기 위한 사용량 상한(Admin 은 프로젝트 수 제한 없음).
   MAX_PROJECTS_PER_USER: z.coerce.number().int().positive().default(20),
   MAX_MEMBERS_PER_PROJECT: z.coerce.number().int().positive().default(50),

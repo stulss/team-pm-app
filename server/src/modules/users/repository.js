@@ -29,6 +29,32 @@ export async function insertUser(client, { email, passwordHash, name }) {
   return rows[0];
 }
 
+// GitHub 로그인으로 처음 가입하는 사용자. 이메일은 GitHub 가 인증했으므로 인증 완료로 만든다.
+export async function insertGithubUser(client, { email, passwordHash, name, githubId, login }) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('users:first-admin'))");
+  const { rows } = await client.query(
+    `INSERT INTO users (email, password_hash, name, role, email_verified_at, github_id, github_login)
+     VALUES ($1, $2, $3,
+       CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'member'::user_role ELSE 'admin'::user_role END,
+       now(), $4, $5)
+     RETURNING ${PUBLIC_COLUMNS}`,
+    [email, passwordHash, name, githubId, login],
+  );
+  return rows[0];
+}
+
+export async function findByGithubId(githubId) {
+  const { rows } = await query('SELECT * FROM users WHERE github_id = $1', [githubId]);
+  return rows[0] ?? null;
+}
+
+export async function linkGithub(id, githubId, login) {
+  await query(
+    'UPDATE users SET github_id = $2, github_login = $3, updated_at = now() WHERE id = $1',
+    [id, githubId, login],
+  );
+}
+
 export async function countUsers() {
   const { rows } = await query('SELECT count(*)::int AS n FROM users');
   return rows[0].n;
