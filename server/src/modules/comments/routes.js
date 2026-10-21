@@ -7,6 +7,7 @@ import { requireCommentAccess } from '../../middleware/requireCommentAccess.js';
 import { emitToProject } from '../../sockets/emitter.js';
 import { notifyCommentAdded, notifyMentioned } from '../notifications/service.js';
 import { record } from '../activity/service.js';
+import { REACTION_KEYS } from '../../utils/reactions.js';
 import * as service from './service.js';
 
 const body = z.object({
@@ -18,6 +19,8 @@ const body = z.object({
   // 자동완성에서 고른 멘션 대상. 본문에 @이름 이 실제로 있어야 하고, 프로젝트 멤버여야 한다.
   mentionIds: z.array(z.uuid('올바르지 않은 사용자 ID 입니다.')).max(10).optional(),
 });
+
+const reactionParams = z.object({ id: z.uuid(), key: z.enum(REACTION_KEYS) });
 
 // /tasks/:id/comments
 export const taskCommentsRouter = Router({ mergeParams: true });
@@ -98,3 +101,24 @@ commentsRouter.delete('/:id', requireCommentAccess(), async (req, res) => {
   });
   res.status(204).end();
 });
+
+// 반응 달기(PUT)·거두기(DELETE): 갱신된 댓글을 돌려주고 다른 사용자에게는 comment:updated 로 알린다.
+for (const [method, on] of [
+  ['put', true],
+  ['delete', false],
+]) {
+  commentsRouter[method](
+    '/:id/reactions/:key',
+    validate(reactionParams, 'params'),
+    requireCommentAccess(),
+    async (req, res) => {
+      const comment = await service.react(req.comment, req.project, req.user, req.params.key, on);
+      await emitToProject(req, req.project.id, 'comment:updated', {
+        projectId: req.project.id,
+        taskId: comment.taskId,
+        comment,
+      });
+      res.json(comment);
+    },
+  );
+}

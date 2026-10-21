@@ -10,6 +10,7 @@ export const toMessage = (row) =>
     body: row.body,
     author: row.author_id ? { id: row.author_id, name: row.author_name } : null,
     mentions: row.mentions ?? [],
+    reactions: row.reactions ?? [],
     createdAt: row.created_at,
   };
 
@@ -19,7 +20,15 @@ const SELECT = `
            (SELECT json_agg(json_build_object('id', cm.user_id, 'name', cm.name)
                             ORDER BY cm.created_at, cm.user_id)
             FROM chat_message_mentions cm WHERE cm.message_id = m.id),
-           '[]'::json) AS mentions
+           '[]'::json) AS mentions,
+         COALESCE(
+           (SELECT json_agg(json_build_object('key', g.emoji, 'users', g.users) ORDER BY g.first_at)
+            FROM (SELECT r.emoji, min(r.created_at) AS first_at,
+                         json_agg(json_build_object('id', ru.id, 'name', ru.name)
+                                  ORDER BY r.created_at, ru.id) AS users
+                  FROM chat_message_reactions r JOIN users ru ON ru.id = r.user_id
+                  WHERE r.message_id = m.id GROUP BY r.emoji) g),
+           '[]'::json) AS reactions
   FROM chat_messages m
   LEFT JOIN users u ON u.id = m.author_id`;
 
@@ -88,4 +97,20 @@ export async function deleteOlderThan(days) {
     [String(days)],
   );
   return rowCount;
+}
+
+// 반응을 달거나(on) 거둔다. 이미 있는 반응을 다시 달아도 그대로다(멱등).
+export async function setReaction(messageId, userId, emoji, on) {
+  if (on) {
+    await query(
+      `INSERT INTO chat_message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [messageId, userId, emoji],
+    );
+  } else {
+    await query(
+      'DELETE FROM chat_message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3',
+      [messageId, userId, emoji],
+    );
+  }
 }

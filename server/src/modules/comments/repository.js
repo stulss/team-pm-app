@@ -10,6 +10,7 @@ export const toComment = (row) =>
     // 삭제된 댓글은 본문을 가린다.
     body: row.deleted_at ? DELETED_BODY : row.body,
     mentions: row.deleted_at ? [] : (row.mentions ?? []),
+    reactions: row.deleted_at ? [] : (row.reactions ?? []),
     deleted: Boolean(row.deleted_at),
     edited: !row.deleted_at && new Date(row.updated_at) > new Date(row.created_at),
     createdAt: row.created_at,
@@ -22,7 +23,15 @@ const SELECT = `
            (SELECT json_agg(json_build_object('id', cm.user_id, 'name', cm.name)
                             ORDER BY cm.created_at, cm.user_id)
             FROM comment_mentions cm WHERE cm.comment_id = c.id),
-           '[]'::json) AS mentions
+           '[]'::json) AS mentions,
+         COALESCE(
+           (SELECT json_agg(json_build_object('key', g.emoji, 'users', g.users) ORDER BY g.first_at)
+            FROM (SELECT r.emoji, min(r.created_at) AS first_at,
+                         json_agg(json_build_object('id', ru.id, 'name', ru.name)
+                                  ORDER BY r.created_at, ru.id) AS users
+                  FROM comment_reactions r JOIN users ru ON ru.id = r.user_id
+                  WHERE r.comment_id = c.id GROUP BY r.emoji) g),
+           '[]'::json) AS reactions
   FROM comments c
   JOIN users u ON u.id = c.author_id
   JOIN tasks t ON t.id = c.task_id`;
@@ -95,4 +104,20 @@ export async function softDelete(id) {
     [id],
   );
   return rowCount === 1;
+}
+
+// 반응을 달거나(on) 거둔다. 이미 있는 반응을 다시 달아도 그대로다(멱등).
+export async function setReaction(commentId, userId, emoji, on) {
+  if (on) {
+    await query(
+      `INSERT INTO comment_reactions (comment_id, user_id, emoji) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [commentId, userId, emoji],
+    );
+  } else {
+    await query(
+      'DELETE FROM comment_reactions WHERE comment_id = $1 AND user_id = $2 AND emoji = $3',
+      [commentId, userId, emoji],
+    );
+  }
 }

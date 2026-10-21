@@ -1575,3 +1575,52 @@ button.tl-bar.cut-right {
 .tl-empty {
   padding: 0.75rem 0.25rem;
 }
+
+/* 이모지 반응 (M19) */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+button.reaction {
+  padding: 0.05rem 0.45rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button.reaction.on,
+button.reaction[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.reaction-add {
+  position: relative;
+  display: inline-flex;
+}
+
+.reaction-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  width: max-content;
+  max-width: min(16rem, 80vw);
+  margin-top: 0.2rem;
+  padding: 0.3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}

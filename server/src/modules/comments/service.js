@@ -53,6 +53,14 @@ export async function update(comment, project, user, body, mentionIds) {
   return repo.toComment(updated);
 }
 
+// 반응은 멤버면 누구나 달 수 있고, 본문을 바꾸지 않으므로 updated_at 도 건드리지 않는다.
+export async function react(comment, project, user, key, on) {
+  assertWritable(project);
+  if (comment.deleted_at) throw notFound('댓글을 찾을 수 없습니다.');
+  await repo.setReaction(comment.id, user.id, key, on);
+  return repo.toComment(await repo.findById(comment.id));
+}
+
 export async function remove(comment, project, user) {
   assertWritable(project);
   if (comment.deleted_at) throw notFound('댓글을 찾을 수 없습니다.');

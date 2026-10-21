@@ -87,6 +87,7 @@ export function useProjectRealtime(projectId) {
       'label:changed': refetchLabels,
       'chat:created': refetchChat,
       'chat:deleted': refetchChat,
+      'chat:updated': refetchChat,
     };
 
     socket.on('connect', onConnect);

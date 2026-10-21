@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { deleteChat, listChat, sendChat } from '../../api/chat.js';
+import { deleteChat, listChat, reactChat, sendChat } from '../../api/chat.js';
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { formatWhen } from '../../constants/activity.js';
 import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
 import MentionTextarea from '../task/MentionTextarea.jsx';
+import ReactionBar from '../common/ReactionBar.jsx';
 
 const MAX_LENGTH = 2000;
 
@@ -50,7 +51,11 @@ export default function ChatPanel({ project, archived = false }) {
     mutationFn: (id) => deleteChat(project.id, id),
     onSuccess: refresh,
   });
-  const mutationError = [send, remove].find((m) => m.isError)?.error;
+  const react = useMutation({
+    mutationFn: ({ id, emoji, on }) => reactChat(project.id, id, emoji, on),
+    onSuccess: refresh,
+  });
+  const mutationError = [send, remove, react].find((m) => m.isError)?.error;
 
   const canDelete = (m) =>
     !archived && (m.author?.id === user.id || user.role === 'admin' || project.ownerId === user.id);
@@ -102,6 +107,13 @@ export default function ChatPanel({ project, archived = false }) {
                   )}
                 </div>
                 <p className="chat-body">{renderWithMentions(m.body, m.mentions)}</p>
+                <ReactionBar
+                  reactions={m.reactions}
+                  meId={user.id}
+                  readOnly={archived}
+                  pending={react.isPending}
+                  onToggle={(emoji, on) => react.mutate({ id: m.id, emoji, on })}
+                />
               </li>
             ))}
           </ul>

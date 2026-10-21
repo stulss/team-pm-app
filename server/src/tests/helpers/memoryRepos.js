@@ -25,6 +25,8 @@ export const store = {
   checklist: [],
   savedFilters: [],
   deps: [],
+  commentReactions: [],
+  chatReactions: [],
 };
 
 export function reset() {
@@ -47,6 +49,8 @@ export function reset() {
   store.checklist = [];
   store.savedFilters = [];
   store.deps = [];
+  store.commentReactions = [];
+  store.chatReactions = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -60,6 +64,19 @@ const pub = (u) => ({
   created_at: u.created_at,
   email_verified_at: u.email_verified_at ?? null,
 });
+
+let reactionSeq = 0;
+// 반응 행을 [{ key, users: [{id,name}] }] 로 묶는다(처음 달린 순서). SQL 의 json_agg 와 같은 모양.
+const groupReactions = (rows) => {
+  const byKey = new Map();
+  for (const r of [...rows].sort((a, b) => a.at - b.at)) {
+    if (!byKey.has(r.emoji)) byKey.set(r.emoji, []);
+    byKey
+      .get(r.emoji)
+      .push({ id: r.user_id, name: store.users.find((u) => u.id === r.user_id)?.name });
+  }
+  return [...byKey].map(([key, users]) => ({ key, users }));
+};
 
 export const usersRepo = {
   async insertUser(client, { email, passwordHash, name }) {
@@ -239,9 +256,22 @@ export const chatRepo = {
       body: row.body,
       author: row.author_id ? { id: row.author_id, name: row.author_name } : null,
       mentions: row.mentions ?? [],
+      reactions: row.reactions ?? [],
       createdAt: row.created_at,
     },
-  _withName: (m) => ({ ...m, author_name: store.users.find((u) => u.id === m.author_id)?.name }),
+  _withName: (m) => ({
+    ...m,
+    author_name: store.users.find((u) => u.id === m.author_id)?.name,
+    reactions: groupReactions(store.chatReactions.filter((r) => r.target_id === m.id)),
+  }),
+  async setReaction(messageId, userId, emoji, on) {
+    store.chatReactions = store.chatReactions.filter(
+      (r) => !(r.target_id === messageId && r.user_id === userId && r.emoji === emoji),
+    );
+    if (on) {
+      store.chatReactions.push({ target_id: messageId, user_id: userId, emoji, at: ++reactionSeq });
+    }
+  },
   async insert({ projectId, authorId, body, mentions = [] }) {
     chatSeq += 1;
     const row = {
@@ -270,6 +300,7 @@ export const chatRepo = {
   async remove(projectId, id) {
     const before = store.chat.length;
     store.chat = store.chat.filter((m) => !(m.project_id === projectId && m.id === id));
+    store.chatReactions = store.chatReactions.filter((r) => r.target_id !== id);
     return store.chat.length < before;
   },
   async trim(projectId, keep) {
@@ -1014,9 +1045,23 @@ const withAuthor = (c) => ({
   project_id: store.tasks.find((t) => t.id === c.task_id)?.project_id,
   task_title: store.tasks.find((t) => t.id === c.task_id)?.title,
   mentions: (c.mentions ?? []).map((m) => ({ ...m })),
+  reactions: groupReactions(store.commentReactions.filter((r) => r.target_id === c.id)),
 });
 
 export const commentsRepo = {
+  async setReaction(commentId, userId, emoji, on) {
+    store.commentReactions = store.commentReactions.filter(
+      (r) => !(r.target_id === commentId && r.user_id === userId && r.emoji === emoji),
+    );
+    if (on) {
+      store.commentReactions.push({
+        target_id: commentId,
+        user_id: userId,
+        emoji,
+        at: ++reactionSeq,
+      });
+    }
+  },
   async findById(id) {
     const c = store.comments.find((x) => x.id === id);
     return c ? withAuthor(c) : null;

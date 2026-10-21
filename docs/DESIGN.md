@@ -77,6 +77,10 @@ erDiagram
     projects ||--o{ saved_filters : has
     users ||--o{ saved_filters : saves
     tasks ||--o{ task_dependencies : "is blocked by"
+    comments ||--o{ comment_reactions : receives
+    chat_messages ||--o{ chat_message_reactions : receives
+    users ||--o{ comment_reactions : reacts
+    users ||--o{ chat_message_reactions : reacts
 
     users {
         uuid id PK
@@ -210,6 +214,18 @@ erDiagram
         uuid created_by FK "nullable"
         timestamptz created_at
     }
+    comment_reactions {
+        uuid comment_id PK
+        uuid user_id PK
+        varchar emoji PK "허용 키 8종(CHECK)"
+        timestamptz created_at
+    }
+    chat_message_reactions {
+        uuid message_id PK
+        uuid user_id PK
+        varchar emoji PK "허용 키 8종(CHECK)"
+        timestamptz created_at
+    }
     task_dependencies {
         uuid task_id PK "이 작업은"
         uuid depends_on_id PK "이 선행 작업이 끝나야 시작할 수 있다"
@@ -318,6 +334,11 @@ erDiagram
 - `labels`: 프로젝트별 라벨(프로젝트당 최대 20개). 이름은 `(project_id, lower(name))` 유일. 색은 정해진 팔레트 키만 허용(CHECK).
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
+
+**comment_reactions / chat_message_reactions** (M19 이모지 반응, 마이그레이션 017)
+- 댓글·채팅 메시지에 이모지 반응을 단다. 기본키 `(대상 id, user_id, emoji)` 라 **같은 사람이 같은 이모지를 두 번 달 수 없고**, 서로 다른 이모지는 여러 개 달 수 있다(최대 8종). 대상(댓글·메시지)이나 사용자가 지워지면 `ON DELETE CASCADE` 로 함께 사라진다.
+- `emoji` 는 이모지 문자가 아니라 **키**를 저장하고 `CHECK` 로 허용 목록만 받는다: `thumbs_up`(👍) `heart`(❤️) `laugh`(😄) `party`(🎉) `wow`(😮) `thanks`(🙏) `eyes`(👀) `check`(✅). 화면의 그림 매핑은 클라이언트가 한다.
+- 반응한 사람의 이름은 같은 프로젝트 멤버에게 보여도 되므로(툴팁) 응답에 포함한다. 투표(M15)와 달리 익명이 아니다. 새 테이블 2개는 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `(대상 id, created_at)`.
 
 **tasks.start_date / task_dependencies** (M18 의존성·타임라인, 마이그레이션 016)
 - `tasks.start_date`(date, 선택): 타임라인 막대의 시작. `CHECK (start_date IS NULL OR due_date IS NULL OR start_date <= due_date)`. 막대는 `start_date`(없으면 `due_date`)부터 `due_date`(없으면 `start_date`)까지이고, 둘 다 없으면 타임라인 밖의 "날짜 없음" 목록에 둔다.
@@ -474,6 +495,16 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+#### Reactions (M19)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| PUT | `/comments/:id/reactions/:key` | 댓글에 반응 달기(이미 있으면 그대로, 멱등) → 갱신된 댓글 | 멤버 (보관 409, 삭제된 댓글 404, 허용되지 않은 키 400) |
+| DELETE | `/comments/:id/reactions/:key` | 내 반응 거두기(없어도 200) → 갱신된 댓글 | 멤버 (보관 409, 삭제된 댓글 404) |
+| PUT | `/projects/:id/chat/:messageId/reactions/:key` | 채팅 메시지에 반응 달기 → 갱신된 메시지 | 멤버 (보관 409, 없는 메시지 404) |
+| DELETE | `/projects/:id/chat/:messageId/reactions/:key` | 내 반응 거두기 → 갱신된 메시지 | 멤버 (보관 409, 없는 메시지 404) |
+
+> 구현 규칙(M19): 댓글·채팅 메시지 응답에 `reactions: [{ key, users: [{id,name}] }]` 가 붙는다(처음 달린 순서, 삭제된 댓글은 빈 배열). 개수는 `users.length`, 내가 달았는지는 클라이언트가 `users` 에서 내 id 로 판단한다 — 그래서 모든 사용자에게 같은 페이로드를 보낼 수 있다. 반응이 바뀌면 댓글은 `comment:updated`, 채팅은 `chat:updated` `{ projectId, message }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다. 반응은 본문을 바꾸지 않으므로 "(수정됨)" 표시와 `updated_at` 에 영향이 없다.
 
 #### Dependencies (M18)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -651,6 +682,7 @@ erDiagram
 | S→C | `activity:created` | `{ projectId, taskId }` | 활동 기록이 저장됨(요청자 포함 전원). 클라이언트는 활동 목록을 다시 불러온다 |
 | S→C | `poll:changed` | `{ projectId, pollId }` | 투표가 만들어지거나 표·마감·삭제로 바뀜(요청자 소켓 제외). 클라이언트는 투표 목록을 다시 불러온다 |
 | S→C | `label:changed` | `{ projectId }` | 라벨이 만들어지거나 바뀌거나 삭제됨(요청자 소켓 제외). 클라이언트는 라벨·작업 목록을 다시 불러온다 |
+| S→C | `chat:updated` | `{ projectId, message }` | 채팅 메시지의 반응이 바뀜(요청자 소켓 제외). 클라이언트는 채팅 목록을 다시 불러온다 |
 | S→C | `chat:created` | `{ projectId, message }` | 채팅 메시지가 저장됨(요청자 소켓 제외) |
 | S→C | `chat:deleted` | `{ projectId, messageId }` | 채팅 메시지가 삭제됨(요청자 소켓 제외) |
 | S→C | `task:created` | `{ task }` | 작업 생성 |
@@ -825,7 +857,9 @@ team-pm-app/
 | **M16** | 하위 작업·라벨 | 작업별 체크리스트(진행률 `done/total` 카드 표시)와 프로젝트 라벨(색 팔레트, 필터) — `checklist_items`·`labels`·`task_labels`, 마이그레이션 014, §1.2·§2.2 |
 | **M17** | 캘린더 보기 + 저장된 필터 | 목록(표) 보기는 이미 있어 월간 캘린더(마감일 기준) 보기를 추가하고, 필터 조합을 이름 붙여 저장(`saved_filters`, 마이그레이션 015, 개인용, §1.2·§2.2) |
 | **M18** | 의존성·타임라인 | 작업 선후 관계(순환 방지, 소프트)와 시작일~마감일 막대 타임라인(간트) — `tasks.start_date`·`task_dependencies`, 마이그레이션 016, §1.2·§2.2 |
-| **M19** | 이모지 반응·스레드·Ctrl+K | 댓글·채팅 이모지 반응, 댓글 답글 한 단계, 명령 팔레트(이동·검색·작업 만들기) |
+| **M19** | 이모지 반응 | 댓글·채팅 메시지에 이모지 반응 8종(`comment_reactions`·`chat_message_reactions`, 마이그레이션 017, §1.2·§2.2) |
+| **M20** | 댓글 스레드 | 댓글에 한 단계 답글 |
+| **M21** | Ctrl+K 명령 팔레트 | 키보드로 페이지 이동·검색·작업 만들기 |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 
 > 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.

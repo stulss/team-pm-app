@@ -1490,6 +1490,74 @@ try {
       for (const t of [depTaskA, depTaskB]) await apiCall('DELETE', `/tasks/${t.id}`, token);
     },
   );
+  // ---- 이모지 반응 (M19)
+  await step(
+    '반응(댓글): 한쪽이 달면 열려 있는 다른 화면에 개수·이름이 실시간 반영되고, 다시 누르면 거둠',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await card(rtManager, '둘째').click();
+      await card(rtMember, '둘째').click();
+      const mDlg = rtManager.getByRole('dialog');
+      const uDlg = rtMember.getByRole('dialog');
+      // 앞 단계에서 댓글이 모두 삭제돼 있으므로 새로 쓴다
+      await mDlg.getByLabel('새 댓글').fill('반응 테스트 댓글');
+      await mDlg.getByRole('button', { name: '댓글 등록' }).click();
+      const mComment = mDlg.locator('li.comment', { hasText: '반응 테스트 댓글' });
+      const uComment = uDlg.locator('li.comment', { hasText: '반응 테스트 댓글' });
+      await uComment.waitFor({ timeout: 5000 });
+
+      await uComment.getByRole('button', { name: '반응 추가' }).click();
+      await uComment.getByRole('button', { name: '좋아요 반응' }).click();
+      await uComment.getByRole('button', { name: '좋아요 1명: ui-member' }).waitFor();
+      await mComment
+        .getByRole('button', { name: '좋아요 1명: ui-member' })
+        .waitFor({ timeout: 5000 });
+
+      // 같은 반응을 다른 사람이 누르면 개수가 늘고, 눌린 상태(aria-pressed)와 이름이 보인다
+      await mComment.getByRole('button', { name: '좋아요 1명: ui-member' }).click();
+      const both = mComment.getByRole('button', {
+        name: /좋아요 2명: ui-member, ui-manager|좋아요 2명: ui-manager, ui-member/,
+      });
+      await both.waitFor();
+      if ((await both.getAttribute('aria-pressed')) !== 'true')
+        throw new Error('내가 누른 표시 없음');
+      await uComment.getByRole('button', { name: /좋아요 2명/ }).waitFor({ timeout: 5000 });
+
+      // 내 반응만 거둔다
+      await both.click();
+      await mComment.getByRole('button', { name: '좋아요 1명: ui-member' }).waitFor();
+      await uComment
+        .getByRole('button', { name: '좋아요 1명: ui-member' })
+        .waitFor({ timeout: 5000 });
+      if ((await mComment.locator('.comment-meta').getByText('(수정됨)').count()) !== 0) {
+        throw new Error('반응이 수정됨 표시를 만듦');
+      }
+      for (const p of [rtManager, rtMember]) await closeDialog(p);
+    },
+  );
+  await step(
+    '반응(채팅): 메시지에 반응을 달면 상대 화면에 실시간 반영되고 다시 누르면 거둠',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const mChat = rtManager.getByRole('region', { name: '프로젝트 채팅' });
+      const uChat = rtMember.getByRole('region', { name: '프로젝트 채팅' });
+      await mChat.getByLabel('채팅 메시지').fill('반응 테스트 메시지');
+      await mChat.getByRole('button', { name: '보내기' }).click();
+      const uMsg = uChat.locator('li.chat-msg', { hasText: '반응 테스트 메시지' });
+      const mMsg = mChat.locator('li.chat-msg', { hasText: '반응 테스트 메시지' });
+      await uMsg.waitFor({ timeout: 5000 });
+
+      await uMsg.getByRole('button', { name: '반응 추가' }).click();
+      await uMsg.getByRole('button', { name: '축하 반응' }).click();
+      await uMsg.getByRole('button', { name: '축하 1명: ui-member' }).waitFor();
+      await mMsg.getByRole('button', { name: '축하 1명: ui-member' }).waitFor({ timeout: 5000 });
+      await uMsg.getByRole('button', { name: '축하 1명: ui-member' }).click();
+      await pollUntil(
+        async () => (await mMsg.getByRole('button', { name: /축하/ }).count()) === 0,
+        '채팅 반응 거두기 반영',
+      );
+    },
+  );
   await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {

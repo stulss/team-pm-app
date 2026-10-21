@@ -6,6 +6,7 @@ import { requireProjectMember } from '../../middleware/requireProjectMember.js';
 import { chatSendLimiter } from '../../middleware/rateLimit.js';
 import { emitToProject } from '../../sockets/emitter.js';
 import { notifyChatMentioned } from '../notifications/service.js';
+import { REACTION_KEYS } from '../../utils/reactions.js';
 import * as service from './service.js';
 
 const listQuery = z.object({
@@ -22,6 +23,7 @@ const sendBody = z.object({
   mentionIds: z.array(z.uuid('올바르지 않은 사용자 ID 입니다.')).max(10).optional(),
 });
 const deleteParams = z.object({ id: z.uuid(), messageId: z.uuid() });
+const reactionParams = deleteParams.extend({ key: z.enum(REACTION_KEYS) });
 
 // /projects/:id/chat
 export const projectChatRouter = Router({ mergeParams: true });
@@ -69,3 +71,29 @@ projectChatRouter.delete(
     res.status(204).end();
   },
 );
+
+// 반응 달기(PUT)·거두기(DELETE): 갱신된 메시지를 돌려주고 다른 사용자에게는 chat:updated 로 알린다.
+for (const [method, on] of [
+  ['put', true],
+  ['delete', false],
+]) {
+  projectChatRouter[method](
+    '/:messageId/reactions/:key',
+    validate(reactionParams, 'params'),
+    requireProjectMember(),
+    async (req, res) => {
+      const message = await service.react(
+        req.project,
+        req.user,
+        req.params.messageId,
+        req.params.key,
+        on,
+      );
+      await emitToProject(req, req.project.id, 'chat:updated', {
+        projectId: req.project.id,
+        message,
+      });
+      res.json(message);
+    },
+  );
+}

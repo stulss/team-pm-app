@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createComment, deleteComment, listComments, updateComment } from '../../api/comments.js';
+import {
+  createComment,
+  deleteComment,
+  listComments,
+  reactComment,
+  updateComment,
+} from '../../api/comments.js';
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
 import MentionTextarea from './MentionTextarea.jsx';
+import ReactionBar from '../common/ReactionBar.jsx';
 
 const formatTime = (iso) =>
   new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
@@ -48,7 +55,11 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
     },
   });
   const remove = useMutation({ mutationFn: (id) => deleteComment(id), onSuccess: refresh });
-  const mutationError = [add, save, remove].find((m) => m.isError)?.error;
+  const react = useMutation({
+    mutationFn: ({ id, key, on }) => reactComment(id, key, on),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
+  });
+  const mutationError = [add, save, remove, react].find((m) => m.isError)?.error;
 
   const comments = data?.data ?? [];
   const canDelete = (c) =>
@@ -137,6 +148,15 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
               <p className={c.deleted ? 'comment-body muted' : 'comment-body'}>
                 {c.deleted ? c.body : renderWithMentions(c.body, c.mentions)}
               </p>
+            )}
+            {!c.deleted && editingId !== c.id && (
+              <ReactionBar
+                reactions={c.reactions}
+                meId={user.id}
+                readOnly={readOnly}
+                pending={react.isPending}
+                onToggle={(emoji, on) => react.mutate({ id: c.id, key: emoji, on })}
+              />
             )}
           </li>
         ))}

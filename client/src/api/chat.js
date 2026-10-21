@@ -9,3 +9,8 @@ export const sendChat = (projectId, body, mentionIds = []) =>
   http.post(`/projects/${projectId}/chat`, { body, mentionIds }).then(data);
 export const deleteChat = (projectId, messageId) =>
   http.delete(`/projects/${projectId}/chat/${messageId}`);
+// on=true 면 반응을 달고, false 면 거둔다. 갱신된 메시지를 돌려준다.
+export const reactChat = (projectId, messageId, key, on) =>
+  http[on ? 'put' : 'delete'](`/projects/${projectId}/chat/${messageId}/reactions/${key}`).then(
+    data,
+  );

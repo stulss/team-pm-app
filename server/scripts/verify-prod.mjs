@@ -11,6 +11,7 @@
 const BASE_ORIGIN = process.env.BASE_URL ?? 'https://team-pm-app-sand.vercel.app';
 const BASE = `${BASE_ORIGIN}/api/v1`;
 
+const REACTION_KEYS = ['thumbs_up', 'heart', 'laugh', 'party', 'wow', 'thanks', 'eyes', 'check'];
 let failed = 0;
 const check = (label, ok, extra = '') => {
   if (!ok) failed += 1;
@@ -125,6 +126,14 @@ async function readChecks(label, who) {
       `${label}: 채팅 목록 (200, data/nextCursor)`,
       chat.status === 200 && 'nextCursor' in chat.body,
     );
+    check(
+      `${label}: 채팅 메시지에 reactions 가 있고 허용된 키만 쓰임`,
+      (chat.body?.data ?? []).every(
+        (m) =>
+          Array.isArray(m.reactions) &&
+          m.reactions.every((r) => REACTION_KEYS.includes(r.key) && r.users.length > 0),
+      ),
+    );
     check(`${label}: 투표 목록 (200)`, polls.status === 200 && Array.isArray(polls.body?.data));
     const anonymous = (polls.body?.data ?? []).every(
       (p) =>
@@ -165,6 +174,15 @@ async function readChecks(label, who) {
         ),
     );
     if (tasks[0]) {
+      const comments = await call('GET', `/tasks/${tasks[0].id}/comments`, { token: t });
+      check(
+        `${label}: 댓글에 reactions 가 있고 허용된 키만 쓰임`,
+        comments.status === 200 &&
+          comments.body.data.every(
+            (c) =>
+              Array.isArray(c.reactions) && c.reactions.every((r) => REACTION_KEYS.includes(r.key)),
+          ),
+      );
       const items = await call('GET', `/tasks/${tasks[0].id}/checklist`, { token: t });
       check(
         `${label}: 체크리스트 (200) 개수가 작업의 total 과 일치`,

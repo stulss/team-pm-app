@@ -33,6 +33,14 @@ export async function send(project, user, body, mentionIds) {
   return message;
 }
 
+export async function react(project, user, messageId, key, on) {
+  assertWritable(project);
+  const message = await repo.findById(project.id, messageId);
+  if (!message) throw notFound('메시지를 찾을 수 없습니다.');
+  await repo.setReaction(message.id, user.id, key, on);
+  return repo.toMessage(await repo.findById(project.id, messageId));
+}
+
 export async function remove(project, user, messageId) {
   assertWritable(project);
   const message = await repo.findById(project.id, messageId);

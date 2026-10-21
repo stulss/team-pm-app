@@ -2754,6 +2754,165 @@ try {
     );
   }
 
+  // --- 이모지 반응 (M19): 집계 SQL, 기본키 멱등, CHECK, 동시 요청, RLS, CASCADE 를 실제 DB 로 확인
+  {
+    const rpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-react', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const task = (
+      await call('POST', `/projects/${rpid}/tasks`, {
+        token: t('member'),
+        body: { title: 'smoke-react 작업' },
+      })
+    ).body;
+    const comment = (
+      await call('POST', `/tasks/${task.id}/comments`, {
+        token: t('member'),
+        body: { body: '반응 대상' },
+      })
+    ).body;
+    const message = (
+      await call('POST', `/projects/${rpid}/chat`, {
+        token: t('member'),
+        body: { body: '채팅 반응 대상' },
+      })
+    ).body;
+    const reactC = (who, key, method = 'PUT', id = comment.id) =>
+      call(method, `/comments/${id}/reactions/${key}`, { token: t(who) });
+    const reactM = (who, key, method = 'PUT', id = message.id) =>
+      call(method, `/projects/${rpid}/chat/${id}/reactions/${key}`, { token: t(who) });
+    const summary = (reactions) =>
+      reactions.map((r) => `${r.key}:${r.users.map((u) => u.name).join('+')}`).join();
+
+    check(
+      '새 댓글·메시지는 반응이 빈 배열',
+      comment.reactions.length === 0 && message.reactions.length === 0,
+    );
+    await reactC('manager', 'thumbs_up');
+    await reactC('member', 'heart');
+    const both = await reactC('member', 'thumbs_up');
+    check(
+      '댓글 반응 집계(json_agg): 키는 처음 달린 순서, 사용자 이름은 단 순서',
+      both.status === 200 &&
+        summary(both.body.reactions) === 'thumbs_up:smoke-manager+smoke-member,heart:smoke-member',
+      summary(both.body.reactions),
+    );
+    const listed = await call('GET', `/tasks/${task.id}/comments`, { token: t('manager') });
+    check(
+      '목록 조회에도 같은 반응이 실리고, 수정됨 표시는 생기지 않는다',
+      summary(listed.body.data[0].reactions) === summary(both.body.reactions) &&
+        listed.body.data[0].edited === false,
+    );
+    const again = await reactC('member', 'thumbs_up');
+    check(
+      '같은 반응을 다시 달아도 한 행 (기본키 멱등)',
+      again.status === 200 &&
+        (
+          await db.query(
+            `SELECT count(*)::int AS n FROM comment_reactions WHERE comment_id = $1 AND user_id = $2 AND emoji = 'thumbs_up'`,
+            [comment.id, people.member.id],
+          )
+        ).rows[0].n === 1,
+    );
+    const burst = await Promise.all([1, 2, 3, 4, 5].map(() => reactC('manager', 'party')));
+    check(
+      '같은 반응을 동시에 5번 달아도 모두 200 이고 한 행만 남는다',
+      burst.every((r) => r.status === 200) &&
+        (
+          await db.query(
+            `SELECT count(*)::int AS n FROM comment_reactions WHERE comment_id = $1 AND emoji = 'party'`,
+            [comment.id],
+          )
+        ).rows[0].n === 1,
+      burst.map((r) => r.status).join(),
+    );
+    const removed = await reactC('member', 'heart', 'DELETE');
+    check(
+      '내 반응 거두기: 사라지고 남의 반응은 그대로, 없는 반응 거두기도 200',
+      removed.status === 200 &&
+        !summary(removed.body.reactions).includes('heart') &&
+        summary(removed.body.reactions).includes('thumbs_up') &&
+        (await reactC('member', 'heart', 'DELETE')).status === 200,
+    );
+
+    let checkRejected = false;
+    try {
+      await db.query(
+        `INSERT INTO comment_reactions (comment_id, user_id, emoji) VALUES ($1, $2, 'fire')`,
+        [comment.id, people.member.id],
+      );
+    } catch {
+      checkRejected = true;
+    }
+    check(
+      '허용되지 않은 키는 API 400, DB CHECK 도 거부',
+      (await reactC('member', 'fire')).status === 400 && checkRejected,
+    );
+
+    // 채팅
+    await reactM('manager', 'laugh');
+    const chatReacted = await reactM('member', 'laugh');
+    const chatList = await call('GET', `/projects/${rpid}/chat`, { token: t('manager') });
+    check(
+      '채팅 반응 집계와 목록 조회',
+      summary(chatReacted.body.reactions) === 'laugh:smoke-manager+smoke-member' &&
+        summary(chatList.body.data[0].reactions) === 'laugh:smoke-manager+smoke-member',
+    );
+    check(
+      '없는 메시지는 404',
+      (await reactM('manager', 'laugh', 'PUT', '00000000-0000-4000-8000-000000000000')).status ===
+        404,
+    );
+
+    check(
+      '비멤버는 댓글·채팅 반응 403',
+      (await reactC('outsider', 'heart')).status === 403 &&
+        (await reactM('outsider', 'heart')).status === 403,
+    );
+    const rls = await db.query(
+      `SELECT relname FROM pg_class
+       WHERE relname IN ('comment_reactions','chat_message_reactions') AND relrowsecurity`,
+    );
+    check('comment_reactions / chat_message_reactions RLS 활성화', rls.rowCount === 2);
+
+    // 삭제와 CASCADE
+    await call('DELETE', `/comments/${comment.id}`, { token: t('member') });
+    const hidden = await call('GET', `/tasks/${task.id}/comments`, { token: t('manager') });
+    check(
+      '삭제된 댓글은 반응이 가려지고 새 반응은 404',
+      hidden.body.data[0].reactions.length === 0 &&
+        (await reactC('manager', 'heart')).status === 404,
+    );
+    await call('DELETE', `/projects/${rpid}/chat/${message.id}`, { token: t('member') });
+    check(
+      '채팅 메시지를 지우면 반응 행도 CASCADE 로 사라진다',
+      (await db.query('SELECT 1 FROM chat_message_reactions WHERE message_id = $1', [message.id]))
+        .rowCount === 0,
+    );
+
+    const live = (
+      await call('POST', `/projects/${rpid}/chat`, {
+        token: t('member'),
+        body: { body: '보관 전 메시지' },
+      })
+    ).body;
+    await call('PATCH', `/projects/${rpid}`, { token: t('manager'), body: { status: 'archived' } });
+    const archived = await reactM('manager', 'heart', 'PUT', live.id);
+    check(
+      '보관된 프로젝트: 반응 409 PROJECT_ARCHIVED',
+      archived.status === 409 && archived.body.error.code === 'PROJECT_ARCHIVED',
+    );
+    await call('DELETE', `/projects/${rpid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 댓글 반응 CASCADE',
+      (await db.query('SELECT 1 FROM comment_reactions WHERE comment_id = $1', [comment.id]))
+        .rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',
