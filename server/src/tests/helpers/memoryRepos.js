@@ -25,6 +25,9 @@ export const store = {
   checklist: [],
   savedFilters: [],
   deps: [],
+  githubConnections: [],
+  githubLinks: [],
+  githubDeliveries: [],
   commentReactions: [],
   chatReactions: [],
 };
@@ -49,6 +52,9 @@ export function reset() {
   store.checklist = [];
   store.savedFilters = [];
   store.deps = [];
+  store.githubConnections = [];
+  store.githubLinks = [];
+  store.githubDeliveries = [];
   store.commentReactions = [];
   store.chatReactions = [];
   activitySeq = 0;
@@ -661,6 +667,118 @@ export const dependenciesRepo = {
   },
 };
 
+export const githubRepo = {
+  toConnection: (row) =>
+    row && {
+      id: row.id,
+      projectId: row.project_id,
+      repo: row.repo,
+      moveOnOpen: row.move_on_open,
+      doneOnMerge: row.done_on_merge,
+      lastEventAt: row.last_event_at,
+    },
+  toLink: (row) => ({
+    id: row.id,
+    kind: row.kind,
+    externalId: row.external_id,
+    title: row.title,
+    url: row.url,
+    state: row.state,
+    author: row.author,
+    updatedAt: row.updated_at,
+  }),
+  async getByProject(projectId) {
+    return store.githubConnections.find((c) => c.project_id === projectId) ?? null;
+  },
+  async getById(id) {
+    return store.githubConnections.find((c) => c.id === id) ?? null;
+  },
+  async upsert({ projectId, repo, moveOnOpen, doneOnMerge, createdBy }) {
+    const taken = store.githubConnections.find(
+      (c) => c.project_id !== projectId && c.repo.toLowerCase() === repo.toLowerCase(),
+    );
+    if (taken) {
+      throw Object.assign(new Error('duplicate key'), { code: '23505' });
+    }
+    let row = store.githubConnections.find((c) => c.project_id === projectId);
+    if (row) {
+      row.repo = repo;
+      if (moveOnOpen !== undefined) row.move_on_open = moveOnOpen;
+      if (doneOnMerge !== undefined) row.done_on_merge = doneOnMerge;
+    } else {
+      row = {
+        id: crypto.randomUUID(),
+        project_id: projectId,
+        repo,
+        secret_version: 1,
+        move_on_open: moveOnOpen ?? false,
+        done_on_merge: doneOnMerge ?? false,
+        created_by: createdBy,
+        last_event_at: null,
+      };
+      store.githubConnections.push(row);
+    }
+    return row;
+  },
+  async rotateSecret(projectId) {
+    const row = store.githubConnections.find((c) => c.project_id === projectId);
+    if (row) row.secret_version += 1;
+    return row ?? null;
+  },
+  async remove(projectId) {
+    const before = store.githubConnections.length;
+    store.githubConnections = store.githubConnections.filter((c) => c.project_id !== projectId);
+    return store.githubConnections.length < before;
+  },
+  async touch(id) {
+    const row = store.githubConnections.find((c) => c.id === id);
+    if (row) row.last_event_at = new Date();
+  },
+  async claimDelivery(deliveryId) {
+    if (store.githubDeliveries.includes(deliveryId)) return false;
+    store.githubDeliveries.push(deliveryId);
+    return true;
+  },
+  async deleteOldDeliveries() {
+    return 0;
+  },
+  async findTasksByNumbers(projectId, numbers) {
+    return store.tasks
+      .filter((t) => t.project_id === projectId && numbers.includes(t.number))
+      .map((t) => ({ id: t.id, number: t.number, title: t.title, status: t.status }));
+  },
+  async upsertLink({ taskId, projectId, kind, externalId, title, url, state, author }) {
+    const found = store.githubLinks.find(
+      (l) => l.task_id === taskId && l.kind === kind && l.external_id === externalId,
+    );
+    if (found) {
+      const prevState = found.state;
+      Object.assign(found, { title, url, state: state ?? null, updated_at: Date.now() });
+      if (author) found.author = author;
+      return { id: found.id, inserted: false, prevState };
+    }
+    const row = {
+      id: crypto.randomUUID(),
+      task_id: taskId,
+      project_id: projectId,
+      kind,
+      external_id: externalId,
+      title,
+      url,
+      state: state ?? null,
+      author: author ?? null,
+      updated_at: Date.now(),
+    };
+    store.githubLinks.push(row);
+    return { id: row.id, inserted: true, prevState: null };
+  },
+  async listLinks(taskId) {
+    return store.githubLinks
+      .filter((l) => l.task_id === taskId)
+      .sort((a, b) => b.updated_at - a.updated_at);
+  },
+};
+
 export const savedFiltersRepo = {
   MAX_FILTERS_PER_USER: 20,
   async list(projectId, userId) {
@@ -922,6 +1040,11 @@ const withNames = (t) => ({
     .map((d) => store.tasks.find((x) => x.id === d.depends_on_id))
     .filter(Boolean)
     .map((b) => ({ id: b.id, title: b.title, status: b.status, dueDate: b.due_date })),
+  pull_requests: store.githubLinks
+    .filter((l) => l.task_id === t.id && l.kind === 'pull_request')
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, 3)
+    .map((l) => ({ number: l.external_id, state: l.state, url: l.url })),
   checklist_total: store.checklist.filter((i) => i.task_id === t.id).length,
   checklist_done: store.checklist.filter((i) => i.task_id === t.id && i.is_done).length,
   labels: store.taskLabels
@@ -1081,6 +1204,7 @@ export const tasksRepo = {
     const before = store.tasks.length;
     store.comments = store.comments.filter((c) => c.task_id !== id);
     store.deps = store.deps.filter((d) => d.task_id !== id && d.depends_on_id !== id);
+    store.githubLinks = store.githubLinks.filter((l) => l.task_id !== id);
     store.checklist = store.checklist.filter((i) => i.task_id !== id);
     store.taskLabels = store.taskLabels.filter((tl) => tl.task_id !== id);
     store.notifications = store.notifications.filter((n) => n.task_id !== id);

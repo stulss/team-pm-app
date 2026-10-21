@@ -6,6 +6,7 @@ import * as authRepo from '../auth/repository.js';
 import * as activityRepo from '../activity/repository.js';
 import * as shareRepo from '../share/repository.js';
 import * as chatRepo from '../chat/repository.js';
+import * as githubRepo from '../github/repository.js';
 import * as repo from './repository.js';
 import { logger } from '../../utils/logger.js';
 
@@ -172,5 +173,12 @@ export async function runDailyJobs({ today = todayIn() } = {}) {
   result.activitiesDeleted = await activityRepo.deleteOlderThan(activityRepo.RETENTION_DAYS);
   result.shareLinksDeleted = await shareRepo.deleteStale();
   result.chatMessagesDeleted = await chatRepo.deleteOlderThan(chatRepo.RETENTION_DAYS);
+  // 부가 정리: 실패해도 나머지 일일 작업 결과를 막지 않는다.
+  try {
+    result.githubDeliveriesDeleted = await githubRepo.deleteOldDeliveries(14);
+  } catch (err) {
+    logger.warn({ err: err.message }, 'github deliveries cleanup failed');
+    result.githubDeliveriesDeleted = 0;
+  }
   return result;
 }

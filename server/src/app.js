@@ -16,6 +16,7 @@ import { commentsRouter, taskCommentsRouter } from './modules/comments/routes.js
 import { projectLabelsRouter, taskLabelsRouter } from './modules/labels/routes.js';
 import { projectSavedFiltersRouter } from './modules/savedFilters/routes.js';
 import { taskDependenciesRouter } from './modules/dependencies/routes.js';
+import { projectGithubRouter, taskGithubRouter, webhooksRouter } from './modules/github/routes.js';
 import { taskChecklistRouter } from './modules/checklist/routes.js';
 import { notificationsRouter } from './modules/notifications/routes.js';
 import { cronRouter } from './modules/cron/routes.js';
@@ -38,6 +39,8 @@ app.use(helmet());
 if (env.CLIENT_ORIGIN) {
   app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
 }
+// GitHub 웹훅: 로그인 없이 서명으로 인증하고 원문 바이트가 필요하므로 전역 JSON 파서보다 먼저 마운트한다.
+app.use('/api/webhooks', webhooksRouter);
 // 요청 본문은 100KB 까지. (설명 1만자·댓글 5천자는 한글로도 충분히 들어간다)
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
@@ -70,6 +73,7 @@ api.use('/projects/:id/activities', projectActivityRouter);
 api.use('/projects/:id/chat', projectChatRouter);
 api.use('/projects/:id/polls', projectPollsRouter);
 api.use('/projects/:id/labels', projectLabelsRouter);
+api.use('/projects/:id/github', projectGithubRouter);
 api.use('/projects/:id/saved-filters', projectSavedFiltersRouter);
 api.use('/projects/:id/share-links', projectShareRouter);
 api.use('/shared', publicShareRouter);
@@ -78,6 +82,7 @@ api.use('/feed', feedRouter);
 api.use('/tasks/:id/comments', taskCommentsRouter);
 api.use('/tasks/:id/labels', taskLabelsRouter);
 api.use('/tasks/:id/checklist', taskChecklistRouter);
+api.use('/tasks/:id/github-links', taskGithubRouter);
 api.use('/tasks/:id/dependencies', taskDependenciesRouter);
 api.use('/tasks', tasksRouter);
 api.use('/comments', commentsRouter);

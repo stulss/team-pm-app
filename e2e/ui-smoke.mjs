@@ -2186,6 +2186,163 @@ try {
       await setPage.getByRole('button', { name: '취소', exact: true }).click();
     },
   );
+  // ---- GitHub 연동 (M26)
+  await step(
+    'GitHub: 소유자가 저장소를 연결하면 웹훅 설정이 보이고, 서명된 PR·push 가 작업 카드·모달·상태에 실시간 반영됨',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const token = await apiLogin('settings');
+      const made = await apiCall('POST', `/projects/${settingsProjectId}/tasks`, token, {
+        title: `깃허브 연동 ${run}`,
+      });
+      if (made.status !== 201) throw new Error(`작업 생성 실패: ${made.status}`);
+      const task = made.body;
+      const repoName = `ui-${run}/webhook-demo`;
+
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      await setPage.getByRole('tab', { name: '보드' }).click();
+      const card = setPage.locator(`[data-task-id="${task.id}"]`);
+      await card.waitFor();
+
+      const panel = setPage.getByRole('region', { name: 'GitHub 연동' });
+      await panel.getByLabel('GitHub 저장소').fill(`https://github.com/${repoName}`);
+      await panel.getByRole('button', { name: '연결', exact: true }).click();
+      await panel.getByText(repoName, { exact: true }).waitFor();
+      // 제어 컴포넌트라 서버 응답 뒤에 체크 상태가 바뀐다 — check() 대신 클릭 후 저장을 기다린다
+      await panel.getByLabel('PR 이 열리면 할 일 → 진행 중으로 이동').click();
+      await pollUntil(
+        async () =>
+          (await apiCall('GET', `/projects/${settingsProjectId}/github`, token)).body.connection
+            ?.moveOnOpen === true,
+        '열림 옵션 저장',
+      );
+      await panel.getByLabel('PR 이 머지되면 완료로 이동').click();
+      await pollUntil(
+        async () =>
+          (await apiCall('GET', `/projects/${settingsProjectId}/github`, token)).body.connection
+            ?.doneOnMerge === true,
+        '머지 옵션 저장',
+      );
+
+      const hookUrl = await panel.getByLabel('웹훅 주소').inputValue();
+      const secret = await panel.getByLabel('웹훅 비밀').inputValue();
+      if (!/\/api\/webhooks\/github\/[0-9a-f-]{36}$/.test(hookUrl) || secret.length !== 64) {
+        throw new Error(`웹훅 정보 형식: ${hookUrl}`);
+      }
+      const target = `${BASE}${new URL(hookUrl).pathname}`;
+      const send = async (event, payload) => {
+        const text = JSON.stringify(payload);
+        const res = await fetch(target, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-github-event': event,
+            'x-github-delivery': crypto.randomUUID(),
+            'x-hub-signature-256': `sha256=${crypto.createHmac('sha256', secret).update(text).digest('hex')}`,
+            ...(process.env.VERCEL_BYPASS && {
+              'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+            }),
+          },
+          body: text,
+        });
+        return res.status;
+      };
+      const pr = (action, extra = {}) => ({
+        action,
+        repository: { full_name: repoName },
+        pull_request: {
+          number: 5,
+          title: `Implement ${task.key}`,
+          body: '',
+          html_url: `https://github.com/${repoName}/pull/5`,
+          state: 'open',
+          draft: false,
+          merged: false,
+          head: { ref: 'feature/demo' },
+          user: { login: 'octocat' },
+          ...extra,
+        },
+      });
+
+      if ((await send('pull_request', pr('opened'))) !== 200) throw new Error('PR opened 실패');
+      await card.getByText('#5 열림').waitFor();
+      await pollUntil(
+        async () =>
+          (await apiCall('GET', `/tasks/${task.id}`, token)).body.status === 'in_progress',
+        'PR 열림 → 진행 중',
+      );
+      await setPage
+        .locator('[data-status="in_progress"]')
+        .locator(`[data-task-id="${task.id}"]`)
+        .waitFor();
+
+      if ((await send('pull_request', pr('closed', { state: 'closed', merged: true }))) !== 200) {
+        throw new Error('PR merged 실패');
+      }
+      await card.getByText('#5 머지됨').waitFor();
+      await pollUntil(
+        async () => (await apiCall('GET', `/tasks/${task.id}`, token)).body.status === 'done',
+        'PR 머지 → 완료',
+      );
+
+      const sha = 'c'.repeat(40);
+      const pushed = await send('push', {
+        repository: { full_name: repoName },
+        commits: [
+          {
+            id: sha,
+            message: `fix: ${task.key} edge case`,
+            url: `https://github.com/${repoName}/commit/${sha}`,
+          },
+        ],
+      });
+      if (pushed !== 200) throw new Error('push 실패');
+
+      await card.click();
+      const dlg = setPage.getByRole('dialog', { name: '작업 수정' });
+      const gh = dlg.getByRole('region', { name: 'GitHub' });
+      await gh.getByText('PR #5 머지됨').waitFor();
+      await gh.getByText('ccccccc').waitFor();
+      await gh.getByRole('link', { name: `Implement ${task.key}` }).waitFor();
+      await dlg.getByRole('button', { name: '닫기', exact: true }).click();
+      await dlg.waitFor({ state: 'detached' });
+
+      if (
+        (await send('pull_request', { ...pr('opened'), repository: { full_name: 'x/y' } })) !== 202
+      ) {
+        throw new Error('다른 저장소 이벤트는 202 여야 함');
+      }
+    },
+  );
+  await step(
+    'GitHub: 잘못된 서명은 401 이고 연결을 해제하면 카드가 연결 폼으로 돌아감',
+    async () => {
+      const token = await apiLogin('settings');
+      const conn = (await apiCall('GET', `/projects/${settingsProjectId}/github`, token)).body
+        .connection;
+      const res = await fetch(`${BASE}${new URL(conn.webhookUrl).pathname}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'ping',
+          'x-github-delivery': crypto.randomUUID(),
+          'x-hub-signature-256': `sha256=${'0'.repeat(64)}`,
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: '{}',
+      });
+      if (res.status !== 401) throw new Error(`서명 불일치 상태 ${res.status}`);
+
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      const panel = setPage.getByRole('region', { name: 'GitHub 연동' });
+      await panel.getByText(conn.repo, { exact: true }).waitFor();
+      setPage.once('dialog', (d) => d.accept());
+      await panel.getByRole('button', { name: '연결 해제' }).click();
+      await panel.getByLabel('GitHub 저장소').waitFor();
+    },
+  );
   await step(
     '설정: 비밀번호 변경은 현재 비밀번호 검증·확인 일치가 필요하고, 바꾼 뒤 새 비밀번호로만 로그인됨',
     async () => {

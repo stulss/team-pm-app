@@ -8,6 +8,8 @@
 //   VERIFY_EMAIL_B / VERIFY_PASSWORD_B   선택 — 있으면 "다른 사람의 프로젝트는 못 본다"까지 확인
 //
 // 데이터를 만들거나 바꾸거나 지우지 않는다(GET 과 로그인/로그아웃만). 비밀번호·토큰은 출력하지 않는다.
+import { randomUUID } from 'node:crypto';
+
 const BASE_ORIGIN = process.env.BASE_URL ?? 'https://team-pm-app-sand.vercel.app';
 const BASE = `${BASE_ORIGIN}/api/v1`;
 
@@ -190,6 +192,29 @@ async function readChecks(label, who) {
       check(
         `${label}: 작업 키로 조회하면 같은 작업 (M25)`,
         byKey.status === 200 && byKey.body.id === tasks[0].id,
+      );
+      const links = await call('GET', `/tasks/${tasks[0].id}/github-links`, { token: t });
+      check(
+        `${label}: 작업 응답에 pullRequests 배열이 있고 GitHub 연결 목록이 200 (M26)`,
+        links.status === 200 &&
+          Array.isArray(links.body?.data) &&
+          tasks.every((x) => Array.isArray(x.pullRequests)),
+      );
+    }
+    // 웹훅은 로그인 없이 서명으로만 통과한다 — 없는 연결은 존재 여부를 알리지 않고 401
+    if (label === 'A') {
+      const hook = await fetch(`${BASE_ORIGIN}/api/webhooks/github/${randomUUID()}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-hub-signature-256': `sha256=${'0'.repeat(64)}`,
+        },
+        body: '{}',
+      });
+      check(
+        'GitHub 웹훅: 없는 연결·잘못된 서명은 401 (M26)',
+        hook.status === 401,
+        `HTTP ${hook.status}`,
       );
     }
     check(

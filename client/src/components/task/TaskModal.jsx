@@ -15,6 +15,7 @@ import CommentSection from './CommentSection.jsx';
 import TaskLabels from './TaskLabels.jsx';
 import ChecklistSection from './ChecklistSection.jsx';
 import DependencySection from './DependencySection.jsx';
+import GithubLinks from './GithubLinks.jsx';
 import ActivityFeed from '../activity/ActivityFeed.jsx';
 import { branchName } from '../../utils/taskKey.js';
 
@@ -248,6 +249,7 @@ export default function TaskModal({
           {editing && (
             <DependencySection projectId={projectId} taskId={task.id} readOnly={readOnly} />
           )}
+          {editing && <GithubLinks taskId={task.id} />}
           {!editing && (
             <p className="muted small">
               작업을 만들면 라벨·체크리스트·선행 작업·댓글을 추가할 수 있습니다.

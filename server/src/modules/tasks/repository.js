@@ -20,6 +20,7 @@ export const toTask = (row) =>
     startDate: row.start_date ?? null,
     dueDate: row.due_date,
     blockedBy: row.blocked_by ?? [],
+    pullRequests: row.pull_requests ?? [],
     position: row.position,
     completedAt: row.completed_at,
     createdAt: row.created_at,
@@ -44,7 +45,12 @@ const SELECT = `
                                                      'status', b.status, 'dueDate', b.due_date)
                                    ORDER BY d.created_at, b.id)
                    FROM task_dependencies d JOIN tasks b ON b.id = d.depends_on_id
-                   WHERE d.task_id = t.id), '[]'::json) AS blocked_by
+                   WHERE d.task_id = t.id), '[]'::json) AS blocked_by,
+         COALESCE((SELECT json_agg(json_build_object('number', l.external_id, 'state', l.state, 'url', l.url)
+                                   ORDER BY l.updated_at DESC)
+                   FROM (SELECT * FROM github_task_links g
+                          WHERE g.task_id = t.id AND g.kind = 'pull_request'
+                          ORDER BY g.updated_at DESC LIMIT 3) l), '[]'::json) AS pull_requests
   FROM tasks t
   LEFT JOIN users a ON a.id = t.assignee_id
   JOIN projects p ON p.id = t.project_id`;

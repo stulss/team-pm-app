@@ -21,6 +21,7 @@ import { listProjectTasks, moveTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { PRIORITY_LABELS, STATUSES, STATUS_LABELS, isOverdue } from '../../constants/task.js';
 import { checklistText } from '../../constants/labels.js';
+import { prBadgeText } from '../../constants/github.js';
 import { openBlockers } from '../../utils/timeline.js';
 import LabelChip from './LabelChip.jsx';
 import Avatar from '../common/Avatar.jsx';
@@ -79,6 +80,11 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
               .join(', ')}`}
           >
             ⛔ 선행 {openBlockers(task).length}
+          </span>
+        )}
+        {task.pullRequests?.length > 0 && (
+          <span className={`pr-badge pr-${task.pullRequests[0].state}`} title="연결된 GitHub PR">
+            ⎇ {prBadgeText(task.pullRequests[0])}
           </span>
         )}
         {checklistText(task.checklist) && (

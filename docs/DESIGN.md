@@ -75,6 +75,8 @@ erDiagram
     tasks ||--o{ task_labels : tagged
     labels ||--o{ task_labels : applied
     projects ||--o{ saved_filters : has
+    projects ||--o| github_connections : links
+    tasks ||--o{ github_task_links : "linked PR/commit"
     users ||--o{ saved_filters : saves
     tasks ||--o{ task_dependencies : "is blocked by"
     comments ||--o{ comment_reactions : receives
@@ -234,6 +236,25 @@ erDiagram
         uuid project_id FK "두 작업이 같은 프로젝트임을 DB 가 보장"
         timestamptz created_at
     }
+    github_connections {
+        uuid id PK
+        uuid project_id FK "UNIQUE, 프로젝트당 1개"
+        varchar repo "owner/repo, 대소문자 무시 유일"
+        int secret_version "웹훅 비밀 = HMAC(서버 비밀, id+version)"
+        boolean move_on_open
+        boolean done_on_merge
+        timestamptz last_event_at
+    }
+    github_task_links {
+        uuid id PK
+        uuid task_id FK
+        uuid project_id FK
+        varchar kind "pull_request|commit"
+        varchar external_id "PR 번호 또는 커밋 sha"
+        varchar title
+        varchar url
+        varchar state "open|draft|merged|closed (PR 만)"
+    }
     saved_filters {
         uuid id PK
         uuid project_id FK
@@ -336,6 +357,12 @@ erDiagram
 - `labels`: 프로젝트별 라벨(프로젝트당 최대 20개). 이름은 `(project_id, lower(name))` 유일. 색은 정해진 팔레트 키만 허용(CHECK).
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
+
+**github_connections / github_task_links / github_deliveries** (M26 GitHub 연동, 마이그레이션 022)
+- 프로젝트에 GitHub 저장소를 연결한다(`github_connections`, 프로젝트당 1개, 같은 저장소를 두 프로젝트에 연결할 수 없다 — `lower(repo)` 유일). 저장소의 웹훅이 이 서버로 PR·푸시 이벤트를 보내면, **PR 제목·본문·브랜치 이름, 커밋 메시지에 적힌 작업 키**(`TPM-12`, 이 프로젝트의 키만)를 찾아 해당 작업에 연결한다(`github_task_links`: 같은 작업에 같은 PR/커밋은 한 행, 상태·제목은 이벤트마다 갱신). 작업 키는 M25 가 만든다.
+- **웹훅 서명 비밀은 저장하지 않는다.** `HMAC_SHA256(JWT_REFRESH_SECRET, "github-webhook:v{secret_version}:{연결 id}")` 로 계산하므로 DB 가 유출돼도 비밀이 새지 않고, `secret_version` 을 올리면(비밀 재발급) 이전 비밀은 즉시 무효다. 비밀은 소유자·Admin 에게만 보여 준다. (서버 비밀을 로테이션하면 모든 연결의 비밀이 바뀌므로 GitHub 쪽 웹훅 비밀을 다시 등록해야 한다.)
+- 같은 전달(`X-GitHub-Delivery`)은 `github_deliveries` 로 한 번만 처리한다(재전송해도 활동 기록·상태 이동이 중복되지 않음). 14일이 지난 기록은 매일 작업이 지운다. 작업이 지워지면 연결 기록도 `ON DELETE CASCADE` 로 사라지고, 복합 외래키 `(project_id, task_id)` 로 다른 프로젝트 작업에는 연결되지 않는다. 새 테이블 3개는 같은 마이그레이션에서 RLS 를 켠다.
+- 자동 이동(프로젝트별 옵션, 기본 꺼짐): `move_on_open` — PR 이 **열리거나 다시 열리거나 draft 해제**되면 "할 일" 작업을 "진행 중" 으로. `done_on_merge` — PR 이 **머지**되면 작업을 "완료" 로. 이미 더 진행된 상태로는 되돌리지 않는다. 이동은 시스템 동작이라 활동 기록의 행위자는 비어 있다.
 
 **projects.key / tasks.number** (M25 작업 키, 마이그레이션 021)
 - Linear·Jira 처럼 작업을 `TPM-12` 로 부른다. 프로젝트마다 **키**(`projects.key`, 대문자 영문 시작 2~10자 `^[A-Z][A-Z0-9]{1,9}$`, 전체에서 유일)를 갖고, 작업은 프로젝트 안에서 **번호**(`tasks.number`, 1부터, 프로젝트 안에서 유일 `UNIQUE (project_id, number)`)를 갖는다. 작업 키 = `{프로젝트 키}-{번호}`.
@@ -515,6 +542,18 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+#### GitHub (M26)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects/:id/github` | 연결 상태 `{ connection: null }` 또는 `{ connection: { id, repo, webhookUrl, secret, moveOnOpen, doneOnMerge, lastEventAt } }` | 소유자·Admin |
+| PUT | `/projects/:id/github` | 연결·설정 변경 `{ repo, moveOnOpen?, doneOnMerge? }` — `repo` 는 `owner/repo` 또는 GitHub 저장소 URL | 소유자·Admin (다른 프로젝트가 쓰는 저장소 409 `REPO_TAKEN`, 형식 오류 400, 보관 409) |
+| POST | `/projects/:id/github/rotate-secret` | 웹훅 비밀 재발급(이전 비밀 즉시 무효) | 소유자·Admin |
+| DELETE | `/projects/:id/github` | 연결 해제(이미 연결된 PR·커밋 기록은 작업에 남는다) | 소유자·Admin |
+| GET | `/tasks/:id/github-links` | 작업에 연결된 PR·커밋 `{ data: [{ id, kind, externalId, title, url, state, author, updatedAt }] }`(최근 갱신순) | 프로젝트 멤버 |
+| POST | `/api/webhooks/github/:connectionId` | GitHub 웹훅 수신(`/api/v1` 밖, 로그인 없음 — **서명으로 인증**) | `X-Hub-Signature-256` 검증 |
+
+> 구현 규칙(M26): 웹훅은 JSON(`application/json`) 본문의 **원문 바이트**로 `X-Hub-Signature-256: sha256=…` 를 상수 시간 비교로 검증한다(본문은 2MB 까지, 이 경로만 전용 파서). 없는 연결·서명 불일치는 같은 401 로 답해 연결 존재 여부를 알리지 않는다. 처리하는 이벤트는 `ping`(200 pong), `pull_request`, `push`이고 그 외는 200 으로 무시한다. 다른 저장소 이름의 페이로드는 무시한다(202). 작업 응답에는 카드 배지용 `pullRequests: [{ number, state, url }]`(최근 PR 최대 3건)이 붙는다. 연결·자동 이동·링크 생성은 `task:updated`(상태가 바뀌면 포함)와 활동 기록(`github.linked`, `github.pr_state`, 자동 이동은 `task.moved`)을 남긴다. 알림은 만들지 않는다.
 
 #### Task keys (M25)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -898,7 +937,7 @@ team-pm-app/
 | **M22** | 설정 페이지(화면 설정·내 계정) | `/settings`: 테마(시스템/라이트/다크)·포인트 색·밀도·기본 작업 보기(계정에 저장, `users.preferences`, 마이그레이션 019), 이름·비밀번호 변경(기존 `PATCH /users/me`) |
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
-| **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅으로 받은 PR·커밋을 작업 키로 찾아 작업에 연결하고, PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다 |
+| **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
 | **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 목록·사이드바 상단 고정(`project_members.muted·pinned`, 마이그레이션 020, 개인 설정, §1.2·§2.2) |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 

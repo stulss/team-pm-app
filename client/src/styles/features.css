@@ -1629,3 +1629,42 @@ dialog.palette::backdrop {
   background: var(--primary-soft);
   border-radius: 999px;
 }
+
+/* GitHub 연동 (M26) */
+.github,
+.github-links {
+  margin-top: 1rem;
+}
+
+.github input[readonly] {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+
+.github-setup {
+  margin: 0.5rem 0;
+}
+
+.pr-badge,
+.pr-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pr-open {
+  color: var(--success);
+}
+
+.pr-merged {
+  color: var(--primary-text);
+}
+
+.pr-closed {
+  color: var(--error);
+}
+
+.commit-ref {
+  font-size: 0.75rem;
+}

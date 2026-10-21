@@ -6,6 +6,7 @@
 //
 // DIRECT_URL(server/.env)로 DB 에 직접 접속해 역할을 지정하고 정리한다.
 // 생성하는 데이터는 모두 @example.test 이메일/"smoke-" 프로젝트이며 종료 시 삭제한다.
+import crypto from 'node:crypto';
 import pg from 'pg';
 
 const BASE = (process.env.BASE_URL ?? 'http://localhost:4000') + '/api/v1';
@@ -3394,7 +3395,9 @@ try {
     }
     let dupNumber = false;
     try {
-      await db.query('UPDATE tasks SET number = 1 WHERE id = $1', [made[1].body.id]);
+      await db.query('UPDATE tasks SET number = 1 WHERE id = $1', [
+        made.find((r) => r.body.number !== 1).body.id,
+      ]);
     } catch {
       dupNumber = true;
     }
@@ -3440,6 +3443,232 @@ try {
     );
 
     for (const id of [kpid, auto.body.id, auto2.body.id, legacyProject.rows[0].id]) {
+      await call('DELETE', `/projects/${id}`, { token: t('manager') });
+    }
+  }
+
+  // --- GitHub 연동 (M26)
+  {
+    const gp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-github', key: 'GHS', memberIds: [people.member.id] },
+    });
+    const gpid = gp.body.id;
+    const gt = [];
+    for (let i = 0; i < 3; i += 1) {
+      gt.push(
+        await call('POST', `/projects/${gpid}/tasks`, {
+          token: t('member'),
+          body: { title: `smoke-gh ${i + 1}` },
+        }),
+      );
+    }
+    const repoName = `smoke-${run}/hello`;
+
+    check(
+      'GitHub: 일반 멤버는 연결 정보를 볼 수 없다(403)',
+      (await call('GET', `/projects/${gpid}/github`, { token: t('member') })).status === 403,
+    );
+    check(
+      'GitHub: 형식이 틀린 저장소는 400',
+      (await call('PUT', `/projects/${gpid}/github`, { token: t('manager'), body: { repo: 'x' } }))
+        .status === 400,
+    );
+    const conn = await call('PUT', `/projects/${gpid}/github`, {
+      token: t('manager'),
+      body: { repo: `https://github.com/${repoName}`, moveOnOpen: true, doneOnMerge: true },
+    });
+    const c = conn.body.connection;
+    check(
+      'GitHub: 소유자가 저장소(주소 형태)를 연결하면 웹훅 주소·비밀을 받는다',
+      conn.status === 200 && c.repo === repoName && /^[0-9a-f]{64}$/.test(c.secret) && c.webhookUrl,
+      JSON.stringify(conn.body),
+    );
+
+    const other = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-github2' },
+    });
+    const dup = await call('PUT', `/projects/${other.body.id}/github`, {
+      token: t('manager'),
+      body: { repo: repoName.toUpperCase() },
+    });
+    check('GitHub: 같은 저장소(대소문자 무관)를 다른 프로젝트에 연결하면 409', dup.status === 409);
+
+    const send = async (event, payload, { secret = c.secret, delivery, signature } = {}) => {
+      const text = JSON.stringify(payload);
+      const sig =
+        signature ?? `sha256=${crypto.createHmac('sha256', secret).update(text).digest('hex')}`;
+      const res = await fetch(c.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': event,
+          'x-github-delivery': delivery ?? crypto.randomUUID(),
+          'x-hub-signature-256': sig,
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: text,
+      });
+      const body = await res.text();
+      return { status: res.status, body: body ? JSON.parse(body) : null };
+    };
+    const pr = (action, extra = {}, number = 7) => ({
+      action,
+      repository: { full_name: repoName },
+      pull_request: {
+        number,
+        title: 'Add feature GHS-1 and ghs-2',
+        body: '',
+        html_url: `https://github.com/${repoName}/pull/${number}`,
+        state: 'open',
+        draft: false,
+        merged: false,
+        head: { ref: 'feature/x' },
+        user: { login: 'octocat' },
+        ...extra,
+      },
+    });
+    const taskState = async (i) =>
+      (await call('GET', `/tasks/${gt[i].body.id}`, { token: t('member') })).body;
+
+    check(
+      'GitHub: ping 은 서명이 맞으면 pong',
+      (await send('ping', { zen: 'x' })).body?.pong === true,
+    );
+    check(
+      'GitHub: 틀린 서명은 401',
+      (await send('ping', { zen: 'x' }, { secret: 'wrong' })).status === 401,
+    );
+    check(
+      'GitHub: 서명 헤더가 없으면 401',
+      (await send('ping', { zen: 'x' }, { signature: '' })).status === 401,
+    );
+
+    const delivery = crypto.randomUUID();
+    const opened = await send('pull_request', pr('opened'), { delivery });
+    const t1 = await taskState(0);
+    const t2 = await taskState(1);
+    const t3 = await taskState(2);
+    check(
+      'GitHub: PR 제목의 작업 키(대소문자 무관)로 두 작업에 연결되고 나머지는 그대로',
+      opened.status === 200 &&
+        t1.pullRequests?.length === 1 &&
+        t2.pullRequests?.length === 1 &&
+        t3.pullRequests?.length === 0,
+      JSON.stringify(opened.body),
+    );
+    check(
+      'GitHub: PR 이 열리면(move_on_open) 할 일 → 진행 중으로 자동 이동',
+      t1.status === 'in_progress' && t2.status === 'in_progress' && t3.status === 'todo',
+    );
+    const again = await send('pull_request', pr('opened'), { delivery });
+    check('GitHub: 같은 delivery 재전송은 중복 처리하지 않는다', again.body?.duplicate === true);
+    check(
+      'GitHub: delivery 가 DB 에 한 번만 기록된다',
+      (
+        await db.query('SELECT count(*)::int AS n FROM github_deliveries WHERE delivery_id = $1', [
+          delivery,
+        ])
+      ).rows[0].n === 1,
+    );
+
+    await send('pull_request', pr('closed', { state: 'closed', merged: true }));
+    const merged = await taskState(0);
+    check(
+      'GitHub: PR 머지(done_on_merge) 시 완료로 이동하고 PR 상태가 merged',
+      merged.status === 'done' && merged.pullRequests[0].state === 'merged',
+    );
+    const links = await call('GET', `/tasks/${gt[0].body.id}/github-links`, {
+      token: t('member'),
+    });
+    check(
+      'GitHub: 작업 연결 목록에 PR 이 하나(상태 갱신, 중복 없음)',
+      links.status === 200 &&
+        links.body.data.length === 1 &&
+        links.body.data[0].kind === 'pull_request',
+    );
+
+    const push = await send('push', {
+      repository: { full_name: repoName },
+      commits: [
+        {
+          id: 'a'.repeat(40),
+          message: 'fix: GHS-3 crash\n\nbody',
+          url: 'https://x/c/1',
+          author: { username: 'octocat' },
+        },
+        { id: 'b'.repeat(40), message: 'chore: no key', url: 'https://x/c/2' },
+      ],
+    });
+    const cl = await call('GET', `/tasks/${gt[2].body.id}/github-links`, { token: t('member') });
+    check(
+      'GitHub: push 의 커밋 메시지 키로 커밋이 연결된다(키 없는 커밋은 무시)',
+      push.status === 200 && cl.body.data.length === 1 && cl.body.data[0].kind === 'commit',
+      JSON.stringify(push.body),
+    );
+
+    const foreign = await send('pull_request', {
+      ...pr('opened', {}, 99),
+      repository: { full_name: 'someone/else' },
+    });
+    check('GitHub: 연결된 저장소와 다른 저장소의 이벤트는 202 로 무시', foreign.status === 202);
+
+    const act = await call('GET', `/projects/${gpid}/activities`, { token: t('member') });
+    check(
+      'GitHub: 활동 기록에 github.linked / task.moved(via github) 가 남는다',
+      JSON.stringify(act.body).includes('github.linked') &&
+        JSON.stringify(act.body).includes('"via":"github"'),
+    );
+
+    const rot = await call('POST', `/projects/${gpid}/github/rotate-secret`, {
+      token: t('manager'),
+    });
+    check(
+      'GitHub: 비밀 재발급 후 이전 비밀은 401, 새 비밀은 통과',
+      rot.body.connection.secret !== c.secret &&
+        (await send('ping', { zen: 'x' })).status === 401 &&
+        (await send('ping', { zen: 'x' }, { secret: rot.body.connection.secret })).body?.pong ===
+          true,
+    );
+
+    const rls = await db.query(
+      `SELECT relname, relrowsecurity FROM pg_class
+       WHERE relname IN ('github_connections','github_task_links','github_deliveries')`,
+    );
+    check(
+      'GitHub: 세 테이블 모두 RLS 가 켜져 있다',
+      rls.rows.length === 3 && rls.rows.every((r) => r.relrowsecurity),
+    );
+
+    // 작업을 지우면 연결(링크)도 함께 지워진다
+    await call('DELETE', `/tasks/${gt[2].body.id}`, { token: t('manager') });
+    check(
+      'GitHub: 작업 삭제 시 링크가 CASCADE 로 지워진다',
+      (
+        await db.query('SELECT count(*)::int AS n FROM github_task_links WHERE task_id = $1', [
+          gt[2].body.id,
+        ])
+      ).rows[0].n === 0,
+    );
+
+    // 연결 해제 → 웹훅 401(연결 없음), 링크는 작업에 남는다
+    const gone = await call('DELETE', `/projects/${gpid}/github`, { token: t('manager') });
+    check(
+      'GitHub: 연결을 해제하면 웹훅은 401 이고 delivery 기록도 정리된다',
+      gone.status === 204 &&
+        (await send('ping', { zen: 'x' }, { secret: rot.body.connection.secret })).status === 401 &&
+        (
+          await db.query(
+            'SELECT count(*)::int AS n FROM github_deliveries WHERE connection_id = $1',
+            [c.id],
+          )
+        ).rows[0].n === 0,
+    );
+
+    for (const id of [gpid, other.body.id]) {
       await call('DELETE', `/projects/${id}`, { token: t('manager') });
     }
   }

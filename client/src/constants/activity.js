@@ -1,4 +1,5 @@
 import { PRIORITY_LABELS, STATUS_LABELS } from './task.js';
+import { PR_STATE_LABELS } from './github.js';
 
 const label = (map, key) => map[key] ?? key;
 const q = (text) => `“${text}”`;
@@ -44,13 +45,21 @@ export function describeActivity(a, { showTask = true } = {}) {
     case 'task.updated':
       return `${task(m.title)}을(를) 수정했습니다. (${describeChanges(m.changes).join(', ')})`;
     case 'task.moved':
-      return `${task(m.title)}을(를) ${label(STATUS_LABELS, m.from)} → ${label(STATUS_LABELS, m.to)}(으)로 옮겼습니다.`;
+      return `${task(m.title)}을(를) ${label(STATUS_LABELS, m.from)} → ${label(STATUS_LABELS, m.to)}(으)로 옮겼습니다.${m.via === 'github' ? ' (GitHub)' : ''}`;
     case 'task.deleted':
       return `${task(m.title)}을(를) 삭제했습니다.`;
     case 'comment.created':
       return `${task(m.taskTitle)}에 댓글을 남겼습니다.`;
     case 'comment.deleted':
       return `${task(m.taskTitle)}의 댓글을 삭제했습니다.`;
+    case 'github.connected':
+      return `GitHub 저장소 ${m.repo}을(를) 연결했습니다.`;
+    case 'github.disconnected':
+      return `GitHub 저장소 ${m.repo} 연결을 해제했습니다.`;
+    case 'github.linked':
+      return `${task(m.title)}에 GitHub ${m.kind === 'pull_request' ? 'PR' : '커밋'} ${m.ref}이(가) 연결됐습니다.`;
+    case 'github.pr_state':
+      return `${task(m.title)}의 PR ${m.ref} 상태가 ${PR_STATE_LABELS[m.state] ?? m.state}(으)로 바뀌었습니다.`;
     case 'share.created':
       return `읽기 전용 공유 링크를 만들었습니다.${m.days ? ` (${m.days}일간 유효)` : ''}`;
     case 'share.revoked':

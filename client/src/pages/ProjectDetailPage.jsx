@@ -23,6 +23,7 @@ import ChatPanel from '../components/chat/ChatPanel.jsx';
 import ActivityFeed from '../components/activity/ActivityFeed.jsx';
 import ExportCsvButton from '../components/activity/ExportCsvButton.jsx';
 import ShareLinks from '../components/activity/ShareLinks.jsx';
+import GithubConnect from '../components/project/GithubConnect.jsx';
 import Avatar from '../components/common/Avatar.jsx';
 import Icon from '../components/common/Icon.jsx';
 
@@ -222,6 +223,7 @@ export default function ProjectDetailPage() {
           <div className="card">
             <ActivityFeed projectId={project.id} actions={<ExportCsvButton project={project} />} />
             {canManage && <ShareLinks projectId={project.id} />}
+            {canManage && <GithubConnect projectId={project.id} />}
           </div>
 
           <div className="card">
