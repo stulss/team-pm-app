@@ -1145,3 +1145,165 @@ mark {
   flex-direction: column;
   gap: 0.1rem;
 }
+
+/* 라벨 (M16) — 색은 변수로 두고 다크 모드에서 밝은 값으로 바꾼다. 이름을 항상 함께 보여 색에만 의존하지 않는다. */
+.lc-red {
+  --lc: #c4261d;
+}
+.lc-orange {
+  --lc: #b85c00;
+}
+.lc-yellow {
+  --lc: #8a6d00;
+}
+.lc-green {
+  --lc: #1a7f37;
+}
+.lc-blue {
+  --lc: #1f5fd0;
+}
+.lc-purple {
+  --lc: #7c3fc4;
+}
+.lc-pink {
+  --lc: #b8327f;
+}
+.lc-gray {
+  --lc: #5b6675;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lc-red {
+    --lc: #ff8a80;
+  }
+  .lc-orange {
+    --lc: #ffb26b;
+  }
+  .lc-yellow {
+    --lc: #e6c34a;
+  }
+  .lc-green {
+    --lc: #6fd68a;
+  }
+  .lc-blue {
+    --lc: #7aa5ff;
+  }
+  .lc-purple {
+    --lc: #c19bff;
+  }
+  .lc-pink {
+    --lc: #ff9fcf;
+  }
+  .lc-gray {
+    --lc: #aab4c2;
+  }
+}
+
+.label-chip {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--lc);
+  background: color-mix(in srgb, var(--lc) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lc) 55%, transparent);
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+}
+
+button.label-toggle {
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+button.label-toggle.on {
+  opacity: 1;
+  font-weight: 600;
+  border-color: var(--lc);
+}
+
+.task-card-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.checklist-badge {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.checklist-badge.done {
+  color: #1a7f37;
+}
+
+.progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--primary);
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.checklist li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.check span {
+  overflow-wrap: anywhere;
+}
+
+.check.done span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.label-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.label-row input {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.label-error {
+  flex-basis: 100%;
+  margin: 0;
+}

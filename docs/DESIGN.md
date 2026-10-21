@@ -70,6 +70,10 @@ erDiagram
     polls ||--o{ poll_options : offers
     poll_options ||--o{ poll_votes : receives
     users ||--o{ poll_votes : casts
+    tasks ||--o{ checklist_items : has
+    projects ||--o{ labels : defines
+    tasks ||--o{ task_labels : tagged
+    labels ||--o{ task_labels : applied
 
     users {
         uuid id PK
@@ -187,6 +191,27 @@ erDiagram
         uuid user_id PK
         timestamptz created_at
     }
+    checklist_items {
+        uuid id PK
+        uuid task_id FK
+        varchar content "1~200자"
+        boolean is_done
+        double position "사이에 끼우는 방식"
+        timestamptz created_at
+    }
+    labels {
+        uuid id PK
+        uuid project_id FK
+        varchar name "1~30자, 프로젝트 안에서 대소문자 무시 유일"
+        varchar color "팔레트 키(red·orange·yellow·green·blue·purple·pink·gray)"
+        uuid created_by FK "nullable"
+        timestamptz created_at
+    }
+    task_labels {
+        uuid task_id PK
+        uuid label_id PK
+        uuid project_id FK "작업·라벨이 같은 프로젝트임을 DB 가 보장"
+    }
     chat_message_mentions {
         uuid message_id PK
         uuid user_id PK
@@ -270,6 +295,12 @@ erDiagram
 - 집계는 **지금 프로젝트 멤버인 사용자의 표만** 센다(`project_members` 조인). 멤버에서 제거되면 그 사람의 표는 결과에서 빠진다(행은 남아 다시 추가되면 되살아남).
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `polls (project_id, created_at DESC)`, `poll_options (poll_id, position)`, `poll_votes (user_id)`.
 - 프로젝트당 투표 최대 100개(`LIMIT_REACHED`, 소프트 상한).
+
+**checklist_items / labels / task_labels** (M16 하위 작업·라벨, 마이그레이션 014)
+- **하위 작업 = 체크리스트 항목.** 작업 하나에 최대 50개(`LIMIT_REACHED`), 항목은 `content`(1~200자)·`is_done`·`position`. 작업이 지워지면 `ON DELETE CASCADE`. 별도의 작업 트리(하위 작업이 칸반 카드가 되는 방식)는 만들지 않는다 — 진행률은 `done/total` 개수로 카드에 보여 준다.
+- `labels`: 프로젝트별 라벨(프로젝트당 최대 20개). 이름은 `(project_id, lower(name))` 유일. 색은 정해진 팔레트 키만 허용(CHECK).
+- `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
+- 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
 
 **검색 인덱스** (M13, 마이그레이션 011)
 - `CREATE EXTENSION pg_trgm` 후 `projects.name`, `tasks.title`, `tasks.description`, `comments.body`, `chat_messages.body` 에 `gin_trgm_ops` GIN 인덱스를 만든다. 새 테이블은 없다.
@@ -400,6 +431,21 @@ erDiagram
 | DELETE | `/projects/:id/polls/:pollId` | 투표 삭제 | 만든 사람·소유자·Admin (보관 프로젝트 409) |
 
 > 구현 규칙(M15): 투표 응답은 `{ id, question, multiple, closed, closedAt, createdBy: {id,name}|null, createdAt, options: [{id,label,votes}], totalVoters, myVotes: [optionId] }` 이다. **익명 집계**: 득표수만 보여 주고 누가 어디에 투표했는지는 응답에 없다(본인 선택 `myVotes` 만). 단일 선택 투표에 2개 이상, 선택지가 아닌 ID·중복 ID 는 400 `INVALID_VOTE`. 선택지 이름은 앞뒤 공백을 제거하고 대소문자 무시로 중복되면 400. 마감된 투표에 투표하면 409 `POLL_CLOSED`. 마감 전에는 표를 바꾸거나 취소할 수 있다. 투표 생성·투표·마감·삭제는 `poll:changed` `{ projectId, pollId }` 를 프로젝트 방 전체(요청자 소켓 제외)에 보내고 클라이언트는 목록을 다시 불러온다. 활동 기록·알림은 남기지 않는다.
+
+#### Labels · Checklist (M16)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/projects/:id/labels` | 프로젝트 라벨 목록(이름순) | 멤버 |
+| POST | `/projects/:id/labels` | 라벨 만들기 `{ name, color }` | 멤버 (보관 409, 이름 중복 409 `LABEL_EXISTS`, 20개 초과 409) |
+| PATCH | `/projects/:id/labels/:labelId` | 이름·색 변경 | 만든 사람·소유자·Admin |
+| DELETE | `/projects/:id/labels/:labelId` | 라벨 삭제(작업에서도 떨어짐) | 만든 사람·소유자·Admin |
+| PUT | `/tasks/:id/labels` | 작업의 라벨 정하기(교체) `{ labelIds: [uuid…](≤10) }` | 멤버 (보관 409, 다른 프로젝트 라벨 400) |
+| GET | `/tasks/:id/checklist` | 체크리스트 항목(순서대로) | 멤버 |
+| POST | `/tasks/:id/checklist` | 항목 추가 `{ content }` | 멤버 (보관 409, 50개 초과 409) |
+| PATCH | `/tasks/:id/checklist/:itemId` | `{ content?, isDone? }` | 멤버 (보관 409) |
+| DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
+
+> 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
 
 #### Feed (M14 모아보기)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -558,6 +604,7 @@ erDiagram
 | C→S | `project:leave` | `{ projectId }` | 보드 이탈 |
 | S→C | `activity:created` | `{ projectId, taskId }` | 활동 기록이 저장됨(요청자 포함 전원). 클라이언트는 활동 목록을 다시 불러온다 |
 | S→C | `poll:changed` | `{ projectId, pollId }` | 투표가 만들어지거나 표·마감·삭제로 바뀜(요청자 소켓 제외). 클라이언트는 투표 목록을 다시 불러온다 |
+| S→C | `label:changed` | `{ projectId }` | 라벨이 만들어지거나 바뀌거나 삭제됨(요청자 소켓 제외). 클라이언트는 라벨·작업 목록을 다시 불러온다 |
 | S→C | `chat:created` | `{ projectId, message }` | 채팅 메시지가 저장됨(요청자 소켓 제외) |
 | S→C | `chat:deleted` | `{ projectId, messageId }` | 채팅 메시지가 삭제됨(요청자 소켓 제외) |
 | S→C | `task:created` | `{ task }` | 작업 생성 |
@@ -729,6 +776,11 @@ team-pm-app/
 | **M13** | 통합검색 | 내가 접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 검색(SQL 권한 필터, `pg_trgm` 인덱스, 마이그레이션 011, §1.2·§2.2) |
 | **M14** | 모아보기 | 내 마감 작업·멘션·안 읽은 알림·내가 없는 동안의 활동을 한 화면에 모은 피드(`GET /feed`, 마이그레이션 없음, §2.2) |
 | **M15** | 투표 | 프로젝트 안 익명 투표(선택지 2~10·복수 선택 여부·수동 마감), 실시간 집계, 1인 1표를 잠금 트랜잭션으로 서버 보장(`polls`·`poll_options`·`poll_votes`, 마이그레이션 012, §1.2·§2.2) |
+| **M16** | 하위 작업·라벨 | 작업별 체크리스트(진행률 `done/total` 카드 표시)와 프로젝트 라벨(색 팔레트, 필터) — `checklist_items`·`labels`·`task_labels`, 마이그레이션 014, §1.2·§2.2 |
+| **M17** | 목록·캘린더 보기 + 저장된 필터 | 칸반 외에 표(정렬)·월간 캘린더(마감일) 보기, 필터 조합을 이름 붙여 저장 |
+| **M18** | 의존성·타임라인 | 작업 선후 관계(순환 방지)와 시작일~마감일 막대 타임라인(간트) |
+| **M19** | 이모지 반응·스레드·Ctrl+K | 댓글·채팅 이모지 반응, 댓글 답글 한 단계, 명령 팔레트(이동·검색·작업 만들기) |
+| 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 
 > 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.
 

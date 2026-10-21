@@ -1177,6 +1177,102 @@ try {
     await mPoll.getByRole('button', { name: '삭제' }).click();
     await uPoll.getByText('점심 메뉴는?').waitFor({ state: 'detached', timeout: 5000 });
   });
+  // ---- 하위 작업·라벨 (M16)
+  const closeDialog = async (p) => {
+    await p.getByRole('dialog').getByRole('button', { name: '닫기', exact: true }).click();
+    await p.getByRole('dialog').waitFor({ state: 'detached' });
+  };
+  await step(
+    '라벨·체크리스트: 작업에 라벨을 만들어 붙이고 항목을 추가하면 두 화면의 카드에 라벨·진행률이 실시간 반영',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await card(rtManager, '둘째').click();
+      const dlg = rtManager.getByRole('dialog');
+      await dlg.getByLabel('새 라벨 이름').fill('ui-버그');
+      await dlg.getByLabel('새 라벨 색').selectOption('red');
+      await dlg.getByRole('button', { name: '만들고 붙이기' }).click();
+      await dlg.getByRole('button', { name: 'ui-버그', pressed: true }).waitFor();
+
+      const checklist = dlg.getByRole('region', { name: '체크리스트' });
+      for (const text of ['시안 확인', '배포']) {
+        await checklist.getByLabel('체크리스트 항목').fill(text);
+        await checklist.getByRole('button', { name: '추가', exact: true }).click();
+        await checklist.getByText(text, { exact: true }).waitFor();
+      }
+      await checklist.getByRole('checkbox').first().click();
+      await checklist.getByTestId('checklist-progress').filter({ hasText: '1/2' }).waitFor();
+      await closeDialog(rtManager);
+
+      for (const [p, timeout] of [
+        [rtManager, T],
+        [rtMember, 5000],
+      ]) {
+        await card(p, '둘째').getByText('ui-버그', { exact: true }).waitFor({ timeout });
+        await card(p, '둘째').getByText('✓ 1/2').waitFor({ timeout });
+      }
+    },
+  );
+  await step('라벨 필터: 라벨로 거르면 그 라벨이 붙은 작업만 남고, 해제하면 돌아옴', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await rtMember.getByLabel('라벨 필터').selectOption({ label: 'ui-버그' });
+    await card(rtMember, '둘째').waitFor();
+    await pollUntil(
+      async () => (await rtMember.locator('[data-task-id]').count()) === 1,
+      '라벨 필터 적용',
+    );
+    await rtMember.getByLabel('라벨 필터').selectOption('');
+    await pollUntil(
+      async () => (await rtMember.locator('[data-task-id]').count()) > 1,
+      '라벨 필터 해제',
+    );
+  });
+  await step('체크리스트: 열어 둔 다른 사용자의 모달에 체크 변경이 실시간 반영', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await card(rtManager, '둘째').click();
+    await card(rtMember, '둘째').click();
+    const mList = rtManager.getByRole('dialog').getByRole('region', { name: '체크리스트' });
+    const uList = rtMember.getByRole('dialog').getByRole('region', { name: '체크리스트' });
+    await uList.getByTestId('checklist-progress').filter({ hasText: '1/2' }).waitFor();
+    await mList.getByRole('checkbox').nth(1).click();
+    await uList.getByTestId('checklist-progress').filter({ hasText: '2/2' }).waitFor({
+      timeout: 5000,
+    });
+    if (!(await uList.getByRole('checkbox').nth(1).isChecked())) {
+      throw new Error('상대 화면의 체크 상태가 갱신되지 않음');
+    }
+    for (const p of [rtManager, rtMember]) await closeDialog(p);
+    await card(rtMember, '둘째').getByText('✓ 2/2').waitFor({ timeout: 5000 });
+  });
+  await step(
+    '라벨 관리: 소유자는 이름·색을 바꾸고 삭제하며 상대 화면에 반영, 만든 사람이 아닌 멤버는 수정 불가',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      // 라벨은 manager(소유자)가 만들었다. member 는 만든 사람도 소유자도 아니라 입력이 잠긴다.
+      await rtMember.getByRole('button', { name: '라벨 관리' }).click();
+      const uDlg = rtMember.getByRole('dialog', { name: '라벨 관리' });
+      if (!(await uDlg.getByLabel('ui-버그 이름').isDisabled())) {
+        throw new Error('권한 없는 멤버가 라벨 이름을 고칠 수 있음');
+      }
+      if ((await uDlg.getByRole('button', { name: '삭제' }).count()) !== 0) {
+        throw new Error('권한 없는 멤버에게 라벨 삭제 버튼이 보임');
+      }
+      await closeDialog(rtMember);
+
+      await rtManager.getByRole('button', { name: '라벨 관리' }).click();
+      const mDlg = rtManager.getByRole('dialog', { name: '라벨 관리' });
+      await mDlg.getByLabel('ui-버그 이름').fill('ui-결함');
+      await mDlg.getByRole('button', { name: '저장' }).click();
+      await card(rtMember, '둘째').getByText('ui-결함', { exact: true }).waitFor({ timeout: 5000 });
+
+      rtManager.once('dialog', (d) => d.accept());
+      await mDlg.getByRole('button', { name: '삭제' }).click();
+      await pollUntil(
+        async () => (await card(rtMember, '둘째').locator('.label-chip').count()) === 0,
+        '라벨 삭제 반영',
+      );
+      await closeDialog(rtManager);
+    },
+  );
   await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {

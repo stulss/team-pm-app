@@ -21,12 +21,21 @@ export const toTask = (row) =>
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     commentCount: row.comment_count ?? 0,
+    labels: row.labels ?? [],
+    checklist: { done: row.checklist_done ?? 0, total: row.checklist_total ?? 0 },
   };
 
 const SELECT = `
   SELECT t.*, a.name AS assignee_name, p.name AS project_name,
          (SELECT count(*)::int FROM comments c
-           WHERE c.task_id = t.id AND c.deleted_at IS NULL) AS comment_count
+           WHERE c.task_id = t.id AND c.deleted_at IS NULL) AS comment_count,
+         (SELECT count(*)::int FROM checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
+         (SELECT count(*)::int FROM checklist_items ci
+           WHERE ci.task_id = t.id AND ci.is_done) AS checklist_done,
+         COALESCE((SELECT json_agg(json_build_object('id', l.id, 'name', l.name, 'color', l.color)
+                                   ORDER BY lower(l.name))
+                   FROM task_labels tl JOIN labels l ON l.id = tl.label_id
+                   WHERE tl.task_id = t.id), '[]'::json) AS labels
   FROM tasks t
   LEFT JOIN users a ON a.id = t.assignee_id
   JOIN projects p ON p.id = t.project_id`;
@@ -36,7 +45,7 @@ export async function findById(id) {
   return rows[0] ?? null;
 }
 
-// filters: { status, assignee('me'|'unassigned'|uuid), priority, dueBefore, q }
+// filters: { status, assignee('me'|'unassigned'|uuid), priority, dueBefore, q, label }
 function buildWhere(base, filters, currentUserId) {
   const where = [...base.where];
   const params = [...base.params];
@@ -51,6 +60,12 @@ function buildWhere(base, filters, currentUserId) {
   else if (filters.assignee === 'me') add('t.assignee_id = ?', currentUserId);
   else if (filters.assignee) add('t.assignee_id = ?', filters.assignee);
   if (filters.dueBefore) add('t.due_date <= ?', filters.dueBefore);
+  if (filters.label) {
+    add(
+      'EXISTS (SELECT 1 FROM task_labels tl WHERE tl.task_id = t.id AND tl.label_id = ?)',
+      filters.label,
+    );
+  }
   if (filters.q) {
     params.push(`%${filters.q.replace(/[\\%_]/g, '\\$&')}%`);
     const n = params.length;

@@ -20,6 +20,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listProjectTasks, moveTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { PRIORITY_LABELS, STATUSES, STATUS_LABELS, isOverdue } from '../../constants/task.js';
+import { checklistText } from '../../constants/labels.js';
+import LabelChip from './LabelChip.jsx';
 
 const COLUMN_PREFIX = 'col:';
 
@@ -44,10 +46,29 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
       onClick={() => onOpen?.(task)}
     >
       <strong className="task-card-title">{task.title}</strong>
+      {task.labels?.length > 0 && (
+        <div className="task-card-labels">
+          {task.labels.map((l) => (
+            <LabelChip key={l.id} label={l} />
+          ))}
+        </div>
+      )}
       <div className="task-card-meta">
         <span className={`badge badge-p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
         {task.assignee && <span className="muted small">{task.assignee.name}</span>}
         {task.commentCount > 0 && <span className="muted small">댓글 {task.commentCount}</span>}
+        {checklistText(task.checklist) && (
+          <span
+            className={
+              task.checklist.done === task.checklist.total
+                ? 'checklist-badge done'
+                : 'checklist-badge'
+            }
+            title="체크리스트 진행률"
+          >
+            ✓ {checklistText(task.checklist)}
+          </span>
+        )}
         {task.dueDate && (
           <span className={isOverdue(task) ? 'overdue small' : 'muted small'}>{task.dueDate}</span>
         )}

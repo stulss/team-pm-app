@@ -16,6 +16,11 @@ export function useProjectRealtime(projectId) {
     const refetchActivities = () =>
       queryClient.invalidateQueries({ queryKey: ['activities', projectId] });
     const refetchPolls = () => queryClient.invalidateQueries({ queryKey: ['polls', projectId] });
+    const refetchLabels = () => {
+      queryClient.invalidateQueries({ queryKey: ['labels', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['task'] });
+      refetchTasks();
+    };
     const refetchChat = () => queryClient.invalidateQueries({ queryKey: ['chat', projectId] });
     const refetchTasks = () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
@@ -24,6 +29,15 @@ export function useProjectRealtime(projectId) {
     const refetchProject = () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+    };
+    // 작업이 바뀌면 열려 있는 모달의 체크리스트·단건 캐시도 함께 다시 불러온다
+    const refetchTaskDetail = (payload) => {
+      const id = payload?.task?.id;
+      if (id) {
+        queryClient.invalidateQueries({ queryKey: ['checklist', id] });
+        queryClient.invalidateQueries({ queryKey: ['task', id] });
+      }
+      refetchTasks();
     };
     const refetchComments = (payload) => {
       if (payload?.taskId) {
@@ -49,12 +63,14 @@ export function useProjectRealtime(projectId) {
       refetchActivities();
       refetchChat();
       refetchPolls();
+      queryClient.invalidateQueries({ queryKey: ['labels', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['checklist'] });
     };
     const onDisconnect = markOffline;
 
     const handlers = {
       'task:created': refetchTasks,
-      'task:updated': refetchTasks,
+      'task:updated': refetchTaskDetail,
       'task:moved': refetchTasks,
       'task:deleted': refetchTasks,
       'comment:created': refetchComments,
@@ -66,6 +82,7 @@ export function useProjectRealtime(projectId) {
       'project:deleted': refetchProject,
       'activity:created': refetchActivities,
       'poll:changed': refetchPolls,
+      'label:changed': refetchLabels,
       'chat:created': refetchChat,
       'chat:deleted': refetchChat,
     };

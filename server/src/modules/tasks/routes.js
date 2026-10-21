@@ -30,6 +30,7 @@ const filters = {
   priority: priority.optional(),
   due_before: date.optional(),
   q: z.string().trim().max(100).optional(),
+  label: z.uuid().optional(),
 };
 const listQuery = z
   .object({

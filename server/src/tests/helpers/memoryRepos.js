@@ -20,6 +20,9 @@ export const store = {
   polls: [],
   pollOptions: [],
   pollVotes: [],
+  labels: [],
+  taskLabels: [],
+  checklist: [],
 };
 
 export function reset() {
@@ -37,6 +40,9 @@ export function reset() {
   store.polls = [];
   store.pollOptions = [];
   store.pollVotes = [];
+  store.labels = [];
+  store.taskLabels = [];
+  store.checklist = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -475,6 +481,99 @@ export const pollsRepo = {
   },
 };
 
+export const labelsRepo = {
+  MAX_LABELS_PER_PROJECT: 20,
+  MAX_LABELS_PER_TASK: 10,
+  async list(projectId) {
+    return store.labels
+      .filter((l) => l.project_id === projectId)
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  },
+  async countByProject(projectId) {
+    return store.labels.filter((l) => l.project_id === projectId).length;
+  },
+  async findById(projectId, labelId) {
+    return store.labels.find((l) => l.project_id === projectId && l.id === labelId) ?? null;
+  },
+  async insert({ projectId, name, color, createdBy }) {
+    const dup = store.labels.some(
+      (l) => l.project_id === projectId && l.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (dup) return null;
+    const row = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      name,
+      color,
+      created_by: createdBy,
+    };
+    store.labels.push(row);
+    return row;
+  },
+  async update(labelId, { name, color }) {
+    const row = store.labels.find((l) => l.id === labelId);
+    const dup =
+      name &&
+      store.labels.some(
+        (l) =>
+          l.id !== labelId &&
+          l.project_id === row.project_id &&
+          l.name.toLowerCase() === name.toLowerCase(),
+      );
+    if (dup) return null;
+    if (name) row.name = name;
+    if (color) row.color = color;
+    return row;
+  },
+  async remove(labelId) {
+    store.labels = store.labels.filter((l) => l.id !== labelId);
+    store.taskLabels = store.taskLabels.filter((tl) => tl.label_id !== labelId);
+  },
+  async existingIds(projectId, labelIds) {
+    return store.labels
+      .filter((l) => l.project_id === projectId && labelIds.includes(l.id))
+      .map((l) => l.id);
+  },
+  async setTaskLabels(task, labelIds) {
+    store.taskLabels = store.taskLabels.filter((tl) => tl.task_id !== task.id);
+    for (const labelId of labelIds) store.taskLabels.push({ task_id: task.id, label_id: labelId });
+  },
+};
+
+export const checklistRepo = {
+  MAX_ITEMS_PER_TASK: 50,
+  async list(taskId) {
+    return store.checklist
+      .filter((i) => i.task_id === taskId)
+      .sort((a, b) => a.position - b.position);
+  },
+  async findById(taskId, itemId) {
+    return store.checklist.find((i) => i.task_id === taskId && i.id === itemId) ?? null;
+  },
+  async insert(taskId, content) {
+    const items = store.checklist.filter((i) => i.task_id === taskId);
+    if (items.length >= checklistRepo.MAX_ITEMS_PER_TASK) return null;
+    const row = {
+      id: crypto.randomUUID(),
+      task_id: taskId,
+      content,
+      is_done: false,
+      position: Math.max(0, ...items.map((i) => i.position)) + STEP,
+    };
+    store.checklist.push(row);
+    return row;
+  },
+  async update(itemId, { content, isDone }) {
+    const row = store.checklist.find((i) => i.id === itemId);
+    if (content !== undefined) row.content = content;
+    if (isDone !== undefined) row.is_done = isDone;
+    return row;
+  },
+  async remove(itemId) {
+    store.checklist = store.checklist.filter((i) => i.id !== itemId);
+  },
+};
+
 export const shareRepo = {
   MAX_ACTIVE_PER_PROJECT: 5,
   STALE_DAYS: 30,
@@ -659,10 +758,19 @@ const withNames = (t) => ({
   assignee_name: store.users.find((u) => u.id === t.assignee_id)?.name ?? null,
   project_name: store.projects.find((p) => p.id === t.project_id)?.name,
   comment_count: store.comments.filter((c) => c.task_id === t.id && !c.deleted_at).length,
+  checklist_total: store.checklist.filter((i) => i.task_id === t.id).length,
+  checklist_done: store.checklist.filter((i) => i.task_id === t.id && i.is_done).length,
+  labels: store.taskLabels
+    .filter((tl) => tl.task_id === t.id)
+    .map((tl) => store.labels.find((l) => l.id === tl.label_id))
+    .filter(Boolean)
+    .map((l) => ({ id: l.id, name: l.name, color: l.color }))
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
 });
 const matches = (t, f, meId) =>
   (!f.status || t.status === f.status) &&
   (!f.priority || t.priority === f.priority) &&
+  (!f.label || store.taskLabels.some((tl) => tl.task_id === t.id && tl.label_id === f.label)) &&
   (!f.dueBefore || (t.due_date && t.due_date <= f.dueBefore)) &&
   (!f.q ||
     t.title.toLowerCase().includes(f.q.toLowerCase()) ||
@@ -798,6 +906,8 @@ export const tasksRepo = {
   async deleteTask(id) {
     const before = store.tasks.length;
     store.comments = store.comments.filter((c) => c.task_id !== id);
+    store.checklist = store.checklist.filter((i) => i.task_id !== id);
+    store.taskLabels = store.taskLabels.filter((tl) => tl.task_id !== id);
     store.notifications = store.notifications.filter((n) => n.task_id !== id);
     store.tasks = store.tasks.filter((t) => t.id !== id);
     return store.tasks.length < before;

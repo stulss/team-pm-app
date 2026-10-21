@@ -2244,6 +2244,229 @@ try {
     );
   }
 
+  // --- 하위 작업·라벨 (M16): 집계 SQL, 라벨 필터, 복합 외래키, 상한 잠금, RLS, CASCADE 를 실제 DB 로 확인
+  {
+    const lpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-label', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const otherPid = (
+      await call('POST', '/projects', { token: t('manager'), body: { name: 'smoke-label-other' } })
+    ).body.id;
+    const mkTask = async (title) =>
+      (
+        await call('POST', `/projects/${lpid}/tasks`, {
+          token: t('member'),
+          body: { title },
+        })
+      ).body;
+    const task = await mkTask('smoke-label 작업');
+    const second = await mkTask('smoke-label 둘째');
+    const labelUrl = (path = '') => `/projects/${lpid}/labels${path}`;
+
+    const bug = await call('POST', labelUrl(), {
+      token: t('member'),
+      body: { name: 'Bug', color: 'red' },
+    });
+    const feature = await call('POST', labelUrl(), {
+      token: t('manager'),
+      body: { name: 'feature', color: 'blue' },
+    });
+    const dup = await call('POST', labelUrl(), {
+      token: t('member'),
+      body: { name: 'BUG', color: 'green' },
+    });
+    check(
+      '라벨 만들기 (201), 이름 중복은 대소문자 무시 409 LABEL_EXISTS (DB 유일 인덱스)',
+      bug.status === 201 &&
+        feature.status === 201 &&
+        dup.status === 409 &&
+        dup.body.error.code === 'LABEL_EXISTS',
+    );
+    const listed = await call('GET', labelUrl(), { token: t('member') });
+    check(
+      '라벨 목록은 이름순(대소문자 무시)',
+      listed.body.data.map((l) => l.name).join() === 'Bug,feature',
+    );
+
+    const setRes = await call('PUT', `/tasks/${task.id}/labels`, {
+      token: t('member'),
+      body: { labelIds: [feature.body.id, bug.body.id] },
+    });
+    check(
+      '작업에 라벨 붙이기: 응답에 이름순으로 실림',
+      setRes.status === 200 && setRes.body.labels.map((l) => l.name).join() === 'Bug,feature',
+    );
+    const byLabel = await call('GET', `/projects/${lpid}/tasks?label=${bug.body.id}`, {
+      token: t('member'),
+    });
+    check(
+      '?label= 필터(SQL EXISTS): 붙은 작업만, 총 개수도 일치',
+      byLabel.body.data.length === 1 &&
+        byLabel.body.data[0].id === task.id &&
+        byLabel.body.meta.total === 1 &&
+        byLabel.body.data[0].labels.length === 2,
+    );
+    const grouped = await call('GET', `/projects/${lpid}/tasks?groupBy=status`, {
+      token: t('member'),
+    });
+    const inBoard = grouped.body.columns.todo.find((x) => x.id === task.id);
+    const untagged = grouped.body.columns.todo.find((x) => x.id === second.id);
+    check(
+      '보드 응답에도 라벨이 실리고 라벨 없는 작업은 빈 배열',
+      inBoard?.labels.length === 2 && untagged?.labels.length === 0,
+    );
+
+    // 다른 프로젝트의 라벨: API 는 400, DB 복합 외래키도 직접 삽입을 거부
+    const foreign = await call('POST', `/projects/${otherPid}/labels`, {
+      token: t('manager'),
+      body: { name: 'foreign', color: 'gray' },
+    });
+    const crossApi = await call('PUT', `/tasks/${task.id}/labels`, {
+      token: t('member'),
+      body: { labelIds: [foreign.body.id] },
+    });
+    let crossFk = false;
+    try {
+      await db.query(
+        'INSERT INTO task_labels (task_id, label_id, project_id) VALUES ($1, $2, $3)',
+        [task.id, foreign.body.id, lpid],
+      );
+    } catch {
+      crossFk = true;
+    }
+    check('다른 프로젝트의 라벨은 API 400', crossApi.status === 400);
+    check('DB 복합 외래키가 다른 프로젝트의 라벨 연결을 거부', crossFk);
+
+    // 이름·색 변경과 권한
+    const forbiddenEdit = await call('PATCH', labelUrl(`/${feature.body.id}`), {
+      token: t('member'),
+      body: { color: 'pink' },
+    });
+    const ownerEdit = await call('PATCH', labelUrl(`/${feature.body.id}`), {
+      token: t('manager'),
+      body: { name: 'Feature', color: 'pink' },
+    });
+    const clash = await call('PATCH', labelUrl(`/${feature.body.id}`), {
+      token: t('manager'),
+      body: { name: 'bug' },
+    });
+    check(
+      '라벨 수정: 남의 라벨 403, 소유자 200, 다른 라벨과 겹치면 409',
+      forbiddenEdit.status === 403 &&
+        ownerEdit.status === 200 &&
+        ownerEdit.body.color === 'pink' &&
+        clash.status === 409,
+    );
+
+    // 체크리스트
+    const item = (content) =>
+      call('POST', `/tasks/${task.id}/checklist`, { token: t('member'), body: { content } });
+    const one = await item('첫 항목');
+    const two = await item('둘째 항목');
+    await call('PATCH', `/tasks/${task.id}/checklist/${one.body.item.id}`, {
+      token: t('manager'),
+      body: { isDone: true },
+    });
+    const afterToggle = await call('GET', `/tasks/${task.id}`, { token: t('member') });
+    check(
+      '체크리스트 추가·완료: 작업 응답의 진행률 done/total (SQL 집계)',
+      one.status === 201 &&
+        two.status === 201 &&
+        afterToggle.body.checklist.done === 1 &&
+        afterToggle.body.checklist.total === 2,
+    );
+    const items = await call('GET', `/tasks/${task.id}/checklist`, { token: t('member') });
+    check(
+      '체크리스트는 추가한 순서대로',
+      items.body.data.map((i) => i.content).join() === '첫 항목,둘째 항목',
+    );
+    const stranger = await call('PATCH', `/tasks/${second.id}/checklist/${one.body.item.id}`, {
+      token: t('member'),
+      body: { isDone: false },
+    });
+    check('다른 작업의 항목 ID 로는 고칠 수 없다 (404)', stranger.status === 404);
+
+    // 상한 50: 항목을 49개까지 채우고 동시에 4건을 보내면 정확히 1건만 들어간다 (작업 행 잠금)
+    await db.query(
+      `INSERT INTO checklist_items (task_id, content, position)
+       SELECT $1, 'bulk-' || g, 100000 + g FROM generate_series(1, 47) g`,
+      [task.id],
+    );
+    const burst = await Promise.all([1, 2, 3, 4].map((n) => item(`동시 ${n}`)));
+    const okCount = burst.filter((r) => r.status === 201).length;
+    const total = (
+      await db.query('SELECT count(*)::int AS n FROM checklist_items WHERE task_id = $1', [task.id])
+    ).rows[0].n;
+    check(
+      '체크리스트 상한 50: 동시 4건 중 1건만 성공, 나머지 409 LIMIT_REACHED',
+      okCount === 1 &&
+        total === 50 &&
+        burst.filter((r) => r.status === 409).every((r) => r.body.error.code === 'LIMIT_REACHED'),
+      `성공 ${okCount}건, 총 ${total}개`,
+    );
+
+    // 삭제와 CASCADE
+    check(
+      '라벨 삭제 시 task_labels CASCADE, 작업의 라벨에서도 빠짐',
+      (await call('DELETE', labelUrl(`/${bug.body.id}`), { token: t('member') })).status === 204 &&
+        (await db.query('SELECT 1 FROM task_labels WHERE label_id = $1', [bug.body.id]))
+          .rowCount === 0 &&
+        (await call('GET', `/tasks/${task.id}`, { token: t('member') })).body.labels.length === 1,
+    );
+    const rls = await db.query(
+      `SELECT relname FROM pg_class
+       WHERE relname IN ('checklist_items','labels','task_labels') AND relrowsecurity`,
+    );
+    check('checklist_items / labels / task_labels RLS 활성화', rls.rowCount === 3);
+    check(
+      '비멤버는 라벨·체크리스트 읽기·쓰기 403',
+      (await call('GET', labelUrl(), { token: t('outsider') })).status === 403 &&
+        (await call('GET', `/tasks/${task.id}/checklist`, { token: t('outsider') })).status ===
+          403 &&
+        (
+          await call('PUT', `/tasks/${task.id}/labels`, {
+            token: t('outsider'),
+            body: { labelIds: [] },
+          })
+        ).status === 403,
+    );
+
+    check(
+      '작업 삭제 시 체크리스트·라벨 연결 CASCADE',
+      (await call('DELETE', `/tasks/${task.id}`, { token: t('manager') })).status === 204 &&
+        (await db.query('SELECT 1 FROM checklist_items WHERE task_id = $1', [task.id])).rowCount ===
+          0 &&
+        (await db.query('SELECT 1 FROM task_labels WHERE task_id = $1', [task.id])).rowCount === 0,
+    );
+
+    // 보관 프로젝트는 읽기 전용
+    await call('PATCH', `/projects/${lpid}`, { token: t('manager'), body: { status: 'archived' } });
+    const archivedLabel = await call('POST', labelUrl(), {
+      token: t('manager'),
+      body: { name: 'late', color: 'gray' },
+    });
+    const archivedItem = await call('POST', `/tasks/${second.id}/checklist`, {
+      token: t('manager'),
+      body: { content: 'late' },
+    });
+    check(
+      '보관된 프로젝트: 라벨·체크리스트 409 PROJECT_ARCHIVED, 읽기는 200',
+      archivedLabel.status === 409 &&
+        archivedLabel.body.error.code === 'PROJECT_ARCHIVED' &&
+        archivedItem.status === 409 &&
+        (await call('GET', labelUrl(), { token: t('member') })).status === 200,
+    );
+    await call('DELETE', `/projects/${lpid}`, { token: t('manager') });
+    await call('DELETE', `/projects/${otherPid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 라벨 CASCADE',
+      (await db.query('SELECT 1 FROM labels WHERE project_id = $1', [lpid])).rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

@@ -11,6 +11,10 @@ import {
   STATUS_LABELS,
   isOverdue,
 } from '../../constants/task.js';
+import { checklistText } from '../../constants/labels.js';
+import { listLabels } from '../../api/labels.js';
+import LabelChip from './LabelChip.jsx';
+import LabelManager from './LabelManager.jsx';
 import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
 
@@ -26,10 +30,15 @@ const readView = () => {
 // 프로젝트 상세의 작업 섹션: 필터 + 보드/목록 뷰 + 생성/수정 모달.
 export default function TaskSection({ project, archived }) {
   const [view, setView] = useState(readView);
-  const [filters, setFilters] = useState({ status: '', priority: '', assignee: '' });
+  const [filters, setFilters] = useState({ status: '', priority: '', assignee: '', label: '' });
+  const [managingLabels, setManagingLabels] = useState(false);
   const [q, setQ] = useState('');
   const [modal, setModal] = useState(null); // null | { task? }
   const debouncedQ = useDebounced(q.trim());
+  const labels = useQuery({
+    queryKey: ['labels', project.id],
+    queryFn: () => listLabels(project.id),
+  });
 
   // 알림 링크(?task=<id>)로 들어오면 해당 작업을 연다.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -52,11 +61,14 @@ export default function TaskSection({ project, archived }) {
   };
 
   const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
-  const filtered = Boolean(filters.status || filters.priority || filters.assignee || debouncedQ);
+  const filtered = Boolean(
+    filters.status || filters.priority || filters.assignee || filters.label || debouncedQ,
+  );
   const activeMembers = project.members.filter((m) => m.isActive);
   const common = {
     priority: filters.priority || undefined,
     assignee: filters.assignee || undefined,
+    label: filters.label || undefined,
     q: debouncedQ || undefined,
   };
 
@@ -130,12 +142,23 @@ export default function TaskSection({ project, archived }) {
             </option>
           ))}
         </select>
+        <select aria-label="라벨 필터" value={filters.label} onChange={setFilter('label')}>
+          <option value="">라벨 전체</option>
+          {(labels.data?.data ?? []).map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="secondary" onClick={() => setManagingLabels(true)}>
+          라벨 관리
+        </button>
         {filtered && (
           <button
             type="button"
             className="secondary"
             onClick={() => {
-              setFilters({ status: '', priority: '', assignee: '' });
+              setFilters({ status: '', priority: '', assignee: '', label: '' });
               setQ('');
             }}
           >
@@ -161,6 +184,13 @@ export default function TaskSection({ project, archived }) {
         />
       )}
 
+      {managingLabels && (
+        <LabelManager
+          project={project}
+          archived={archived}
+          onClose={() => setManagingLabels(false)}
+        />
+      )}
       {linked.data && !modal && (
         <TaskModal
           projectId={project.id}
@@ -242,6 +272,16 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
                     </button>
                     {t.commentCount > 0 && (
                       <span className="muted small"> 댓글 {t.commentCount}</span>
+                    )}
+                    {checklistText(t.checklist) && (
+                      <span className="checklist-badge"> ✓ {checklistText(t.checklist)}</span>
+                    )}
+                    {t.labels?.length > 0 && (
+                      <div className="task-card-labels">
+                        {t.labels.map((l) => (
+                          <LabelChip key={l.id} label={l} />
+                        ))}
+                      </div>
                     )}
                   </td>
                   <td>
