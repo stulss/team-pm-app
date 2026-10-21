@@ -23,6 +23,8 @@ import { PRIORITY_LABELS, STATUSES, STATUS_LABELS, isOverdue } from '../../const
 import { checklistText } from '../../constants/labels.js';
 import { openBlockers } from '../../utils/timeline.js';
 import LabelChip from './LabelChip.jsx';
+import Avatar from '../common/Avatar.jsx';
+import Icon from '../common/Icon.jsx';
 
 const COLUMN_PREFIX = 'col:';
 
@@ -56,8 +58,18 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
       )}
       <div className="task-card-meta">
         <span className={`badge badge-p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
-        {task.assignee && <span className="muted small">{task.assignee.name}</span>}
-        {task.commentCount > 0 && <span className="muted small">댓글 {task.commentCount}</span>}
+        {task.dueDate && (
+          <span className={isOverdue(task) ? 'due-chip overdue' : 'due-chip'}>
+            <Icon name="calendar" size={13} />
+            {task.dueDate}
+          </span>
+        )}
+        {task.commentCount > 0 && (
+          <span className="meta-item">
+            <Icon name="message" size={13} />
+            댓글 {task.commentCount}
+          </span>
+        )}
         {openBlockers(task).length > 0 && (
           <span
             className="blocked-badge"
@@ -80,8 +92,11 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
             ✓ {checklistText(task.checklist)}
           </span>
         )}
-        {task.dueDate && (
-          <span className={isOverdue(task) ? 'overdue small' : 'muted small'}>{task.dueDate}</span>
+        {task.assignee && (
+          <>
+            <Avatar name={task.assignee.name} size="sm" />
+            <span className="sr-only">{task.assignee.name}</span>
+          </>
         )}
       </div>
     </div>

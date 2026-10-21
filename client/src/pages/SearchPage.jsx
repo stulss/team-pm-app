@@ -38,7 +38,14 @@ export default function SearchPage() {
 
   return (
     <div className="stack">
-      <h1>검색{valid && <>: “{q}”</>}</h1>
+      <div className="page-header">
+        <div>
+          <h1>검색{valid && <>: “{q}”</>}</h1>
+          <p className="muted">
+            접근할 수 있는 프로젝트의 작업·댓글·채팅·프로젝트를 한 번에 찾습니다.
+          </p>
+        </div>
+      </div>
       {!valid && <p className="muted">검색어를 2자 이상 입력해 주세요.</p>}
       {valid && isPending && <p className="muted">검색 중…</p>}
       {valid && isError && (

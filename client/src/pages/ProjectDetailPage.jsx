@@ -22,6 +22,8 @@ import ChatPanel from '../components/chat/ChatPanel.jsx';
 import ActivityFeed from '../components/activity/ActivityFeed.jsx';
 import ExportCsvButton from '../components/activity/ExportCsvButton.jsx';
 import ShareLinks from '../components/activity/ShareLinks.jsx';
+import Avatar from '../components/common/Avatar.jsx';
+import Icon from '../components/common/Icon.jsx';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -93,9 +95,9 @@ export default function ProjectDetailPage() {
 
   return (
     <>
-      <p>
-        <Link to="/">← 프로젝트</Link>
-      </p>
+      <Link to="/" className="breadcrumb">
+        ← 프로젝트
+      </Link>
       {offline && (
         <p role="status" className="notice">
           실시간 연결이 끊겼습니다. 다시 연결하는 중입니다… 변경 사항은 연결되면 자동으로
@@ -114,46 +116,54 @@ export default function ProjectDetailPage() {
                 onSave={(body) => update.mutate(body)}
               />
             ) : (
-              <>
-                <div className="row between">
+              <div className="project-header">
+                <Avatar name={project.name} size="xl" shape="square" />
+                <div className="grow">
                   <h1>
-                    {project.name}{' '}
+                    {project.name}
                     {archived && <span className="badge badge-archived">보관됨</span>}
                   </h1>
-                  {canManage && (
-                    <div className="row">
-                      <button type="button" className="secondary" onClick={() => setEditing(true)}>
-                        수정
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary"
-                        disabled={update.isPending}
-                        onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
-                      >
-                        {archived ? '보관 해제' : '보관'}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        disabled={remove.isPending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
-                            )
-                          ) {
-                            remove.mutate();
-                          }
-                        }}
-                      >
-                        삭제
-                      </button>
-                    </div>
-                  )}
+                  {project.description && <p>{project.description}</p>}
+                  <p className="muted small">
+                    소유자 {project.members.find((m) => m.isOwner)?.name ?? '-'} · 멤버{' '}
+                    {project.members.length}명
+                  </p>
                 </div>
-                {project.description && <p>{project.description}</p>}
-              </>
+                {canManage && (
+                  <div className="project-actions">
+                    <button type="button" className="secondary" onClick={() => setEditing(true)}>
+                      <Icon name="edit" size={15} />
+                      수정
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={update.isPending}
+                      onClick={() => update.mutate({ status: archived ? 'active' : 'archived' })}
+                    >
+                      <Icon name="archive" size={15} />
+                      {archived ? '보관 해제' : '보관'}
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-ghost"
+                      disabled={remove.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `"${project.name}" 프로젝트를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+                          )
+                        ) {
+                          remove.mutate();
+                        }
+                      }}
+                    >
+                      <Icon name="trash" size={15} />
+                      삭제
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -186,10 +196,14 @@ export default function ProjectDetailPage() {
             <ul className="members">
               {project.members.map((m) => (
                 <li key={m.id}>
-                  <span>
-                    {m.name} <span className="muted">{m.email}</span>{' '}
-                    {m.isOwner && <span className="badge badge-owner">소유자</span>}
-                    {!m.isActive && <span className="badge badge-archived">비활성</span>}
+                  <Avatar name={m.name} />
+                  <span className="member-info">
+                    <strong>
+                      {m.name}
+                      {m.isOwner && <span className="badge badge-owner">소유자</span>}
+                      {!m.isActive && <span className="badge badge-archived">비활성</span>}
+                    </strong>
+                    <span className="muted">{m.email}</span>
                   </span>
                   {canManage && !m.isOwner && (
                     <button

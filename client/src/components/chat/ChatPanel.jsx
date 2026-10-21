@@ -7,6 +7,7 @@ import { formatWhen } from '../../constants/activity.js';
 import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
 import MentionTextarea from '../task/MentionTextarea.jsx';
 import ReactionBar from '../common/ReactionBar.jsx';
+import Avatar from '../common/Avatar.jsx';
 
 const MAX_LENGTH = 2000;
 
@@ -88,6 +89,7 @@ export default function ChatPanel({ project, archived = false }) {
           <ul className="chat-list">
             {messages.map((m) => (
               <li key={m.id} className={m.author?.id === user.id ? 'chat-msg mine' : 'chat-msg'}>
+                <Avatar name={m.author?.name ?? '?'} size="sm" />
                 <div className="chat-meta">
                   <strong>{m.author?.name ?? '알 수 없는 사용자'}</strong>
                   <time className="muted small" dateTime={m.createdAt}>

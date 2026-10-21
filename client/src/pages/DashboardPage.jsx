@@ -14,7 +14,12 @@ export default function DashboardPage() {
 
   return (
     <>
-      <h1>대시보드</h1>
+      <div className="page-header">
+        <div>
+          <h1>대시보드</h1>
+          <p className="muted">내가 속한 모든 프로젝트의 진행 상황을 한눈에 봅니다.</p>
+        </div>
+      </div>
       {isPending && <p className="muted">불러오는 중…</p>}
       {isError && (
         <p role="alert" className="error">

@@ -32,7 +32,14 @@ export default function FeedPage() {
 
   return (
     <div className="stack">
-      <h1>모아보기</h1>
+      <div className="page-header">
+        <div>
+          <h1>모아보기</h1>
+          <p className="muted">
+            마감 임박 작업, 나를 멘션한 댓글, 안 읽은 알림과 내가 없는 동안의 활동입니다.
+          </p>
+        </div>
+      </div>
       {isPending && <p className="muted">불러오는 중…</p>}
       {isError && (
         <p role="alert" className="error">

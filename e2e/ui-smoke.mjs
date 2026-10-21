@@ -439,8 +439,14 @@ try {
     await page.getByRole('link', { name: '← 프로젝트' }).click();
     await page.getByText('아직 프로젝트가 없습니다').waitFor();
     await page.getByRole('tab', { name: '보관됨' }).click();
-    await page.getByRole('link', { name: `ui-${run}-개편` }).waitFor();
-    await page.getByRole('link', { name: `ui-${run}-개편` }).click();
+    await page
+      .getByRole('main')
+      .getByRole('link', { name: `ui-${run}-개편` })
+      .waitFor();
+    await page
+      .getByRole('main')
+      .getByRole('link', { name: `ui-${run}-개편` })
+      .click();
     await page.getByRole('button', { name: '보관 해제' }).click();
     await page.getByRole('button', { name: '보관', exact: true }).waitFor();
   });
@@ -454,10 +460,16 @@ try {
   const member = await newPage();
   await step('member: 프로젝트가 보이고, 남의 프로젝트에는 수정/멤버 추가 UI 가 없음', async () => {
     await login(member, 'member');
-    await member.getByRole('link', { name: `ui-${run}-개편` }).waitFor();
+    await member
+      .getByRole('main')
+      .getByRole('link', { name: `ui-${run}-개편` })
+      .waitFor();
     // 공개 가입 사용자도 자기 프로젝트를 만들 수 있다
     await member.getByRole('button', { name: '새 프로젝트' }).waitFor();
-    await member.getByRole('link', { name: `ui-${run}-개편` }).click();
+    await member
+      .getByRole('main')
+      .getByRole('link', { name: `ui-${run}-개편` })
+      .click();
     await member.getByRole('heading', { name: /멤버 \(2\)/ }).waitFor();
     for (const name of ['수정', '보관', '삭제']) {
       if ((await member.getByRole('button', { name, exact: true }).count()) !== 0) {
@@ -493,7 +505,10 @@ try {
     await member.getByRole('link', { name: '내 작업' }).click();
     await member.getByRole('heading', { name: '내 작업' }).waitFor();
     await member.getByRole('row', { name: /디자인 시안 v2/ }).waitFor();
-    await member.getByRole('link', { name: `ui-${run}-개편` }).waitFor();
+    await member
+      .getByRole('main')
+      .getByRole('link', { name: `ui-${run}-개편` })
+      .waitFor();
     if ((await member.getByRole('row', { name: /member 작업/ }).count()) !== 0) {
       throw new Error('배정되지 않은 작업이 내 작업에 보임');
     }
@@ -530,14 +545,14 @@ try {
 
     // 초대받은 사람 화면에 프로젝트가 나타난다
     await member.goto(`${BASE}/`);
-    await member.getByRole('link', { name: selfName }).waitFor();
+    await member.getByRole('main').getByRole('link', { name: selfName }).waitFor();
 
     await outsider.once('dialog', (d) => d.accept());
     await outsider.getByRole('button', { name: '삭제', exact: true }).click();
     await outsider.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
     await member.reload();
     await member.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
-    if ((await member.getByRole('link', { name: selfName }).count()) !== 0) {
+    if ((await member.getByRole('main').getByRole('link', { name: selfName }).count()) !== 0) {
       throw new Error('삭제된 프로젝트가 초대받은 사용자에게 남아 있음');
     }
   });
@@ -1773,8 +1788,8 @@ try {
       if (!rtReady) throw new Error('준비 단계 실패');
       await rtManager.keyboard.press('Control+K');
       await palette(rtManager).waitFor();
-      const focused = await rtManager.evaluate(() =>
-        document.activeElement?.getAttribute('aria-label'),
+      const focused = await rtManager.evaluate(
+        "document.activeElement?.getAttribute('aria-label')",
       );
       if (focused !== '명령 검색') throw new Error(`입력창에 포커스가 없음: ${focused}`);
       await rtManager.keyboard.press('Control+K');

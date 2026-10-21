@@ -1,11 +1,25 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { listProjects } from '../../api/projects.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useUserRealtime } from '../../hooks/useUserRealtime.js';
+import Avatar from './Avatar.jsx';
 import CommandPalette from './CommandPalette.jsx';
+import Icon from './Icon.jsx';
 import NotificationBell from './NotificationBell.jsx';
 
+const NAV = [
+  { to: '/', label: '프로젝트', icon: 'folder', end: true },
+  { to: '/feed', label: '모아보기', icon: 'inbox' },
+  { to: '/dashboard', label: '대시보드', icon: 'chart' },
+  { to: '/tasks/mine', label: '내 작업', icon: 'tasks' },
+];
+
+const MAX_SIDE_PROJECTS = 8;
+
+// 앱 셸: 왼쪽 사이드바(내비게이션·내 프로젝트·계정) + 위쪽 바(검색·빠른 실행·알림).
+// 좁은 화면에서는 사이드바가 하단 탭 바로 바뀐다(CSS).
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -13,6 +27,13 @@ export default function Layout() {
   useUserRealtime();
   const [term, setTerm] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const projects = useQuery({
+    queryKey: ['projects', { status: 'active' }],
+    queryFn: () => listProjects({ status: 'active', limit: 100 }),
+  });
+  const sideProjects = (projects.data?.data ?? []).slice(0, MAX_SIDE_PROJECTS);
 
   // Ctrl+K(Mac 은 ⌘K)로 명령 팔레트를 열고 닫는다. 브라우저의 기본 동작(주소창 검색)은 막는다.
   useEffect(() => {
@@ -39,50 +60,123 @@ export default function Layout() {
   };
 
   return (
-    <>
-      <header className="topbar">
-        <nav>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="side-brand">
+          <span className="logo-mark" aria-hidden="true">
+            <Icon name="check" size={16} />
+          </span>
           <strong className="brand">Team PM</strong>
-          <NavLink to="/" end>
-            프로젝트
-          </NavLink>
-          <NavLink to="/feed">모아보기</NavLink>
-          <NavLink to="/dashboard">대시보드</NavLink>
-          <NavLink to="/tasks/mine">내 작업</NavLink>
-          {user.role === 'admin' && <NavLink to="/admin/users">사용자 관리</NavLink>}
+        </div>
+
+        <nav className="side-nav" aria-label="주 메뉴">
+          {NAV.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end}>
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+          {user.role === 'admin' && (
+            <NavLink to="/admin/users">
+              <Icon name="users" />
+              <span>사용자 관리</span>
+            </NavLink>
+          )}
         </nav>
-        <form className="topbar-search" role="search" onSubmit={onSearch}>
-          <input
-            type="search"
-            aria-label="통합검색"
-            placeholder="검색 (작업·댓글·채팅·프로젝트)"
-            maxLength={50}
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-          />
-        </form>
-        <button
-          type="button"
-          className="secondary palette-button"
-          aria-label="명령 팔레트 열기"
-          title="Ctrl+K"
-          onClick={() => setPaletteOpen(true)}
-        >
-          빠른 실행 <kbd>Ctrl K</kbd>
-        </button>
-        <div className="topbar-user">
-          <NotificationBell />
-          <span>{user.name}</span>
-          <span className={`badge badge-${user.role}`}>{user.role}</span>
-          <button type="button" className="secondary" onClick={onLogout}>
+
+        {sideProjects.length > 0 && (
+          <nav className="side-projects" aria-label="내 프로젝트">
+            <div className="side-title">내 프로젝트</div>
+            <ul>
+              {sideProjects.map((p) => (
+                <li key={p.id}>
+                  <NavLink to={`/projects/${p.id}`} title={p.name}>
+                    <Avatar name={p.name} size="xs" shape="square" />
+                    <span className="side-project-name">{p.name}</span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )}
+
+        <div className="side-user">
+          <Avatar name={user.name} />
+          <div className="side-user-info">
+            <strong>{user.name}</strong>
+            <span className={`role role-${user.role}`}>{user.role}</span>
+          </div>
+          <button type="button" className="secondary side-logout" onClick={onLogout}>
+            <Icon name="logout" size={16} />
             로그아웃
           </button>
         </div>
-      </header>
-      <main className="page">
-        <Outlet />
-      </main>
+      </aside>
+
+      <div className="main-col">
+        <header className="topbar">
+          <strong className="topbar-brand">
+            <span className="logo-mark" aria-hidden="true">
+              <Icon name="check" size={14} />
+            </span>
+            Team PM
+          </strong>
+          <form className="topbar-search" role="search" onSubmit={onSearch}>
+            <Icon name="search" size={16} className="search-icon" />
+            <input
+              type="search"
+              aria-label="통합검색"
+              placeholder="검색 (작업·댓글·채팅·프로젝트)"
+              maxLength={50}
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+            />
+          </form>
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="secondary palette-button"
+              aria-label="명령 팔레트 열기"
+              title="Ctrl+K"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <Icon name="command" size={16} />
+              <span className="palette-label">빠른 실행</span> <kbd>Ctrl K</kbd>
+            </button>
+            <NotificationBell />
+            <div className="user-menu">
+              <button
+                type="button"
+                className="icon-btn user-menu-button"
+                aria-label="내 계정"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                <Avatar name={user.name} size="sm" />
+              </button>
+              {menuOpen && (
+                <div className="user-menu-panel" role="menu">
+                  <div className="user-menu-head">
+                    <Avatar name={user.name} />
+                    <div>
+                      <strong>{user.name}</strong>
+                      <span className={`role role-${user.role}`}>{user.role}</span>
+                    </div>
+                  </div>
+                  <button type="button" className="secondary" onClick={onLogout}>
+                    <Icon name="logout" size={16} />
+                    로그아웃
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+        <main className="page">
+          <Outlet />
+        </main>
+      </div>
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} />}
-    </>
+    </div>
   );
 }

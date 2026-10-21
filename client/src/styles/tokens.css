@@ -1,0 +1,119 @@
+/* 디자인 토큰: 색·간격·반경·그림자·서체. 컴포넌트는 값을 직접 쓰지 않고 이 변수만 쓴다.
+   다크 모드는 같은 이름의 변수를 바꿔 쓰는 것만으로 적용된다. */
+:root {
+  /* 면 */
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-3: #eef0f4;
+  --border: #e4e7ec;
+  --border-strong: #cfd4dc;
+
+  /* 글자 */
+  --text: #101828;
+  --text-2: #344054;
+  --muted: #667085;
+
+  /* 포인트(인디고) */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef0ff;
+  --primary-text: #4338ca;
+  --on-primary: #ffffff;
+  --ring: rgba(79, 70, 229, 0.35);
+
+  /* 의미 색 */
+  --error: #d92d20;
+  --error-soft: #fef3f2;
+  --warning: #b54708;
+  --warning-soft: #fffaeb;
+  --success: #067647;
+  --success-soft: #ecfdf3;
+  --info: #175cd3;
+  --info-soft: #eff8ff;
+
+  /* 작업 상태 */
+  --st-todo: #98a2b3;
+  --st-in_progress: #2e90fa;
+  --st-review: #f79009;
+  --st-done: #12b76a;
+
+  /* 우선순위 */
+  --pr-low: #98a2b3;
+  --pr-medium: #2e90fa;
+  --pr-high: #f79009;
+  --pr-urgent: #f04438;
+
+  /* 반경·그림자·간격 */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.08);
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  /* 서체 */
+  --font:
+    'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI',
+    'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --sidebar-w: 248px;
+  --topbar-h: 56px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0f14;
+    --surface: #141922;
+    --surface-2: #1a202b;
+    --surface-3: #212835;
+    --border: #262d3a;
+    --border-strong: #364051;
+
+    --text: #eef1f6;
+    --text-2: #cdd3de;
+    --muted: #98a2b3;
+
+    --primary: #7c7ff5;
+    --primary-hover: #9496f8;
+    --primary-soft: #242654;
+    --primary-text: #a9abfb;
+    --on-primary: #0c0f14;
+    --ring: rgba(124, 127, 245, 0.45);
+
+    --error: #f97066;
+    --error-soft: #3a1b1a;
+    --warning: #fdb022;
+    --warning-soft: #3a2a0f;
+    --success: #47cd89;
+    --success-soft: #0f3326;
+    --info: #53b1fd;
+    --info-soft: #102a43;
+
+    --st-todo: #667085;
+    --st-in_progress: #53b1fd;
+    --st-review: #fdb022;
+    --st-done: #47cd89;
+
+    --pr-low: #667085;
+    --pr-medium: #53b1fd;
+    --pr-high: #fdb022;
+    --pr-urgent: #f97066;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}

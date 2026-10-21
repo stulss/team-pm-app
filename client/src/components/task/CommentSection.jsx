@@ -13,6 +13,7 @@ import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
 import { buildThreads } from '../../utils/threads.js';
 import MentionTextarea from './MentionTextarea.jsx';
 import ReactionBar from '../common/ReactionBar.jsx';
+import Avatar from '../common/Avatar.jsx';
 
 const formatTime = (iso) =>
   new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
@@ -87,6 +88,7 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
   const renderComment = (c, { canReply }) => (
     <>
       <div className="comment-meta">
+        <Avatar name={c.author.name} size="sm" />
         <strong>{c.author.name}</strong>
         <span className="muted small">{formatTime(c.createdAt)}</span>
         {c.edited && <span className="muted small">(수정됨)</span>}

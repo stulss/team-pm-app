@@ -17,7 +17,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test -w server",
-    "e2e": "node --env-file=server/.env e2e/ui-smoke.mjs"
+    "e2e": "node --env-file=server/.env e2e/ui-smoke.mjs",
+    "screens": "node --env-file=server/.env e2e/screens.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

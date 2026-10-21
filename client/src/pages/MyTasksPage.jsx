@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
+import Icon from '../components/common/Icon.jsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listMyTasks, updateTask } from '../api/tasks.js';
 import { errorMessage } from '../api/http.js';
@@ -24,8 +25,11 @@ export default function MyTasksPage() {
 
   return (
     <>
-      <div className="row between">
-        <h1>내 작업</h1>
+      <div className="page-header">
+        <div>
+          <h1>내 작업</h1>
+          <p className="muted">내게 배정된 모든 프로젝트의 작업입니다.</p>
+        </div>
         <select aria-label="상태 필터" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">상태 전체</option>
           {STATUSES.map((s) => (
@@ -48,9 +52,13 @@ export default function MyTasksPage() {
         </p>
       )}
       {data && data.data.length === 0 && (
-        <p className="muted">
-          {status ? '조건에 맞는 작업이 없습니다.' : '내게 배정된 작업이 없습니다.'}
-        </p>
+        <div className="empty-state">
+          <Icon name="tasks" size={26} />
+          <strong>{status ? '조건에 맞는 작업이 없습니다' : '배정된 작업이 없습니다'}</strong>
+          <p>
+            {status ? '다른 상태를 골라 보세요.' : '프로젝트에서 작업이 배정되면 여기에 모입니다.'}
+          </p>
+        </div>
       )}
 
       {data && data.data.length > 0 && (

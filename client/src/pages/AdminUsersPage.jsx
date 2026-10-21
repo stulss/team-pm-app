@@ -33,7 +33,12 @@ export default function AdminUsersPage() {
 
   return (
     <>
-      <h1>사용자 관리</h1>
+      <div className="page-header">
+        <div>
+          <h1>사용자 관리</h1>
+          <p className="muted">가입한 사용자의 역할과 활성 상태를 관리합니다.</p>
+        </div>
+      </div>
       <input
         type="search"
         placeholder="이름 또는 이메일로 검색"

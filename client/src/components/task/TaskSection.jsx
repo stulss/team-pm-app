@@ -287,13 +287,16 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
       )}
 
       {data && data.data.length === 0 && (
-        <p className="muted">
-          {filtered
-            ? '조건에 맞는 작업이 없습니다.'
-            : archived
-              ? '작업이 없습니다.'
-              : '아직 작업이 없습니다. 작업을 추가해 보세요.'}
-        </p>
+        <div className="empty-state">
+          <strong>
+            {filtered
+              ? '조건에 맞는 작업이 없습니다'
+              : archived
+                ? '작업이 없습니다'
+                : '아직 작업이 없습니다'}
+          </strong>
+          {!filtered && !archived && <p>오른쪽 위의 “작업 추가”로 첫 작업을 만들어 보세요.</p>}
+        </div>
       )}
 
       {data && data.data.length > 0 && (

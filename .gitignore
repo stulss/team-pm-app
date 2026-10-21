@@ -4,3 +4,6 @@ node_modules/
 !.env.example
 dist/
 .vercel
+
+# 화면 캡처 결과
+e2e/.screens/

@@ -47,10 +47,10 @@ export default function ProjectDashboard({ projectId }) {
               <h3>담당자별 미완료</h3>
               <AssigneeBars items={data.byAssignee} />
             </div>
-          </div>
-          <div>
-            <h3>지연된 작업</h3>
-            <OverdueList overdue={data.overdue} projectId={projectId} />
+            <div>
+              <h3>지연된 작업</h3>
+              <OverdueList overdue={data.overdue} projectId={projectId} />
+            </div>
           </div>
         </>
       )}

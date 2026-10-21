@@ -56,13 +56,7 @@ export function StatusBars({ byStatus }) {
   return (
     <div className="bars" aria-label="상태별 작업 수">
       {STATUSES.map((s) => (
-        <BarRow
-          key={s}
-          label={STATUS_LABELS[s]}
-          value={byStatus[s]}
-          max={max}
-          tone={s === 'done' ? 'done' : 'primary'}
-        />
+        <BarRow key={s} label={STATUS_LABELS[s]} value={byStatus[s]} max={max} tone={s} />
       ))}
     </div>
   );

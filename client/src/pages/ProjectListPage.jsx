@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { listProjects } from '../api/projects.js';
 import { errorMessage } from '../api/http.js';
 import CreateProjectForm from '../components/project/CreateProjectForm.jsx';
+import Avatar from '../components/common/Avatar.jsx';
+import Icon from '../components/common/Icon.jsx';
 
 export default function ProjectListPage() {
   const navigate = useNavigate();
@@ -17,11 +19,14 @@ export default function ProjectListPage() {
 
   return (
     <>
-      <div className="row between">
-        <h1>프로젝트</h1>
+      <div className="page-header">
+        <div>
+          <h1>프로젝트</h1>
+          <p className="muted">참여 중인 프로젝트를 한곳에서 보고 바로 이동합니다.</p>
+        </div>
         {!creating && (
           <button type="button" onClick={() => setCreating(true)}>
-            새 프로젝트
+            <Icon name="plus" size={16} />새 프로젝트
           </button>
         )}
       </div>
@@ -51,29 +56,51 @@ export default function ProjectListPage() {
         ))}
       </div>
 
-      {isPending && <p className="muted">불러오는 중…</p>}
+      {isPending && (
+        <ul className="grid" aria-label="불러오는 중">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="card project-card">
+              <span className="skeleton" style={{ height: 40 }} />
+              <span className="skeleton" style={{ height: 14 }} />
+              <span className="skeleton" style={{ height: 14, width: '60%' }} />
+            </li>
+          ))}
+        </ul>
+      )}
       {isError && (
         <p role="alert" className="error">
           {errorMessage(error, '프로젝트 목록을 불러오지 못했습니다.')}
         </p>
       )}
       {data && data.data.length === 0 && (
-        <p className="muted">
-          {status === 'active'
-            ? '아직 프로젝트가 없습니다. 새 프로젝트를 만들거나, 다른 프로젝트 소유자에게 이메일로 초대를 요청해 보세요.'
-            : '보관된 프로젝트가 없습니다.'}
-        </p>
+        <div className="empty-state">
+          <Icon name="folder" size={26} />
+          <strong>
+            {status === 'active' ? '아직 프로젝트가 없습니다' : '보관된 프로젝트가 없습니다'}
+          </strong>
+          <p>
+            {status === 'active'
+              ? '새 프로젝트를 만들거나, 다른 프로젝트 소유자에게 이메일로 초대를 요청해 보세요.'
+              : '끝난 프로젝트를 보관하면 여기에 모입니다.'}
+          </p>
+        </div>
       )}
       <ul className="grid">
         {data?.data.map((p) => (
-          <li key={p.id} className="card">
-            <h2>
-              <Link to={`/projects/${p.id}`}>{p.name}</Link>
-            </h2>
+          <li key={p.id} className="card project-card">
+            <div className="project-card-top">
+              <Avatar name={p.name} size="lg" shape="square" />
+              <h2>
+                <Link to={`/projects/${p.id}`}>{p.name}</Link>
+              </h2>
+            </div>
             {p.description && <p className="muted clamp">{p.description}</p>}
-            <p className="muted small">
-              소유자 {p.ownerName} · 멤버 {p.memberCount}명
-            </p>
+            <div className="project-card-meta">
+              <span>
+                소유자 {p.ownerName} · 멤버 {p.memberCount}명
+              </span>
+              <Icon name="chevronRight" size={16} />
+            </div>
           </li>
         ))}
       </ul>

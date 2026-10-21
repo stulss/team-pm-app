@@ -208,7 +208,10 @@ export default function CommandPalette({ open, onClose }) {
                   role="option"
                   aria-selected={index === current}
                   className={index === current ? 'palette-item on' : 'palette-item'}
-                  onMouseMove={() => index !== current && setActive(index)}
+                  onMouseMove={(e) => {
+                    // 실제로 마우스를 움직였을 때만 선택을 옮긴다(화면이 바뀌어 생기는 가짜 이벤트와 키보드 선택을 구분)
+                    if ((e.movementX || e.movementY) && index !== current) setActive(index);
+                  }}
                   onClick={() => run(item)}
                 >
                   <span className="palette-label">{item.label}</span>

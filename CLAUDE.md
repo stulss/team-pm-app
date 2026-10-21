@@ -18,7 +18,7 @@
 - 배포는 Vercel 함수(상시 프로세스 아님)다. 메모리에 룸·캐시·스케줄러 상태를 두지 말고, 스케줄은 Vercel Cron, 소켓은 Redis adapter를 쓴다. DB는 Transaction pooler(prepared statement 비활성).
 - 마일스톤을 끝내면 `docs/ROADMAP.md` 체크리스트를 갱신한다.
 - 문서는 한국어로 작성한다.
-- 현재 상태: 구현 완료(M0~M9), 최종 배포 검증 단계. `main` 푸시 = Production 자동 배포이므로 푸시 전에 사용자 확인을 받고, 새 마이그레이션은 코드보다 먼저 적용한다.
+- 현재 상태: 구현 완료(M0~M21 + 화면 디자인 개편), 운영 중. `main` 푸시 = Production 자동 배포다. 사용자 지시(2026-10-21)에 따라 **기능 하나를 검증하면 커밋하고 바로 푸시**하되, 푸시 전에 테스트·스모크·e2e 를 통과시키고 새 마이그레이션은 코드보다 먼저 적용한다. 푸시 후 `npm run verify:prod -w server`(기존 계정, 새 가입 없음)로 확인한다.
 - 서버 로그는 `utils/logger.js` 를 쓰고 비밀값을 남기지 않는다. 새 SQL 은 `server/scripts/smoke.mjs`(실DB) 로, 화면 흐름은 `e2e/ui-smoke.mjs` 로 검증한다. 운영에 돌릴 때는 가입 한도(시간당 20건/IP)를 고려한다.
 - 보안·운영 문서: `docs/SECURITY.md`, `docs/DEPLOYMENT.md`(운영 절차·백업·한계).
-
+- 화면은 `docs/CONVENTIONS.md` §9 의 디자인 시스템(토큰 `var(--…)`)을 따른다. UI 를 바꾸면 `npm run screens` 로 라이트·다크·모바일을 눈으로 확인한다.
