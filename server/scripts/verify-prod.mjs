@@ -238,6 +238,10 @@ async function main() {
   const page = await fetch(BASE_ORIGIN + '/');
   const html = await page.text();
   check('웹 화면(/) 이 HTML 로 열림', page.status === 200 && html.includes('<div id="root">'));
+  // 배포된 화면 번들에 최신 기능(명령 팔레트, M21)이 들어 있는지 확인한다
+  const bundlePath = html.match(/\/assets\/index-[^"']+\.js/)?.[0];
+  const bundle = bundlePath ? await (await fetch(BASE_ORIGIN + bundlePath)).text() : '';
+  check('화면 번들에 명령 팔레트가 포함됨 (M21)', bundle.includes('명령 팔레트'));
   const share = await call('GET', '/shared/' + 'x'.repeat(43));
   check('없는 공유 링크는 404', share.status === 404);
 

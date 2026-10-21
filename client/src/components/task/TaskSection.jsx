@@ -23,10 +23,11 @@ import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
 
 const VIEW_KEY = 'team-pm:task-view';
+const VIEWS = ['board', 'list', 'calendar', 'timeline'];
 const readView = () => {
   try {
     const saved = localStorage.getItem(VIEW_KEY);
-    return ['list', 'calendar', 'timeline'].includes(saved) ? saved : 'board';
+    return VIEWS.includes(saved) ? saved : 'board';
   } catch {
     return 'board'; // 저장소를 쓸 수 없어도 동작해야 한다
   }
@@ -34,7 +35,7 @@ const readView = () => {
 
 // 프로젝트 상세의 작업 섹션: 필터 + 보드/목록 뷰 + 생성/수정 모달.
 export default function TaskSection({ project, archived }) {
-  const [view, setView] = useState(readView);
+  const [savedView, setView] = useState(readView);
   const [filters, setFilters] = useState({ status: '', priority: '', assignee: '', label: '' });
   const [managingLabels, setManagingLabels] = useState(false);
   const [q, setQ] = useState('');
@@ -47,6 +48,15 @@ export default function TaskSection({ project, archived }) {
 
   // 알림 링크(?task=<id>)로 들어오면 해당 작업을 연다.
   const [searchParams, setSearchParams] = useSearchParams();
+  // 명령 팔레트가 ?view=<보기>, ?new=task 로 보기 전환·작업 만들기를 요청할 수 있다.
+  const viewParam = searchParams.get('view');
+  const view = VIEWS.includes(viewParam) ? viewParam : savedView;
+  const creating = searchParams.get('new') === 'task' && !archived;
+  const dropParams = (...names) => {
+    const next = new URLSearchParams(searchParams);
+    for (const name of names) next.delete(name);
+    setSearchParams(next, { replace: true });
+  };
   const linkedId = searchParams.get('task');
   const linked = useQuery({
     queryKey: ['task', linkedId],
@@ -58,6 +68,7 @@ export default function TaskSection({ project, archived }) {
 
   const changeView = (next) => {
     setView(next);
+    if (viewParam) dropParams('view');
     try {
       localStorage.setItem(VIEW_KEY, next);
     } catch {
@@ -222,7 +233,7 @@ export default function TaskSection({ project, archived }) {
           onClose={() => setManagingLabels(false)}
         />
       )}
-      {linked.data && !modal && (
+      {linked.data && !modal && !creating && (
         <TaskModal
           projectId={project.id}
           ownerId={project.ownerId}
@@ -232,14 +243,17 @@ export default function TaskSection({ project, archived }) {
           onClose={closeLinked}
         />
       )}
-      {modal && (
+      {(modal || creating) && (
         <TaskModal
           projectId={project.id}
           ownerId={project.ownerId}
           members={project.members}
-          task={modal.task}
+          task={modal?.task}
           readOnly={archived}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setModal(null);
+            if (creating) dropParams('new');
+          }}
         />
       )}
     </div>

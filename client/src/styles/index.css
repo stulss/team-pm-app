@@ -1643,3 +1643,92 @@ button.reaction[aria-pressed='true'] {
 .reply-form {
   padding: 0;
 }
+
+/* 명령 팔레트 (M21) */
+.palette-button kbd {
+  margin-left: 0.25rem;
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+  font-family: inherit;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+dialog.palette {
+  width: min(36rem, calc(100vw - 2rem));
+  margin-top: 10vh;
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+dialog.palette::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.palette-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+
+.palette-body input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#palette-list {
+  max-height: min(24rem, 55vh);
+  overflow-y: auto;
+}
+
+.palette-group-title {
+  padding: 0.35rem 0.5rem 0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.palette-item.on {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.palette-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-hint {
+  margin-left: auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-empty,
+.palette-help {
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .palette-button kbd {
+    display: none;
+  }
+}

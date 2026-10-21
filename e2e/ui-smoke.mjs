@@ -1764,6 +1764,104 @@ try {
       for (const p of [rtManager, rtMember]) await closeDialog(p);
     },
   );
+  // ---- Ctrl+K 명령 팔레트 (M21)
+  const palette = (p) => p.getByRole('dialog', { name: '명령 팔레트' });
+  const option = (p, name) => palette(p).getByRole('option', { name });
+  await step(
+    '팔레트: Ctrl+K 로 열고 바로 입력되며, 다시 누르면 닫히고, 이동 명령으로 페이지가 바뀜',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await rtManager.keyboard.press('Control+K');
+      await palette(rtManager).waitFor();
+      const focused = await rtManager.evaluate(() =>
+        document.activeElement?.getAttribute('aria-label'),
+      );
+      if (focused !== '명령 검색') throw new Error(`입력창에 포커스가 없음: ${focused}`);
+      await rtManager.keyboard.press('Control+K');
+      await palette(rtManager).waitFor({ state: 'detached' });
+
+      await rtManager.getByRole('button', { name: '명령 팔레트 열기' }).click();
+      await palette(rtManager).waitFor();
+      await rtManager.keyboard.type('대시');
+      await option(rtManager, '대시보드').waitFor();
+      if ((await palette(rtManager).getByRole('option').count()) < 1) throw new Error('결과 없음');
+      await rtManager.keyboard.press('Enter');
+      await rtManager.waitForURL('**/dashboard');
+      await palette(rtManager).waitFor({ state: 'detached' });
+    },
+  );
+  await step(
+    '팔레트: 화살표로 선택을 옮기고 Esc 로 닫으며, manager 에게는 사용자 관리가 보이지 않음',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await rtManager.keyboard.press('Control+K');
+      await palette(rtManager).waitFor();
+      const selected = () =>
+        palette(rtManager).locator('[role="option"][aria-selected="true"]').textContent();
+      const first = await selected();
+      await rtManager.keyboard.press('ArrowDown');
+      const second = await selected();
+      if (first === second) throw new Error('선택이 옮겨지지 않음');
+      await rtManager.keyboard.press('ArrowUp');
+      if ((await selected()) !== first) throw new Error('위로 돌아오지 않음');
+      await rtManager.keyboard.type('사용자');
+      await option(rtManager, /통합검색 결과 전체 보기/).waitFor(); // 목록이 입력에 맞게 갱신된 뒤에 확인한다
+      if ((await option(rtManager, /사용자 관리/).count()) !== 0) {
+        throw new Error('권한 없는 사용자에게 사용자 관리가 보임');
+      }
+      await rtManager.keyboard.press('Escape');
+      await palette(rtManager).waitFor({ state: 'detached' });
+    },
+  );
+  await step('팔레트: 검색어를 입력하면 작업이 나오고 Enter 로 그 작업이 열림', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await rtManager.goto(projectUrl);
+    await rtManager.getByRole('tab', { name: '보드' }).click();
+    await column(rtManager, 'review').waitFor();
+    await rtManager.keyboard.press('Control+K');
+    await palette(rtManager).waitFor();
+    await rtManager.keyboard.type('둘째');
+    const hit = palette(rtManager).getByRole('group', { name: '작업' }).getByRole('option').first();
+    await hit.waitFor({ timeout: 8000 });
+    await hit.click();
+    await rtManager.waitForURL('**?task=*');
+    await rtManager.getByRole('dialog', { name: '작업 수정' }).waitFor();
+    await rtManager.getByRole('dialog', { name: '작업 수정' }).getByLabel('제목').waitFor();
+    await closeDialog(rtManager);
+  });
+  await step(
+    '팔레트: 프로젝트 화면에서 작업 만들기와 보기 전환 명령이 동작하고 탭 선택이 우선함',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await rtManager.goto(projectUrl);
+      await rtManager.getByRole('tab', { name: '보드' }).click();
+      await rtManager.keyboard.press('Control+K');
+      await palette(rtManager).waitFor();
+      await rtManager.keyboard.type('작업 만들기');
+      await option(rtManager, '이 프로젝트에 작업 만들기').click();
+      await rtManager.getByRole('dialog', { name: '새 작업' }).waitFor();
+      await closeDialog(rtManager);
+      if (rtManager.url().includes('new=task')) throw new Error('닫은 뒤에도 new=task 가 남음');
+
+      await rtManager.keyboard.press('Control+K');
+      await palette(rtManager).waitFor();
+      await rtManager.keyboard.type('캘린더');
+      await option(rtManager, '작업 보기: 캘린더').click();
+      await rtManager.getByTestId('calendar-title').waitFor();
+      // 팔레트가 정한 보기는 주소(?view=)에 담겨 링크로 공유할 수 있다
+      if (!rtManager.url().includes('view=calendar')) throw new Error('주소에 view 가 없음');
+      if (
+        (await rtManager.getByRole('tab', { name: '캘린더' }).getAttribute('aria-selected')) !==
+        'true'
+      ) {
+        throw new Error('캘린더 탭이 선택되지 않음');
+      }
+      // 탭을 직접 누르면 팔레트가 정한 보기보다 사용자의 선택이 우선한다
+      await rtManager.getByRole('tab', { name: '보드' }).click();
+      await column(rtManager, 'todo').waitFor();
+      if (rtManager.url().includes('view=')) throw new Error('탭을 누른 뒤에도 view 가 남음');
+    },
+  );
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');
     await rtManager
