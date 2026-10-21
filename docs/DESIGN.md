@@ -89,6 +89,7 @@ erDiagram
         varchar name
         enum role "admin|manager|member"
         boolean is_active
+        jsonb preferences "개인 설정(M22), 허용 키만"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -336,6 +337,9 @@ erDiagram
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
 
+**users.preferences** (M22 설정, 마이그레이션 019)
+- 사용자별 개인 설정을 `users.preferences`(jsonb, 기본 `{}`, `CHECK (jsonb_typeof = 'object')`)에 둔다. 계정에 저장되므로 기기를 바꿔도 유지된다. 서버가 **허용 키·값만** zod 로 받는다(임의 JSON 저장 방지): `theme`(`system`·`light`·`dark`), `accent`(`indigo`·`blue`·`teal`·`green`·`rose`·`orange`), `density`(`comfortable`·`compact`), `defaultView`(`board`·`list`·`calendar`·`timeline`). 응답의 `user.preferences` 는 저장된 값에 기본값을 채워 항상 모든 키를 가진다(저장된 값이 허용 목록에 없으면 기본값으로 대체). 이후 단계(M23 알림 설정)에서 키가 늘어난다.
+
 **comments.parent_id** (M20 댓글 스레드, 마이그레이션 018)
 - 댓글에 **한 단계** 답글을 단다. `comments.parent_id`(nullable)가 원 댓글을 가리키고, `(task_id, parent_id)` → `comments(task_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 작업의 댓글에는 답글을 달 수 없게** DB 가 보장한다(이를 위해 `comments` 에 `UNIQUE (task_id, id)` 추가). `CHECK (parent_id IS NULL OR parent_id <> id)`.
 - "답글에 다시 답글"은 DB 가 아니라 서비스가 막는다(`parent_id` 는 만든 뒤 바뀌지 않으므로 경쟁 조건이 없다). 원 댓글이 소프트 삭제돼도 답글은 남고 원 댓글은 "삭제된 댓글" 자리표시자로 보인다(스레드가 끊기지 않게). 삭제된 댓글에는 새 답글을 달 수 없다. 작업이 지워지면 모두 사라진다.
@@ -428,6 +432,7 @@ erDiagram
 | PATCH | `/users/:id/role` | 역할 변경 | Admin |
 | PATCH | `/users/:id/status` | 활성/비활성 | Admin |
 | PATCH | `/users/me` | 내 프로필(이름/비밀번호) 수정 | 본인 |
+| PATCH | `/users/me/preferences` | 내 설정 일부 수정(M22) `{ theme?, accent?, density?, defaultView? }` — 빈 객체·허용되지 않은 키·값은 400. 응답 `{ user }` 의 `preferences` 는 기본값이 채워진 전체 설정 | 본인 |
 
 #### Projects
 | 메서드 | 경로 | 설명 | 권한 |
@@ -867,6 +872,9 @@ team-pm-app/
 | **M19** | 이모지 반응 | 댓글·채팅 메시지에 이모지 반응 8종(`comment_reactions`·`chat_message_reactions`, 마이그레이션 017, §1.2·§2.2) |
 | **M20** | 댓글 스레드 | 댓글에 한 단계 답글, 원 댓글 작성자에게 알림(`comments.parent_id`, 마이그레이션 018, §1.2·§2.2) |
 | **M21** | Ctrl+K 명령 팔레트 | 서버 변경 없는 클라이언트 기능. `Ctrl+K`(Mac `⌘K`) 또는 상단 "빠른 실행" 버튼으로 연다. 항목: 페이지 이동(관리자만 사용자 관리), 프로젝트 화면에서는 "이 프로젝트에 작업 만들기"·"작업 보기: 보드/목록/캘린더/타임라인"(주소의 `?new=task`·`?view=` 로 전달하고 사용자가 탭을 직접 누르면 탭 선택이 우선), 활성 프로젝트로 바로 가기, 2자 이상 입력하면 기존 통합검색(`GET /search`, 권한 필터 그대로)의 작업·댓글·채팅 결과. ↑↓ 이동·Enter 실행·Esc 닫기, 한글 조합 중 Enter 는 무시 |
+| **M22** | 설정 페이지(화면 설정·내 계정) | `/settings`: 테마(시스템/라이트/다크)·포인트 색·밀도·기본 작업 보기(계정에 저장, `users.preferences`, 마이그레이션 019), 이름·비밀번호 변경(기존 `PATCH /users/me`) |
+| **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기 — 서버의 알림 생성이 설정을 따른다 |
+| **M24** | 프로젝트 설정 | 프로젝트별 알림 음소거와 사이드바 고정 — 사용자·프로젝트 단위 설정 |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 
 > 공통: 모든 새 테이블은 같은 마이그레이션에서 RLS 를 켜고, 무료 플랜 용량을 지키기 위해 보관 기간·개수 상한을 둔다.

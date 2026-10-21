@@ -16,6 +16,7 @@ import SearchPage from './pages/SearchPage.jsx';
 import FeedPage from './pages/FeedPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import AdminUsersPage from './pages/AdminUsersPage.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 
 // 로그인·가입 등 인증 화면: 왼쪽에 서비스 소개, 오른쪽에 폼. 좁은 화면에서는 폼만 보인다.
 function AuthLayout() {
@@ -92,6 +93,7 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/tasks/mine" element={<MyTasksPage />} />
               <Route path="/search" element={<SearchPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/feed" element={<FeedPage />} />
               <Route element={<RoleRoute roles={['admin']} />}>
                 <Route path="/admin/users" element={<AdminUsersPage />} />

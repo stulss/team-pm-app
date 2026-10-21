@@ -1,6 +1,8 @@
 import { query } from '../../config/db.js';
+import { withDefaults } from './preferences.js';
 
-const PUBLIC_COLUMNS = 'id, email, name, role, is_active, created_at, email_verified_at';
+const PUBLIC_COLUMNS =
+  'id, email, name, role, is_active, created_at, email_verified_at, preferences';
 
 export const toUser = (row) =>
   row && {
@@ -11,6 +13,7 @@ export const toUser = (row) =>
     isActive: row.is_active,
     createdAt: row.created_at,
     emailVerified: Boolean(row.email_verified_at),
+    preferences: withDefaults(row.preferences),
   };
 
 // 첫 가입자는 자동 Admin. 동시 가입으로 Admin 이 둘 생기지 않도록 트랜잭션 + advisory lock 안에서 호출한다.
@@ -96,4 +99,14 @@ export async function markEmailVerified(id) {
     'UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() WHERE id = $1',
     [id],
   );
+}
+
+// 받은 키만 덮어쓴다(jsonb 병합). 허용 키 검증은 라우트의 zod 가 한다.
+export async function updatePreferences(id, patch) {
+  const { rows } = await query(
+    `UPDATE users SET preferences = preferences || $2::jsonb, updated_at = now()
+     WHERE id = $1 RETURNING ${PUBLIC_COLUMNS}`,
+    [id, JSON.stringify(patch)],
+  );
+  return rows[0] ?? null;
 }

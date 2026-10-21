@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router';
 import { getTask, listProjectTasks, updateTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { useDebounced } from '../../hooks/useDebounced.js';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   PRIORITIES,
   PRIORITY_LABELS,
@@ -22,20 +23,23 @@ import SavedFilters from './SavedFilters.jsx';
 import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
 
-const VIEW_KEY = 'team-pm:task-view';
 const VIEWS = ['board', 'list', 'calendar', 'timeline'];
-const readView = () => {
+const VIEW_KEY = 'team-pm:task-view';
+// 같은 탭에서 마지막으로 고른 보기(새로고침해도 유지). 없으면 내 설정의 기본 작업 보기.
+const readView = (fallback) => {
   try {
-    const saved = localStorage.getItem(VIEW_KEY);
-    return VIEWS.includes(saved) ? saved : 'board';
+    const saved = sessionStorage.getItem(VIEW_KEY);
+    return VIEWS.includes(saved) ? saved : fallback;
   } catch {
-    return 'board'; // 저장소를 쓸 수 없어도 동작해야 한다
+    return fallback; // 저장소를 쓸 수 없어도 동작해야 한다
   }
 };
 
 // 프로젝트 상세의 작업 섹션: 필터 + 보드/목록 뷰 + 생성/수정 모달.
 export default function TaskSection({ project, archived }) {
-  const [savedView, setView] = useState(readView);
+  // 처음 보이는 보기는 내 설정(기본 작업 보기)이고, 탭을 누르면 이 탭에서는 그 선택이 유지된다.
+  const { user } = useAuth();
+  const [savedView, setView] = useState(() => readView(user.preferences.defaultView));
   const [filters, setFilters] = useState({ status: '', priority: '', assignee: '', label: '' });
   const [managingLabels, setManagingLabels] = useState(false);
   const [q, setQ] = useState('');
@@ -70,7 +74,7 @@ export default function TaskSection({ project, archived }) {
     setView(next);
     if (viewParam) dropParams('view');
     try {
-      localStorage.setItem(VIEW_KEY, next);
+      sessionStorage.setItem(VIEW_KEY, next);
     } catch {
       /* 저장 실패는 무시 */
     }

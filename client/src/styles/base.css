@@ -108,7 +108,7 @@ label {
 input,
 select,
 textarea {
-  min-height: 36px;
+  min-height: var(--control-h);
   padding: 0.45rem 0.7rem;
   font: inherit;
   font-weight: 400;
@@ -178,7 +178,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  min-height: 36px;
+  min-height: var(--control-h);
   padding: 0.4rem 0.9rem;
   font: inherit;
   font-weight: 550;

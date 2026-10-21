@@ -3037,6 +3037,93 @@ try {
     await call('DELETE', `/projects/${tpid}`, { token: t('manager') });
   }
 
+  // --- 설정 (M22): jsonb 병합 저장, CHECK, 기본값 대체, 사용자 격리를 실제 DB 로 확인
+  {
+    const prefs = (who) =>
+      call('GET', '/auth/me', { token: t(who) }).then((r) => r.body.user.preferences);
+    const patch = (who, body) => call('PATCH', '/users/me/preferences', { token: t(who), body });
+
+    const fresh = await prefs('member');
+    check(
+      '기존 사용자도 기본 설정을 가진다 (마이그레이션 전 가입자 포함)',
+      fresh.theme === 'system' &&
+        fresh.accent === 'indigo' &&
+        fresh.density === 'comfortable' &&
+        fresh.defaultView === 'board',
+    );
+    const first = await patch('member', { theme: 'dark', accent: 'teal' });
+    const second = await patch('member', { density: 'compact' });
+    check(
+      '일부만 저장하면 jsonb 가 병합된다 (이전 값 유지)',
+      first.status === 200 &&
+        second.status === 200 &&
+        second.body.user.preferences.theme === 'dark' &&
+        second.body.user.preferences.accent === 'teal' &&
+        second.body.user.preferences.density === 'compact',
+    );
+    const stored = await db.query('SELECT preferences FROM users WHERE id = $1', [
+      people.member.id,
+    ]);
+    check(
+      'DB 에는 바꾼 키만 저장된다 (기본값을 채워 저장하지 않음)',
+      JSON.stringify(Object.keys(stored.rows[0].preferences).sort()) ===
+        JSON.stringify(['accent', 'density', 'theme']),
+    );
+    check(
+      '다른 사용자의 설정은 그대로',
+      (await prefs('manager')).theme === 'system' && (await prefs('outsider')).accent === 'indigo',
+    );
+    const bad = await Promise.all([
+      patch('member', {}),
+      patch('member', { theme: 'neon' }),
+      patch('member', { admin: true }),
+      patch('member', { defaultView: 'gantt' }),
+    ]);
+    check(
+      '빈 객체·허용되지 않은 값·키는 400',
+      bad.every((r) => r.status === 400),
+    );
+
+    let checkRejected = false;
+    try {
+      await db.query(`UPDATE users SET preferences = '[1]'::jsonb WHERE id = $1`, [
+        people.member.id,
+      ]);
+    } catch {
+      checkRejected = true;
+    }
+    check('DB CHECK 가 객체가 아닌 설정(배열 등)을 거부', checkRejected);
+
+    // 과거에 저장된 값이 허용 목록에서 빠졌다면 기본값으로 대체해 돌려준다
+    await db.query(
+      `UPDATE users SET preferences = '{"theme":"retro","accent":"blue"}'::jsonb WHERE id = $1`,
+      [people.member.id],
+    );
+    const sanitized = await prefs('member');
+    check(
+      '허용 목록에 없는 저장값은 기본값으로 대체되고 유효한 값은 유지',
+      sanitized.theme === 'system' && sanitized.accent === 'blue',
+    );
+
+    // 로그인·토큰 갱신 응답에도 포함되고, 비밀번호 변경 후에도 설정이 유지된다
+    const login = await call('POST', '/auth/login', {
+      body: { email: emailOf('member'), password: 'S3cure!pass' },
+    });
+    const changed = await call('PATCH', '/users/me', {
+      token: login.body.accessToken,
+      body: { currentPassword: 'S3cure!pass', newPassword: 'N3w!passw0rd' },
+    });
+    check(
+      '로그인 응답에 설정이 있고, 비밀번호를 바꿔도 설정이 유지된다',
+      login.body.user.preferences.accent === 'blue' &&
+        changed.status === 200 &&
+        changed.body.user.preferences.accent === 'blue',
+    );
+    await db.query(`UPDATE users SET preferences = '{}'::jsonb WHERE id = $1`, [people.member.id]);
+    // 이후 검사가 원래 비밀번호로 로그인하지 않도록, 바뀐 세션의 토큰으로 갈아 끼운다
+    people.member.token = changed.body.accessToken;
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

@@ -82,6 +82,10 @@ export default function Layout() {
               <span>사용자 관리</span>
             </NavLink>
           )}
+          <NavLink to="/settings" className="nav-settings">
+            <Icon name="sliders" />
+            <span>설정</span>
+          </NavLink>
         </nav>
 
         {sideProjects.length > 0 && (
@@ -163,6 +167,9 @@ export default function Layout() {
                       <span className={`role role-${user.role}`}>{user.role}</span>
                     </div>
                   </div>
+                  <NavLink to="/settings" onClick={() => setMenuOpen(false)}>
+                    설정
+                  </NavLink>
                   <button type="button" className="secondary" onClick={onLogout}>
                     <Icon name="logout" size={16} />
                     로그아웃

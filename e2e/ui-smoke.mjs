@@ -1809,6 +1809,7 @@ try {
     '팔레트: 화살표로 선택을 옮기고 Esc 로 닫으며, manager 에게는 사용자 관리가 보이지 않음',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');
+      await rtManager.mouse.move(2, 2); // 커서가 목록 위에 있으면 마우스 선택이 키보드 선택을 덮어쓸 수 있다
       await rtManager.keyboard.press('Control+K');
       await palette(rtManager).waitFor();
       const selected = () =>
@@ -1875,6 +1876,126 @@ try {
       await rtManager.getByRole('tab', { name: '보드' }).click();
       await column(rtManager, 'todo').waitFor();
       if (rtManager.url().includes('view=')) throw new Error('탭을 누른 뒤에도 view 가 남음');
+    },
+  );
+  // ---- 설정 (M22): 다른 단계와 상태를 섞지 않도록 전용 계정을 쓴다
+  const NEW_PASSWORD = 'N3w!passw0rd2';
+  let setPage;
+  let settingsProjectId;
+  await step('설정: 사이드바에서 열고 테마·포인트 색·밀도가 바로 적용됨', async () => {
+    await apiRegister('settings');
+    setPage = await newPage();
+    await login(setPage, 'settings');
+    await setPage.locator('.side-nav').getByRole('link', { name: '설정' }).click();
+    await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    const attr = (name) => setPage.evaluate(`document.documentElement.dataset.${name}`);
+    const bg = () => setPage.evaluate('getComputedStyle(document.body).backgroundColor');
+    const lightBg = await bg();
+
+    await setPage.getByRole('group', { name: '테마' }).getByText('다크', { exact: true }).click();
+    await pollUntil(async () => (await attr('theme')) === 'dark', '다크 테마 적용');
+    if ((await bg()) === lightBg) throw new Error('배경색이 바뀌지 않음');
+
+    await setPage
+      .getByRole('group', { name: '포인트 색' })
+      .getByText('틸', { exact: true })
+      .click();
+    await pollUntil(async () => (await attr('accent')) === 'teal', '포인트 색 적용');
+    const accent = await setPage.evaluate(
+      "getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()",
+    );
+    if (accent !== '#0d9488') throw new Error(`포인트 색이 틸이 아님: ${accent}`);
+
+    await setPage.getByRole('group', { name: '밀도' }).getByText('촘촘하게').click();
+    await pollUntil(async () => (await attr('density')) === 'compact', '밀도 적용');
+    if (
+      (await setPage.evaluate('getComputedStyle(document.documentElement).fontSize')) !== '14px'
+    ) {
+      throw new Error('촘촘한 밀도의 글자 크기가 적용되지 않음');
+    }
+    await setPage.getByRole('status').filter({ hasText: '저장했습니다' }).first().waitFor();
+  });
+  await step('설정: 계정에 저장되어 다른 브라우저에서 로그인해도 같은 설정으로 보임', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    const other = await newPage(); // 새 브라우저 컨텍스트: 로컬 저장소를 공유하지 않는다
+    await login(other, 'settings');
+    await pollUntil(
+      async () =>
+        (await other.evaluate('document.documentElement.dataset.theme')) === 'dark' &&
+        (await other.evaluate('document.documentElement.dataset.accent')) === 'teal' &&
+        (await other.evaluate('document.documentElement.dataset.density')) === 'compact',
+      '서버에 저장된 설정 적용',
+    );
+    await other.context().close();
+  });
+  await step('설정: 기본 작업 보기를 바꾸면 프로젝트가 그 보기로 열림', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    const token = await apiLogin('settings');
+    const created = await apiCall('POST', '/projects', token, { name: `ui-${run}-설정확인` });
+    settingsProjectId = created.body.id;
+    await setPage.getByRole('group', { name: '기본 작업 보기' }).getByText('캘린더').click();
+    await setPage.getByRole('status').filter({ hasText: '저장했습니다' }).first().waitFor();
+    await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+    const tab = setPage.getByRole('tab', { name: '캘린더' });
+    await tab.waitFor();
+    await pollUntil(
+      async () => (await tab.getAttribute('aria-selected')) === 'true',
+      '캘린더 탭 선택',
+    );
+    await setPage.getByTestId('calendar-title').waitFor();
+    // 탭을 직접 누르면 그 방문 동안은 바뀐다
+    await setPage.getByRole('tab', { name: '보드' }).click();
+    await setPage
+      .getByRole('tab', { name: '보드' })
+      .and(setPage.locator('[aria-selected="true"]'))
+      .waitFor();
+  });
+  await step('설정: 이름을 바꾸면 사이드바에 바로 반영됨', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    await setPage.goto(`${BASE}/settings`);
+    await setPage.getByLabel('이름', { exact: true }).fill('ui-설정바꾼이름');
+    await setPage.getByRole('button', { name: '이름 저장' }).click();
+    await setPage.locator('.side-user-info').getByText('ui-설정바꾼이름').waitFor();
+  });
+  await step(
+    '설정: 비밀번호 변경은 현재 비밀번호 검증·확인 일치가 필요하고, 바꾼 뒤 새 비밀번호로만 로그인됨',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const card = setPage.getByRole('region', { name: '보안' });
+      await card.getByLabel('현재 비밀번호').fill('wrong-password');
+      await card.getByLabel('새 비밀번호 (8자 이상)').fill(NEW_PASSWORD);
+      await card.getByLabel('새 비밀번호 확인').fill(`${NEW_PASSWORD}x`);
+      await card.getByRole('alert').filter({ hasText: '서로 다릅니다' }).waitFor();
+      if (!(await card.getByRole('button', { name: '비밀번호 변경' }).isDisabled())) {
+        throw new Error('확인이 다른데 변경 버튼이 켜져 있음');
+      }
+      await card.getByLabel('새 비밀번호 확인').fill(NEW_PASSWORD);
+      await card.getByRole('button', { name: '비밀번호 변경' }).click();
+      await card
+        .getByRole('alert')
+        .filter({ hasText: '현재 비밀번호가 올바르지 않습니다' })
+        .waitFor();
+
+      await card.getByLabel('현재 비밀번호').fill(PASSWORD);
+      await card.getByRole('button', { name: '비밀번호 변경' }).click();
+      await card.getByRole('status').filter({ hasText: '비밀번호를 바꿨습니다' }).waitFor();
+      // 지금 기기는 로그인 상태가 유지된다 (새 세션을 받음)
+      await setPage.reload();
+      await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+
+      const oldLogin = await apiCall('POST', '/auth/login', null, {
+        email: emailOf('settings'),
+        password: PASSWORD,
+      });
+      const newLogin = await apiCall('POST', '/auth/login', null, {
+        email: emailOf('settings'),
+        password: NEW_PASSWORD,
+      });
+      if (oldLogin.status !== 401) throw new Error(`이전 비밀번호로 로그인됨: ${oldLogin.status}`);
+      if (newLogin.status !== 200) throw new Error(`새 비밀번호로 로그인 실패: ${newLogin.status}`);
+      if (newLogin.body.user.preferences.theme !== 'dark') {
+        throw new Error('비밀번호를 바꾼 뒤 설정이 사라짐');
+      }
     },
   );
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {

@@ -40,9 +40,13 @@
   width: 28px;
   height: 28px;
   color: #fff;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: linear-gradient(
+    135deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 65%, #8b5cf6)
+  );
   border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.45);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .side-nav {
@@ -350,9 +354,14 @@
   overflow: hidden;
   color: #fff;
   background:
-    radial-gradient(900px 500px at 10% 0%, rgba(167, 139, 250, 0.55), transparent 60%),
-    radial-gradient(700px 500px at 100% 100%, rgba(56, 189, 248, 0.35), transparent 55%),
-    linear-gradient(135deg, #3730a3, #4f46e5 55%, #6d28d9);
+    radial-gradient(900px 500px at 10% 0%, rgba(255, 255, 255, 0.28), transparent 60%),
+    radial-gradient(700px 500px at 100% 100%, rgba(56, 189, 248, 0.3), transparent 55%),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 60%, #000),
+      var(--accent) 55%,
+      color-mix(in srgb, var(--accent) 65%, #6d28d9)
+    );
 }
 
 .auth-hero .brand-row {
@@ -567,4 +576,10 @@
 .page.public {
   max-width: 720px;
   padding-top: var(--s-6);
+}
+
+@media (max-width: 860px) {
+  .side-nav a.nav-settings {
+    display: none;
+  }
 }

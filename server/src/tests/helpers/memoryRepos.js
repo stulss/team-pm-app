@@ -63,6 +63,7 @@ const pub = (u) => ({
   is_active: u.is_active,
   created_at: u.created_at,
   email_verified_at: u.email_verified_at ?? null,
+  preferences: u.preferences ?? {},
 });
 
 let reactionSeq = 0;
@@ -128,6 +129,12 @@ export const usersRepo = {
   async markEmailVerified(id) {
     const u = store.users.find((x) => x.id === id);
     if (u && !u.email_verified_at) u.email_verified_at = new Date();
+  },
+  async updatePreferences(id, patch) {
+    const u = store.users.find((x) => x.id === id);
+    if (!u) return null;
+    u.preferences = { ...(u.preferences ?? {}), ...patch };
+    return pub(u);
   },
   async updateProfile(id, { name, passwordHash }) {
     const u = store.users.find((x) => x.id === id);

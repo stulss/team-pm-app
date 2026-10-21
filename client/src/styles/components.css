@@ -528,30 +528,55 @@ button.bell-item.unread {
 }
 
 @media (prefers-color-scheme: dark) {
-  .lc-red {
+  :root:not([data-theme='light']) .lc-red {
     --lc: #fda29b;
   }
-  .lc-orange {
+  :root:not([data-theme='light']) .lc-orange {
     --lc: #fdb97e;
   }
-  .lc-yellow {
+  :root:not([data-theme='light']) .lc-yellow {
     --lc: #f5d06a;
   }
-  .lc-green {
+  :root:not([data-theme='light']) .lc-green {
     --lc: #75e0a7;
   }
-  .lc-blue {
+  :root:not([data-theme='light']) .lc-blue {
     --lc: #84caff;
   }
-  .lc-purple {
+  :root:not([data-theme='light']) .lc-purple {
     --lc: #d6bbfb;
   }
-  .lc-pink {
+  :root:not([data-theme='light']) .lc-pink {
     --lc: #faa7e0;
   }
-  .lc-gray {
+  :root:not([data-theme='light']) .lc-gray {
     --lc: #c0c8d4;
   }
+}
+
+:root[data-theme='dark'] .lc-red {
+  --lc: #fda29b;
+}
+:root[data-theme='dark'] .lc-orange {
+  --lc: #fdb97e;
+}
+:root[data-theme='dark'] .lc-yellow {
+  --lc: #f5d06a;
+}
+:root[data-theme='dark'] .lc-green {
+  --lc: #75e0a7;
+}
+:root[data-theme='dark'] .lc-blue {
+  --lc: #84caff;
+}
+:root[data-theme='dark'] .lc-purple {
+  --lc: #d6bbfb;
+}
+:root[data-theme='dark'] .lc-pink {
+  --lc: #faa7e0;
+}
+:root[data-theme='dark'] .lc-gray {
+  --lc: #c0c8d4;
 }
 
 .label-chip {

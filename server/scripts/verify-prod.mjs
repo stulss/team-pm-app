@@ -56,6 +56,15 @@ async function login(label, email, password) {
 
 async function readChecks(label, who) {
   const t = who.token;
+  const prefs = who.user?.preferences;
+  check(
+    `${label}: 내 설정(preferences)에 기본값이 채워져 있음 (M22)`,
+    Boolean(prefs) &&
+      ['system', 'light', 'dark'].includes(prefs.theme) &&
+      ['indigo', 'blue', 'teal', 'green', 'rose', 'orange'].includes(prefs.accent) &&
+      ['comfortable', 'compact'].includes(prefs.density) &&
+      ['board', 'list', 'calendar', 'timeline'].includes(prefs.defaultView),
+  );
   const projects = await call('GET', '/projects?limit=100', { token: t });
   check(
     `${label}: 프로젝트 목록 (200)`,

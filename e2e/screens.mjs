@@ -328,6 +328,7 @@ try {
     ['/feed', '13-feed'],
     ['/tasks/mine', '14-mine'],
     ['/search?q=결제', '15-search'],
+    ['/settings', '16-settings'],
   ]) {
     await page.goto(`${BASE}${path}`);
     await shot(file, { full: true });

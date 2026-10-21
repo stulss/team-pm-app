@@ -4,6 +4,7 @@ import { authenticate, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { setRefreshCookie } from '../auth/routes.js';
 import { disconnectUser } from '../../sockets/emitter.js';
+import { preferencesPatch } from './preferences.js';
 import * as service from './service.js';
 
 const listQuery = z.object({
@@ -41,6 +42,10 @@ usersRouter.patch('/me', validate(meBody), async (req, res) => {
   if (!accessToken) return res.json({ user });
   setRefreshCookie(res, refreshToken);
   res.json({ user, accessToken });
+});
+
+usersRouter.patch('/me/preferences', validate(preferencesPatch), async (req, res) => {
+  res.json({ user: await service.updatePreferences(req.user.id, req.body) });
 });
 
 usersRouter.patch(

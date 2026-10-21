@@ -31,6 +31,10 @@ export async function changeStatus(id, isActive) {
   return repo.toUser(row);
 }
 
+export async function updatePreferences(userId, patch) {
+  return repo.toUser(await repo.updatePreferences(userId, patch));
+}
+
 // 비밀번호를 바꾸면 기존 세션을 모두 종료하고 새 세션을 발급한다.
 export async function updateMe(userId, { name, currentPassword, newPassword }) {
   let passwordHash;

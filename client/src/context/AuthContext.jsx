@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { http, refreshSession, setAccessToken, setOnSessionExpired } from '../api/http.js';
 import { connectSocket, disconnectSocket } from '../socket/index.js';
+import { updateMe, updatePreferences } from '../api/users.js';
+import { applyPreferences, storePreferences } from '../constants/preferences.js';
 
 const AuthContext = createContext(null);
 
@@ -26,6 +28,12 @@ export function AuthProvider({ children }) {
     refreshSession().then(applySession).catch(clearSession);
   }, [applySession, clearSession]);
 
+  // 계정에 저장된 설정을 화면에 적용한다(로그인·새로고침·다른 기기에서 바꾼 뒤 갱신 모두).
+  useEffect(() => {
+    if (!user) return;
+    storePreferences(applyPreferences(user.preferences));
+  }, [user]);
+
   // 로그인 중에는 실시간 소켓을 연결하고, 로그아웃하면 끊는다.
   useEffect(() => {
     if (status === 'authed') connectSocket();
@@ -46,6 +54,24 @@ export function AuthProvider({ children }) {
         if (data.needsVerification) return { needsVerification: true };
         applySession(data);
         return { needsVerification: false };
+      },
+      // 이름·비밀번호 변경. 비밀번호를 바꾸면 서버가 다른 세션을 모두 끊고 새 세션을 준다.
+      async updateProfile(body) {
+        const data = await updateMe(body);
+        if (data.accessToken) applySession(data);
+        else setUser(data.user);
+      },
+      // 화면에는 먼저 적용하고(낙관적), 서버 저장이 실패하면 되돌린다.
+      async savePreferences(patch) {
+        const before = user;
+        setUser({ ...user, preferences: { ...user.preferences, ...patch } });
+        try {
+          const data = await updatePreferences(patch);
+          setUser(data.user);
+        } catch (err) {
+          setUser(before);
+          throw err;
+        }
       },
       async logout() {
         try {

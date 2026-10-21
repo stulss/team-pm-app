@@ -1,5 +1,6 @@
 /* 디자인 토큰: 색·간격·반경·그림자·서체. 컴포넌트는 값을 직접 쓰지 않고 이 변수만 쓴다.
-   다크 모드는 같은 이름의 변수를 바꿔 쓰는 것만으로 적용된다. */
+   설정(M22)이 <html> 의 data-theme(system|light|dark)·data-accent·data-density 를 바꿔 적용한다.
+   data-theme 가 없거나 system 이면 운영체제 설정(prefers-color-scheme)을 따른다. */
 :root {
   /* 면 */
   --bg: #f4f5f8;
@@ -14,13 +15,13 @@
   --text-2: #344054;
   --muted: #667085;
 
-  /* 포인트(인디고) */
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-soft: #eef0ff;
-  --primary-text: #4338ca;
+  /* 포인트 색: --accent 한 값에서 파생한다(설정에서 바꿀 수 있다) */
+  --primary: var(--accent);
+  --primary-hover: color-mix(in srgb, var(--accent) 85%, #000);
+  --primary-soft: color-mix(in srgb, var(--accent) 11%, #fff);
+  --primary-text: color-mix(in srgb, var(--accent) 82%, #000);
   --on-primary: #ffffff;
-  --ring: rgba(79, 70, 229, 0.35);
+  --ring: color-mix(in srgb, var(--accent) 35%, transparent);
 
   /* 의미 색 */
   --error: #d92d20;
@@ -44,20 +45,26 @@
   --pr-high: #f79009;
   --pr-urgent: #f04438;
 
-  /* 반경·그림자·간격 */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.08);
+
+  color-scheme: light;
+
+  /* 반경·간격·크기 */
   --r-sm: 6px;
   --r-md: 8px;
   --r-lg: 12px;
   --r-xl: 16px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.18), 0 2px 6px rgba(16, 24, 40, 0.08);
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
   --s-5: 24px;
   --s-6: 32px;
+  --control-h: 36px;
+
+  --accent: #4f46e5;
 
   /* 서체 */
   --font:
@@ -67,12 +74,38 @@
 
   --sidebar-w: 248px;
   --topbar-h: 56px;
-
-  color-scheme: light;
 }
 
+/* 포인트 색 */
+:root[data-accent='blue'] {
+  --accent: #2563eb;
+}
+:root[data-accent='teal'] {
+  --accent: #0d9488;
+}
+:root[data-accent='green'] {
+  --accent: #16a34a;
+}
+:root[data-accent='rose'] {
+  --accent: #e11d48;
+}
+:root[data-accent='orange'] {
+  --accent: #ea580c;
+}
+
+/* 밀도: 글자와 간격, 컨트롤 높이를 줄인다 */
+:root[data-density='compact'] {
+  font-size: 14px;
+  --control-h: 32px;
+  --s-3: 10px;
+  --s-4: 13px;
+  --s-5: 18px;
+  --s-6: 26px;
+}
+
+/* 다크: 설정이 system 이면 운영체제를 따르고, dark 로 정하면 항상 다크 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0c0f14;
     --surface: #141922;
     --surface-2: #1a202b;
@@ -84,12 +117,12 @@
     --text-2: #cdd3de;
     --muted: #98a2b3;
 
-    --primary: #7c7ff5;
-    --primary-hover: #9496f8;
-    --primary-soft: #242654;
-    --primary-text: #a9abfb;
+    --primary: color-mix(in srgb, var(--accent) 62%, #fff);
+    --primary-hover: color-mix(in srgb, var(--accent) 45%, #fff);
+    --primary-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+    --primary-text: color-mix(in srgb, var(--accent) 45%, #fff);
     --on-primary: #0c0f14;
-    --ring: rgba(124, 127, 245, 0.45);
+    --ring: color-mix(in srgb, var(--accent) 50%, transparent);
 
     --error: #f97066;
     --error-soft: #3a1b1a;
@@ -116,4 +149,49 @@
 
     color-scheme: dark;
   }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0c0f14;
+  --surface: #141922;
+  --surface-2: #1a202b;
+  --surface-3: #212835;
+  --border: #262d3a;
+  --border-strong: #364051;
+
+  --text: #eef1f6;
+  --text-2: #cdd3de;
+  --muted: #98a2b3;
+
+  --primary: color-mix(in srgb, var(--accent) 62%, #fff);
+  --primary-hover: color-mix(in srgb, var(--accent) 45%, #fff);
+  --primary-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  --primary-text: color-mix(in srgb, var(--accent) 45%, #fff);
+  --on-primary: #0c0f14;
+  --ring: color-mix(in srgb, var(--accent) 50%, transparent);
+
+  --error: #f97066;
+  --error-soft: #3a1b1a;
+  --warning: #fdb022;
+  --warning-soft: #3a2a0f;
+  --success: #47cd89;
+  --success-soft: #0f3326;
+  --info: #53b1fd;
+  --info-soft: #102a43;
+
+  --st-todo: #667085;
+  --st-in_progress: #53b1fd;
+  --st-review: #fdb022;
+  --st-done: #47cd89;
+
+  --pr-low: #667085;
+  --pr-medium: #53b1fd;
+  --pr-high: #fdb022;
+  --pr-urgent: #f97066;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
 }
