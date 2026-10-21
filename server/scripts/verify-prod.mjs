@@ -183,6 +183,17 @@ async function readChecks(label, who) {
               Array.isArray(c.reactions) && c.reactions.every((r) => REACTION_KEYS.includes(r.key)),
           ),
       );
+      const ids = new Set(comments.body?.data?.map((c) => c.id));
+      check(
+        `${label}: 댓글에 parentId 가 있고 답글은 같은 작업의 최상위 댓글을 가리킴`,
+        comments.body.data.every(
+          (c) =>
+            'parentId' in c &&
+            (c.parentId === null ||
+              (ids.has(c.parentId) &&
+                comments.body.data.find((p) => p.id === c.parentId).parentId === null)),
+        ),
+      );
       const items = await call('GET', `/tasks/${tasks[0].id}/checklist`, { token: t });
       check(
         `${label}: 체크리스트 (200) 개수가 작업의 total 과 일치`,

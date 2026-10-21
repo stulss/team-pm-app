@@ -2913,6 +2913,130 @@ try {
     );
   }
 
+  // --- 댓글 스레드 (M20): 같은 작업 복합 외래키, 자기 부모 CHECK, 한 단계 제한, 알림, CASCADE 를 실제 DB 로 확인
+  {
+    const tpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-thread', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const mkTask = async (title) =>
+      (await call('POST', `/projects/${tpid}/tasks`, { token: t('manager'), body: { title } }))
+        .body;
+    const task = await mkTask('smoke-thread 작업');
+    const other = await mkTask('smoke-thread 다른 작업');
+    const post = (who, text, extra = {}, id = task.id) =>
+      call('POST', `/tasks/${id}/comments`, { token: t(who), body: { body: text, ...extra } });
+
+    const root = (await post('member', '원 댓글')).body;
+    const reply = await post('manager', '답글', { parentId: root.id });
+    check(
+      '답글 달기 (201), parentId 가 원 댓글을 가리키고 원 댓글의 parentId 는 null',
+      reply.status === 201 && reply.body.parentId === root.id && root.parentId === null,
+    );
+    const list = await call('GET', `/tasks/${task.id}/comments`, { token: t('member') });
+    check(
+      '목록은 작성순 평면 배열이고 parentId 가 실린다',
+      list.body.data.map((c) => `${c.body}:${c.parentId === root.id ? 'reply' : 'root'}`).join() ===
+        '원 댓글:root,답글:reply',
+    );
+    const nested = await post('member', '답글의 답글', { parentId: reply.body.id });
+    check(
+      '답글에 다시 답글은 400 REPLY_TO_REPLY',
+      nested.status === 400 && nested.body.error.code === 'REPLY_TO_REPLY',
+    );
+    const cross = await post('manager', '다른 작업에 답글', { parentId: root.id }, other.id);
+    check(
+      '다른 작업의 댓글에는 API 404',
+      cross.status === 404 &&
+        (await post('manager', 'x', { parentId: '00000000-0000-4000-8000-000000000000' }))
+          .status === 404,
+    );
+
+    // DB 제약: 다른 작업의 댓글을 부모로 직접 넣거나 자기 자신을 부모로 삼을 수 없다
+    let crossFk = false;
+    try {
+      await db.query(
+        'INSERT INTO comments (task_id, author_id, body, parent_id) VALUES ($1, $2, $3, $4)',
+        [other.id, people.manager.id, 'x', root.id],
+      );
+    } catch {
+      crossFk = true;
+    }
+    let selfRejected = false;
+    try {
+      await db.query('UPDATE comments SET parent_id = id WHERE id = $1', [root.id]);
+    } catch {
+      selfRejected = true;
+    }
+    check('DB 복합 외래키가 다른 작업의 댓글을 부모로 거부', crossFk);
+    check('DB CHECK 가 자기 자신을 부모로 삼는 것을 거부', selfRejected);
+
+    // 알림: 원 댓글 작성자(member)에게 답글 알림이 간다
+    const noti = await call('GET', '/notifications', { token: t('member') });
+    check(
+      '답글 알림: 원 댓글 작성자에게 comment_added "답글" 알림',
+      noti.body.data.some((n) => n.type === 'comment_added' && n.message.includes('답글')),
+    );
+    const selfReply = await post('member', '내 댓글에 내 답글', { parentId: root.id });
+    const afterSelf = await call('GET', '/notifications', { token: t('member') });
+    check(
+      '본인 댓글에 답글을 달면 본인에게는 새 알림이 없다',
+      selfReply.status === 201 && afterSelf.body.data.length === noti.body.data.length,
+    );
+
+    // 삭제된 원 댓글: 답글은 남고, 새 답글은 404
+    await call('DELETE', `/comments/${root.id}`, { token: t('member') });
+    const afterDelete = await call('GET', `/tasks/${task.id}/comments`, { token: t('manager') });
+    const placeholder = afterDelete.body.data.find((c) => c.id === root.id);
+    check(
+      '원 댓글을 지워도 답글은 남고 원 댓글은 자리표시자로 보인다',
+      placeholder?.deleted === true &&
+        afterDelete.body.data.filter((c) => c.parentId === root.id).length === 2,
+    );
+    check(
+      '삭제된 댓글에 새 답글은 404',
+      (await post('manager', '늦은 답글', { parentId: root.id })).status === 404,
+    );
+    const taskNow = await call('GET', `/tasks/${task.id}`, { token: t('manager') });
+    check('댓글 수 배지는 삭제되지 않은 댓글(답글 포함)만 센다', taskNow.body.commentCount === 2);
+
+    // 비멤버·보관
+    check(
+      '비멤버는 답글 403',
+      (await post('outsider', 'x', { parentId: reply.body.id })).status === 403,
+    );
+
+    // CASCADE: 부모 행을 실제로 지우면 답글도 사라지고, 작업을 지우면 스레드 전체가 사라진다
+    const fresh = (await post('member', '새 원 댓글')).body;
+    await post('manager', '새 답글', { parentId: fresh.id });
+    await db.query('DELETE FROM comments WHERE id = $1', [fresh.id]);
+    check(
+      '부모 댓글 행을 지우면 답글도 CASCADE',
+      (await db.query('SELECT 1 FROM comments WHERE parent_id = $1', [fresh.id])).rowCount === 0,
+    );
+    await call('DELETE', `/tasks/${task.id}`, { token: t('manager') });
+    check(
+      '작업을 지우면 스레드 전체가 CASCADE',
+      (await db.query('SELECT 1 FROM comments WHERE task_id = $1', [task.id])).rowCount === 0,
+    );
+
+    await call('PATCH', `/projects/${tpid}`, { token: t('manager'), body: { status: 'archived' } });
+    check(
+      '보관된 프로젝트: 답글 409',
+      (
+        await post(
+          'manager',
+          '보관 후',
+          { parentId: '00000000-0000-4000-8000-000000000000' },
+          other.id,
+        )
+      ).status === 409,
+    );
+    await call('DELETE', `/projects/${tpid}`, { token: t('manager') });
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

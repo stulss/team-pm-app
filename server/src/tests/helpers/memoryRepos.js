@@ -1082,12 +1082,13 @@ export const commentsRepo = {
       )
       .map((u) => ({ id: u.id, name: u.name }));
   },
-  async insertComment({ taskId, authorId, body, mentions = [] }) {
+  async insertComment({ taskId, authorId, body, mentions = [], parentId = null }) {
     const now = new Date(Date.now() + store.comments.length);
     const row = {
       id: crypto.randomUUID(),
       task_id: taskId,
       author_id: authorId,
+      parent_id: parentId,
       body,
       created_at: now,
       updated_at: now,

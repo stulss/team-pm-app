@@ -6,6 +6,7 @@ export const toComment = (row) =>
   row && {
     id: row.id,
     taskId: row.task_id,
+    parentId: row.parent_id ?? null,
     author: { id: row.author_id, name: row.author_name },
     // 삭제된 댓글은 본문을 가린다.
     body: row.deleted_at ? DELETED_BODY : row.body,
@@ -71,11 +72,11 @@ async function insertMentions(client, commentId, mentions) {
 }
 
 // 댓글과 멘션을 한 트랜잭션으로 저장한다. mentions: [{ id, name }]
-export async function insertComment({ taskId, authorId, body, mentions = [] }) {
+export async function insertComment({ taskId, authorId, body, mentions = [], parentId = null }) {
   const id = await withTransaction(async (client) => {
     const { rows } = await client.query(
-      'INSERT INTO comments (task_id, author_id, body) VALUES ($1, $2, $3) RETURNING id',
-      [taskId, authorId, body],
+      'INSERT INTO comments (task_id, author_id, body, parent_id) VALUES ($1, $2, $3, $4) RETURNING id',
+      [taskId, authorId, body, parentId],
     );
     await insertMentions(client, rows[0].id, mentions);
     return rows[0].id;

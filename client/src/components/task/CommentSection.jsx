@@ -10,6 +10,7 @@ import {
 import { errorMessage } from '../../api/http.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { activeMentionIds, renderWithMentions } from '../../utils/mentions.js';
+import { buildThreads } from '../../utils/threads.js';
 import MentionTextarea from './MentionTextarea.jsx';
 import ReactionBar from '../common/ReactionBar.jsx';
 
@@ -17,6 +18,7 @@ const formatTime = (iso) =>
   new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
 
 // 작업 모달의 댓글 영역. 본문은 항상 텍스트로 렌더링한다(HTML 로 해석하지 않음).
+// 댓글에는 한 단계 답글을 달 수 있다(스레드). 서버는 작성순 평면 배열을 주고, 묶는 것은 여기서 한다.
 // 다른 사용자의 변경은 프로젝트 화면의 실시간 구독이 ['comments', taskId] 를 갱신해 반영된다.
 export default function CommentSection({ taskId, ownerId, members = [], readOnly = false }) {
   const { user } = useAuth();
@@ -38,12 +40,22 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [editMentions, setEditMentions] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [replyText, setReplyText] = useState('');
+  const [replyMentions, setReplyMentions] = useState([]);
 
   const add = useMutation({
-    mutationFn: () => createComment(taskId, text, activeMentionIds(text, mentions)),
-    onSuccess: () => {
-      setText('');
-      setMentions([]);
+    mutationFn: ({ body, picked, parentId }) =>
+      createComment(taskId, body, activeMentionIds(body, picked), parentId),
+    onSuccess: (_created, { parentId }) => {
+      if (parentId) {
+        setReplyingTo(null);
+        setReplyText('');
+        setReplyMentions([]);
+      } else {
+        setText('');
+        setMentions([]);
+      }
       refresh();
     },
   });
@@ -62,6 +74,7 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
   const mutationError = [add, save, remove, react].find((m) => m.isError)?.error;
 
   const comments = data?.data ?? [];
+  const threads = buildThreads(comments);
   const canDelete = (c) =>
     !readOnly &&
     !c.deleted &&
@@ -69,6 +82,95 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
       user.role === 'admin' ||
       user.role === 'manager' ||
       ownerId === user.id);
+
+  // 댓글 하나(최상위든 답글이든)의 머리글·본문·반응. 답글 버튼은 최상위 댓글에만 있다.
+  const renderComment = (c, { canReply }) => (
+    <>
+      <div className="comment-meta">
+        <strong>{c.author.name}</strong>
+        <span className="muted small">{formatTime(c.createdAt)}</span>
+        {c.edited && <span className="muted small">(수정됨)</span>}
+        <span className="spacer" />
+        {canReply && !readOnly && !c.deleted && (
+          <button
+            type="button"
+            className="linklike small"
+            aria-expanded={replyingTo === c.id}
+            onClick={() => setReplyingTo(replyingTo === c.id ? null : c.id)}
+          >
+            답글
+          </button>
+        )}
+        {!readOnly && !c.deleted && c.author.id === user.id && editingId !== c.id && (
+          <button
+            type="button"
+            className="linklike small"
+            onClick={() => {
+              setEditingId(c.id);
+              setEditText(c.body);
+              setEditMentions(c.mentions ?? []);
+            }}
+          >
+            수정
+          </button>
+        )}
+        {canDelete(c) && (
+          <button
+            type="button"
+            className="linklike small"
+            disabled={remove.isPending}
+            onClick={() => {
+              if (window.confirm('이 댓글을 삭제할까요?')) remove.mutate(c.id);
+            }}
+          >
+            삭제
+          </button>
+        )}
+      </div>
+      {editingId === c.id ? (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save.mutate({ id: c.id, body: editText });
+          }}
+        >
+          <MentionTextarea
+            rows={3}
+            maxLength={5000}
+            aria-label="댓글 수정"
+            value={editText}
+            onChange={setEditText}
+            mentions={editMentions}
+            onMentionsChange={setEditMentions}
+            members={members}
+            meId={user.id}
+          />
+          <div className="row">
+            <button type="submit" disabled={save.isPending || !editText.trim()}>
+              저장
+            </button>
+            <button type="button" className="secondary" onClick={() => setEditingId(null)}>
+              취소
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className={c.deleted ? 'comment-body muted' : 'comment-body'}>
+          {c.deleted ? c.body : renderWithMentions(c.body, c.mentions)}
+        </p>
+      )}
+      {!c.deleted && editingId !== c.id && (
+        <ReactionBar
+          reactions={c.reactions}
+          meId={user.id}
+          readOnly={readOnly}
+          pending={react.isPending}
+          onToggle={(emoji, on) => react.mutate({ id: c.id, key: emoji, on })}
+        />
+      )}
+    </>
+  );
 
   return (
     <section className="comments" aria-label="댓글">
@@ -83,80 +185,56 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
       {data && comments.length === 0 && <p className="muted small">아직 댓글이 없습니다.</p>}
 
       <ul className="comment-list">
-        {comments.map((c) => (
+        {threads.map(({ comment: c, replies }) => (
           <li key={c.id} className="comment" data-comment-id={c.id}>
-            <div className="comment-meta">
-              <strong>{c.author.name}</strong>
-              <span className="muted small">{formatTime(c.createdAt)}</span>
-              {c.edited && <span className="muted small">(수정됨)</span>}
-              <span className="spacer" />
-              {!readOnly && !c.deleted && c.author.id === user.id && editingId !== c.id && (
-                <button
-                  type="button"
-                  className="linklike small"
-                  onClick={() => {
-                    setEditingId(c.id);
-                    setEditText(c.body);
-                    setEditMentions(c.mentions ?? []);
-                  }}
-                >
-                  수정
-                </button>
-              )}
-              {canDelete(c) && (
-                <button
-                  type="button"
-                  className="linklike small"
-                  disabled={remove.isPending}
-                  onClick={() => {
-                    if (window.confirm('이 댓글을 삭제할까요?')) remove.mutate(c.id);
-                  }}
-                >
-                  삭제
-                </button>
-              )}
-            </div>
-            {editingId === c.id ? (
-              <form
-                className="stack"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  save.mutate({ id: c.id, body: editText });
-                }}
-              >
-                <MentionTextarea
-                  rows={3}
-                  maxLength={5000}
-                  aria-label="댓글 수정"
-                  value={editText}
-                  onChange={setEditText}
-                  mentions={editMentions}
-                  onMentionsChange={setEditMentions}
-                  members={members}
-                  meId={user.id}
-                />
-                <div className="row">
-                  <button type="submit" disabled={save.isPending || !editText.trim()}>
-                    저장
-                  </button>
-                  <button type="button" className="secondary" onClick={() => setEditingId(null)}>
-                    취소
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <p className={c.deleted ? 'comment-body muted' : 'comment-body'}>
-                {c.deleted ? c.body : renderWithMentions(c.body, c.mentions)}
-              </p>
-            )}
-            {!c.deleted && editingId !== c.id && (
-              <ReactionBar
-                reactions={c.reactions}
-                meId={user.id}
-                readOnly={readOnly}
-                pending={react.isPending}
-                onToggle={(emoji, on) => react.mutate({ id: c.id, key: emoji, on })}
-              />
+            {renderComment(c, { canReply: true })}
+            {(replies.length > 0 || replyingTo === c.id) && (
+              <ul className="reply-list" aria-label={`${c.author.name}님의 댓글에 달린 답글`}>
+                {replies.map((r) => (
+                  <li key={r.id} className="comment reply" data-comment-id={r.id}>
+                    {renderComment(r, { canReply: false })}
+                  </li>
+                ))}
+                {replyingTo === c.id && (
+                  <li className="reply-form">
+                    <form
+                      className="stack"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (replyText.trim()) {
+                          add.mutate({ body: replyText, picked: replyMentions, parentId: c.id });
+                        }
+                      }}
+                    >
+                      <MentionTextarea
+                        rows={2}
+                        maxLength={5000}
+                        aria-label="답글 내용"
+                        placeholder="답글을 입력하세요 (@ 로 멤버를 멘션)"
+                        autoFocus
+                        value={replyText}
+                        onChange={setReplyText}
+                        mentions={replyMentions}
+                        onMentionsChange={setReplyMentions}
+                        members={members}
+                        meId={user.id}
+                      />
+                      <div className="row">
+                        <button type="submit" disabled={add.isPending || !replyText.trim()}>
+                          답글 등록
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => setReplyingTo(null)}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </form>
+                  </li>
+                )}
+              </ul>
             )}
           </li>
         ))}
@@ -173,7 +251,7 @@ export default function CommentSection({ taskId, ownerId, members = [], readOnly
           className="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            if (text.trim()) add.mutate();
+            if (text.trim()) add.mutate({ body: text, picked: mentions });
           }}
         >
           <MentionTextarea

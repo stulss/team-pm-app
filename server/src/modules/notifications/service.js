@@ -62,6 +62,25 @@ export async function notifyCommentAdded({ task, actor, excludeUserIds = [] }) {
   }
 }
 
+// 답글 → 원 댓글 작성자 (본인 제외, 활성 프로젝트 멤버만)
+export async function notifyReplied({ task, actor, userId }) {
+  try {
+    if (!userId || userId === actor.id) return;
+    const recipients = await repo.filterNotifiable(task.project_id, [userId]);
+    await createAndPush(
+      recipients.map((id) => ({
+        userId: id,
+        type: 'comment_added',
+        taskId: task.id,
+        actorId: actor.id,
+        message: `${actor.name}님이 '${task.title}' 작업에서 회원님의 댓글에 답글을 남겼습니다.`,
+      })),
+    );
+  } catch (err) {
+    logger.error({ err: err.message }, 'reply notification failed');
+  }
+}
+
 // 댓글에서 멘션된 사용자 (본인 제외, 활성 프로젝트 멤버만)
 export async function notifyMentioned({ task, actor, userIds }) {
   try {

@@ -35,12 +35,32 @@ export async function resolveMentions(project, body, mentionIds) {
   });
 }
 
-export async function create(task, project, user, body, mentionIds) {
+// 답글 대상(원 댓글)을 확인한다. 같은 작업의 삭제되지 않은 최상위 댓글이어야 한다.
+// 없는 댓글·다른 작업의 댓글을 구별하지 않고 404 로 답한다.
+async function loadParent(task, parentId) {
+  const parent = await repo.findById(parentId);
+  if (!parent || parent.task_id !== task.id || parent.deleted_at) {
+    throw notFound('답글을 달 댓글을 찾을 수 없습니다.');
+  }
+  if (parent.parent_id) {
+    throw new AppError(400, 'REPLY_TO_REPLY', '답글에는 다시 답글을 달 수 없습니다.');
+  }
+  return parent;
+}
+
+// 반환: { comment, parent } — parent 는 답글일 때 원 댓글 행(알림 대상 계산용), 아니면 null.
+export async function create(task, project, user, body, mentionIds, parentId = null) {
   assertWritable(project);
+  const parent = parentId ? await loadParent(task, parentId) : null;
   const mentions = await resolveMentions(project, body, mentionIds);
-  return repo.toComment(
-    await repo.insertComment({ taskId: task.id, authorId: user.id, body, mentions }),
-  );
+  const row = await repo.insertComment({
+    taskId: task.id,
+    authorId: user.id,
+    body,
+    mentions,
+    parentId: parent?.id ?? null,
+  });
+  return { comment: repo.toComment(row), parent };
 }
 
 export async function update(comment, project, user, body, mentionIds) {

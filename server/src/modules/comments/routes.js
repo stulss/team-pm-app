@@ -5,7 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireTaskAccess } from '../../middleware/requireTaskAccess.js';
 import { requireCommentAccess } from '../../middleware/requireCommentAccess.js';
 import { emitToProject } from '../../sockets/emitter.js';
-import { notifyCommentAdded, notifyMentioned } from '../notifications/service.js';
+import { notifyCommentAdded, notifyMentioned, notifyReplied } from '../notifications/service.js';
 import { record } from '../activity/service.js';
 import { REACTION_KEYS } from '../../utils/reactions.js';
 import * as service from './service.js';
@@ -19,6 +19,8 @@ const body = z.object({
   // 자동완성에서 고른 멘션 대상. 본문에 @이름 이 실제로 있어야 하고, 프로젝트 멤버여야 한다.
   mentionIds: z.array(z.uuid('올바르지 않은 사용자 ID 입니다.')).max(10).optional(),
 });
+// 답글일 때만 쓴다(수정에서는 무시되므로 따로 받지 않는다).
+const createBody = body.extend({ parentId: z.uuid('올바르지 않은 댓글 ID 입니다.').optional() });
 
 const reactionParams = z.object({ id: z.uuid(), key: z.enum(REACTION_KEYS) });
 
@@ -30,13 +32,14 @@ taskCommentsRouter.get('/', requireTaskAccess(), async (req, res) => {
   res.json({ data: await service.list(req.task) });
 });
 
-taskCommentsRouter.post('/', requireTaskAccess(), validate(body), async (req, res) => {
-  const comment = await service.create(
+taskCommentsRouter.post('/', requireTaskAccess(), validate(createBody), async (req, res) => {
+  const { comment, parent } = await service.create(
     req.task,
     req.project,
     req.user,
     req.body.body,
     req.body.mentionIds,
+    req.body.parentId,
   );
   const mentionedIds = comment.mentions.map((m) => m.id);
   await emitToProject(req, req.project.id, 'comment:created', {
@@ -45,7 +48,14 @@ taskCommentsRouter.post('/', requireTaskAccess(), validate(body), async (req, re
     comment,
   });
   // 멘션된 사람에게는 멘션 알림 하나만 간다(댓글 알림과 겹치지 않게 제외).
-  await notifyCommentAdded({ task: req.task, actor: req.user, excludeUserIds: mentionedIds });
+  // 답글이면 원 댓글 작성자에게는 답글 알림 하나만 간다(일반 댓글 알림과 겹치지 않게 제외).
+  const replyTo = parent && !mentionedIds.includes(parent.author_id) ? parent.author_id : null;
+  await notifyCommentAdded({
+    task: req.task,
+    actor: req.user,
+    excludeUserIds: replyTo ? [...mentionedIds, replyTo] : mentionedIds,
+  });
+  if (replyTo) await notifyReplied({ task: req.task, actor: req.user, userId: replyTo });
   await notifyMentioned({ task: req.task, actor: req.user, userIds: mentionedIds });
   // 댓글 본문은 기록하지 않는다(수정·삭제된 내용이 남지 않게).
   await record({

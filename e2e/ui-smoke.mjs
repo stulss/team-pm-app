@@ -1177,6 +1177,129 @@ try {
     await mPoll.getByRole('button', { name: '삭제' }).click();
     await uPoll.getByText('점심 메뉴는?').waitFor({ state: 'detached', timeout: 5000 });
   });
+  await step(
+    '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const feed = rtMember.getByRole('region', { name: '활동 기록' });
+      await feed.scrollIntoViewIfNeeded();
+      // 앞선 단계의 동작이 이미 기록돼 있다 (보고 있는 화면의 새로고침 없이 갱신된 상태)
+      await feed.getByText('옮겼습니다').first().waitFor({ timeout: 5000 });
+      await feed.getByText('“실시간 작업”').first().waitFor({ timeout: 5000 });
+      await feed.getByText('삭제했습니다').first().waitFor({ timeout: 5000 });
+      await feed.getByText('댓글을 남겼습니다').first().waitFor({ timeout: 5000 });
+      if ((await feed.getByText('ui-manager').count()) === 0) {
+        throw new Error('행위자 이름이 보이지 않음');
+      }
+      // 지금 이 순간 일어나는 변경도 새로고침 없이 나타난다
+      await addTask(rtManager, '활동 실시간 확인');
+      await feed.getByText('“활동 실시간 확인”').first().waitFor({ timeout: 5000 });
+      // 댓글 본문은 기록에 나오지 않는다
+      if ((await feed.getByText('<b>굵게</b>').count()) !== 0) {
+        throw new Error('댓글 본문이 활동 기록에 노출됨');
+      }
+    },
+  );
+  await step('활동 기록: 작업 모달의 "변경 이력"에 그 작업의 기록만 보임', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    await card(rtManager, '활동 실시간 확인').click();
+    const dialog = rtManager.getByRole('dialog');
+    const history = dialog.getByRole('region', { name: '변경 이력' });
+    await history.getByText('만들었습니다').waitFor({ timeout: 5000 });
+    if ((await history.getByText('“둘째”').count()) !== 0) {
+      throw new Error('다른 작업의 기록이 섞여 있음');
+    }
+    await dialog.getByRole('button', { name: '취소' }).click();
+    await dialog.waitFor({ state: 'detached' });
+  });
+  await step(
+    '히스토리 공유: 활동 기록을 CSV 로 내려받는다 (BOM·머리글·행, 수식 무력화)',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await addTask(rtManager, '=1+1 수식 제목');
+      await rtManager
+        .getByRole('region', { name: '활동 기록' })
+        .getByText('“=1+1 수식 제목”')
+        .first()
+        .waitFor({ timeout: 5000 });
+      const [download] = await Promise.all([
+        rtManager.waitForEvent('download'),
+        rtManager.getByRole('button', { name: 'CSV 내보내기' }).click(),
+      ]);
+      if (!download.suggestedFilename().startsWith('활동기록-')) {
+        throw new Error(`파일 이름이 이상함: ${download.suggestedFilename()}`);
+      }
+      const text = readFileSync(await download.path(), 'utf8');
+      if (text.charCodeAt(0) !== 0xfeff) throw new Error('UTF-8 BOM 이 없음');
+      const lines = text.slice(1).trim().split('\r\n');
+      if (lines[0] !== '일시,행위자,내용,동작') throw new Error(`머리글이 이상함: ${lines[0]}`);
+      if (!lines.some((l) => l.includes('ui-manager') && l.includes('task.created'))) {
+        throw new Error('작업 생성 행이 없음');
+      }
+      if (!lines.some((l) => l.includes('프로젝트를 만들었습니다'))) {
+        throw new Error('프로젝트 생성 행이 없음');
+      }
+      // 시간 오름차순(오래된 것부터): 프로젝트 생성이 작업 생성보다 앞
+      const created = lines.findIndex((l) => l.includes('project.created'));
+      const task = lines.findIndex((l) => l.includes('=1+1 수식 제목'));
+      if (!(created > 0 && task > created)) throw new Error('시간 순서가 오름차순이 아님');
+      if (lines.some((l) => /(^|,)=/.test(l))) throw new Error('수식으로 시작하는 칸이 있음');
+    },
+  );
+  await step(
+    '히스토리 공유: 소유자만 링크를 만들고, 로그인 없이 열람하고, 폐기하면 막힌다',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      // 소유자가 아닌 멤버 화면에는 공유 링크 영역이 없다
+      if ((await rtMember.getByRole('region', { name: '공유 링크' }).count()) !== 0) {
+        throw new Error('멤버에게 공유 링크 관리 영역이 보임');
+      }
+      const share = rtManager.getByRole('region', { name: '공유 링크' });
+      await share.scrollIntoViewIfNeeded();
+      await share.getByRole('button', { name: '링크 만들기' }).click();
+      const input = share.getByLabel('공유 링크 주소');
+      await input.waitFor();
+      const url = await input.inputValue();
+      if (!/\/share\/[A-Za-z0-9_-]{43}$/.test(url)) throw new Error(`링크 형태가 이상함: ${url}`);
+
+      // 완전히 새 브라우저(로그인 없음)로 연다
+      const visitor = await newPage();
+      await visitor.goto(url);
+      await visitor.getByRole('heading', { name: `ui-${run}-개편` }).waitFor();
+      await visitor.getByText('읽기 전용 공유').waitFor();
+      await visitor.getByText('“활동 실시간 확인”').first().waitFor();
+      if ((await visitor.getByRole('link', { name: '로그아웃' }).count()) !== 0) {
+        throw new Error('공개 페이지에 로그인 UI 가 보임');
+      }
+      const body = await visitor.locator('body').innerText();
+      if (/@example\.test/.test(body)) throw new Error('이메일이 공개 페이지에 노출됨');
+      if (/멤버로 (추가|제거)/.test(body) || body.includes('공유 링크를 만들었습니다')) {
+        throw new Error('멤버·공유 기록이 공개 페이지에 노출됨');
+      }
+
+      // 소유자 화면의 목록에 링크가 보이고, 폐기하면 방문자가 바로 막힌다
+      await share
+        .getByText(/조회 \d+회/)
+        .first()
+        .waitFor();
+      rtManager.once('dialog', (d) => d.accept());
+      await share.getByRole('button', { name: '폐기' }).first().click();
+      await share.getByRole('button', { name: '폐기' }).first().waitFor({ state: 'detached' });
+      await visitor.reload();
+      await visitor.getByRole('heading', { name: '열 수 없는 링크입니다' }).waitFor();
+
+      // 만든·폐기한 사실은 멤버의 활동 기록에 남는다
+      const feed = rtMember.getByRole('region', { name: '활동 기록' });
+      await feed.getByText('공유 링크를 폐기했습니다').first().waitFor({ timeout: 5000 });
+      await feed.getByText('읽기 전용 공유 링크를 만들었습니다').first().waitFor({ timeout: 5000 });
+    },
+  );
+  await step('히스토리 공유: 엉뚱한 주소는 열 수 없는 링크 안내', async () => {
+    const stranger = await newPage();
+    await stranger.goto(`${BASE}/share/${'q'.repeat(43)}`);
+    await stranger.getByRole('heading', { name: '열 수 없는 링크입니다' }).waitFor();
+  });
+  // ---- 협업 기능 확장 (M16~M20): 활동 기록 단계가 오래된 기록을 확인하므로 그 뒤에 둔다
   // ---- 하위 작업·라벨 (M16)
   const closeDialog = async (p) => {
     await p.getByRole('dialog').getByRole('button', { name: '닫기', exact: true }).click();
@@ -1558,128 +1681,89 @@ try {
       );
     },
   );
+  // ---- 댓글 스레드 (M20)
   await step(
-    '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
+    '스레드: 답글은 원 댓글 아래에 묶여 두 화면에 실시간 반영되고, 답글에는 답글 버튼이 없으며, 알림이 감',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');
-      const feed = rtMember.getByRole('region', { name: '활동 기록' });
-      await feed.scrollIntoViewIfNeeded();
-      // 앞선 단계의 동작이 이미 기록돼 있다 (보고 있는 화면의 새로고침 없이 갱신된 상태)
-      await feed.getByText('옮겼습니다').first().waitFor({ timeout: 5000 });
-      await feed.getByText('“실시간 작업”').first().waitFor({ timeout: 5000 });
-      await feed.getByText('삭제했습니다').first().waitFor({ timeout: 5000 });
-      await feed.getByText('댓글을 남겼습니다').first().waitFor({ timeout: 5000 });
-      if ((await feed.getByText('ui-manager').count()) === 0) {
-        throw new Error('행위자 이름이 보이지 않음');
+      await card(rtManager, '둘째').click();
+      await card(rtMember, '둘째').click();
+      const mDlg = rtManager.getByRole('dialog');
+      const uDlg = rtMember.getByRole('dialog');
+      const root = (dlg) => dlg.locator('li.comment:not(.reply)', { hasText: '반응 테스트 댓글' });
+      await root(uDlg).waitFor();
+
+      // 앞 단계에서 manager 가 쓴 댓글에 member 가 답글을 단다
+      await root(uDlg).getByRole('button', { name: '답글', exact: true }).click();
+      await uDlg.getByLabel('답글 내용').fill('첫 답글입니다');
+      await uDlg.getByRole('button', { name: '답글 등록' }).click();
+      const uReply = root(uDlg).locator('li.comment.reply', { hasText: '첫 답글입니다' });
+      await uReply.waitFor();
+      const mReply = root(mDlg).locator('li.comment.reply', { hasText: '첫 답글입니다' });
+      await mReply.waitFor({ timeout: 5000 });
+
+      // 답글에는 다시 답글을 달 수 없다 (버튼 없음), 답글에도 수정·반응은 가능하다
+      if ((await mReply.getByRole('button', { name: '답글', exact: true }).count()) !== 0) {
+        throw new Error('답글에 답글 버튼이 보임');
       }
-      // 지금 이 순간 일어나는 변경도 새로고침 없이 나타난다
-      await addTask(rtManager, '활동 실시간 확인');
-      await feed.getByText('“활동 실시간 확인”').first().waitFor({ timeout: 5000 });
-      // 댓글 본문은 기록에 나오지 않는다
-      if ((await feed.getByText('<b>굵게</b>').count()) !== 0) {
-        throw new Error('댓글 본문이 활동 기록에 노출됨');
-      }
-    },
-  );
-  await step('활동 기록: 작업 모달의 "변경 이력"에 그 작업의 기록만 보임', async () => {
-    if (!rtReady) throw new Error('준비 단계 실패');
-    await card(rtManager, '활동 실시간 확인').click();
-    const dialog = rtManager.getByRole('dialog');
-    const history = dialog.getByRole('region', { name: '변경 이력' });
-    await history.getByText('만들었습니다').waitFor({ timeout: 5000 });
-    if ((await history.getByText('“둘째”').count()) !== 0) {
-      throw new Error('다른 작업의 기록이 섞여 있음');
-    }
-    await dialog.getByRole('button', { name: '취소' }).click();
-    await dialog.waitFor({ state: 'detached' });
-  });
-  await step(
-    '히스토리 공유: 활동 기록을 CSV 로 내려받는다 (BOM·머리글·행, 수식 무력화)',
-    async () => {
-      if (!rtReady) throw new Error('준비 단계 실패');
-      await addTask(rtManager, '=1+1 수식 제목');
+      await mReply.getByRole('button', { name: '반응 추가' }).click();
+      await mReply.getByRole('button', { name: '하트 반응' }).click();
+      await uReply.getByRole('button', { name: '하트 1명: ui-manager' }).waitFor({ timeout: 5000 });
+
+      // manager 가 새 댓글을 쓰고 member 가 답글을 달면, 원 댓글 작성자(manager)의 벨에 답글 알림이 온다
+      await mDlg.getByLabel('새 댓글').fill('manager 의 댓글');
+      await mDlg.getByRole('button', { name: '댓글 등록' }).click();
+      const mineRoot = uDlg.locator('li.comment:not(.reply)', { hasText: 'manager 의 댓글' });
+      await mineRoot.waitFor({ timeout: 5000 });
+      await mineRoot.getByRole('button', { name: '답글', exact: true }).click();
+      await uDlg.getByLabel('답글 내용').fill('알림 확인용 답글');
+      await uDlg.getByRole('button', { name: '답글 등록' }).click();
+      await mDlg
+        .locator('li.comment:not(.reply)', { hasText: 'manager 의 댓글' })
+        .locator('li.comment.reply', { hasText: '알림 확인용 답글' })
+        .waitFor({ timeout: 5000 });
+      for (const p of [rtManager, rtMember]) await closeDialog(p);
+
+      const bell = rtManager.locator('.bell-button');
+      await bell.click();
       await rtManager
-        .getByRole('region', { name: '활동 기록' })
-        .getByText('“=1+1 수식 제목”')
+        .getByText('회원님의 댓글에 답글을 남겼습니다')
         .first()
         .waitFor({ timeout: 5000 });
-      const [download] = await Promise.all([
-        rtManager.waitForEvent('download'),
-        rtManager.getByRole('button', { name: 'CSV 내보내기' }).click(),
-      ]);
-      if (!download.suggestedFilename().startsWith('활동기록-')) {
-        throw new Error(`파일 이름이 이상함: ${download.suggestedFilename()}`);
-      }
-      const text = readFileSync(await download.path(), 'utf8');
-      if (text.charCodeAt(0) !== 0xfeff) throw new Error('UTF-8 BOM 이 없음');
-      const lines = text.slice(1).trim().split('\r\n');
-      if (lines[0] !== '일시,행위자,내용,동작') throw new Error(`머리글이 이상함: ${lines[0]}`);
-      if (!lines.some((l) => l.includes('ui-manager') && l.includes('task.created'))) {
-        throw new Error('작업 생성 행이 없음');
-      }
-      if (!lines.some((l) => l.includes('프로젝트를 만들었습니다'))) {
-        throw new Error('프로젝트 생성 행이 없음');
-      }
-      // 시간 오름차순(오래된 것부터): 프로젝트 생성이 작업 생성보다 앞
-      const created = lines.findIndex((l) => l.includes('project.created'));
-      const task = lines.findIndex((l) => l.includes('=1+1 수식 제목'));
-      if (!(created > 0 && task > created)) throw new Error('시간 순서가 오름차순이 아님');
-      if (lines.some((l) => /(^|,)=/.test(l))) throw new Error('수식으로 시작하는 칸이 있음');
+      await bell.click();
     },
   );
   await step(
-    '히스토리 공유: 소유자만 링크를 만들고, 로그인 없이 열람하고, 폐기하면 막힌다',
+    '스레드: 원 댓글을 지워도 답글은 남고, 카드의 댓글 수는 삭제되지 않은 댓글만 센다',
     async () => {
       if (!rtReady) throw new Error('준비 단계 실패');
-      // 소유자가 아닌 멤버 화면에는 공유 링크 영역이 없다
-      if ((await rtMember.getByRole('region', { name: '공유 링크' }).count()) !== 0) {
-        throw new Error('멤버에게 공유 링크 관리 영역이 보임');
-      }
-      const share = rtManager.getByRole('region', { name: '공유 링크' });
-      await share.scrollIntoViewIfNeeded();
-      await share.getByRole('button', { name: '링크 만들기' }).click();
-      const input = share.getByLabel('공유 링크 주소');
-      await input.waitFor();
-      const url = await input.inputValue();
-      if (!/\/share\/[A-Za-z0-9_-]{43}$/.test(url)) throw new Error(`링크 형태가 이상함: ${url}`);
-
-      // 완전히 새 브라우저(로그인 없음)로 연다
-      const visitor = await newPage();
-      await visitor.goto(url);
-      await visitor.getByRole('heading', { name: `ui-${run}-개편` }).waitFor();
-      await visitor.getByText('읽기 전용 공유').waitFor();
-      await visitor.getByText('“활동 실시간 확인”').first().waitFor();
-      if ((await visitor.getByRole('link', { name: '로그아웃' }).count()) !== 0) {
-        throw new Error('공개 페이지에 로그인 UI 가 보임');
-      }
-      const body = await visitor.locator('body').innerText();
-      if (/@example\.test/.test(body)) throw new Error('이메일이 공개 페이지에 노출됨');
-      if (/멤버로 (추가|제거)/.test(body) || body.includes('공유 링크를 만들었습니다')) {
-        throw new Error('멤버·공유 기록이 공개 페이지에 노출됨');
-      }
-
-      // 소유자 화면의 목록에 링크가 보이고, 폐기하면 방문자가 바로 막힌다
-      await share
-        .getByText(/조회 \d+회/)
-        .first()
-        .waitFor();
+      await card(rtManager, '둘째').click();
+      await card(rtMember, '둘째').click();
+      const mDlg = rtManager.getByRole('dialog');
+      const uDlg = rtMember.getByRole('dialog');
+      const target = mDlg.locator('li.comment:not(.reply)', { hasText: 'manager 의 댓글' });
       rtManager.once('dialog', (d) => d.accept());
-      await share.getByRole('button', { name: '폐기' }).first().click();
-      await share.getByRole('button', { name: '폐기' }).first().waitFor({ state: 'detached' });
-      await visitor.reload();
-      await visitor.getByRole('heading', { name: '열 수 없는 링크입니다' }).waitFor();
-
-      // 만든·폐기한 사실은 멤버의 활동 기록에 남는다
-      const feed = rtMember.getByRole('region', { name: '활동 기록' });
-      await feed.getByText('공유 링크를 폐기했습니다').first().waitFor({ timeout: 5000 });
-      await feed.getByText('읽기 전용 공유 링크를 만들었습니다').first().waitFor({ timeout: 5000 });
+      await target.getByRole('button', { name: '삭제', exact: true }).first().click();
+      const uTarget = uDlg.locator('li.comment:not(.reply)', { hasText: '삭제된 댓글' });
+      await uTarget
+        .locator('li.comment.reply', { hasText: '알림 확인용 답글' })
+        .waitFor({ timeout: 5000 });
+      // 삭제된 댓글에는 답글 버튼이 없다
+      const placeholder = uDlg
+        .locator('[data-comment-id]')
+        .filter({ hasText: '삭제된 댓글' })
+        .first();
+      if (
+        (await placeholder
+          .locator(':scope > .comment-meta')
+          .getByRole('button', { name: '답글', exact: true })
+          .count()) !== 0
+      ) {
+        throw new Error('삭제된 댓글에 답글 버튼이 보임');
+      }
+      for (const p of [rtManager, rtMember]) await closeDialog(p);
     },
   );
-  await step('히스토리 공유: 엉뚱한 주소는 열 수 없는 링크 안내', async () => {
-    const stranger = await newPage();
-    await stranger.goto(`${BASE}/share/${'q'.repeat(43)}`);
-    await stranger.getByRole('heading', { name: '열 수 없는 링크입니다' }).waitFor();
-  });
   await step('실시간: 멤버를 제거하면 해당 사용자 화면이 접근 권한 없음으로 바뀜', async () => {
     if (!rtReady) throw new Error('준비 단계 실패');
     await rtManager
