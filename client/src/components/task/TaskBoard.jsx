@@ -21,6 +21,7 @@ import { listProjectTasks, moveTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { PRIORITY_LABELS, STATUSES, STATUS_LABELS, isOverdue } from '../../constants/task.js';
 import { checklistText } from '../../constants/labels.js';
+import { openBlockers } from '../../utils/timeline.js';
 import LabelChip from './LabelChip.jsx';
 
 const COLUMN_PREFIX = 'col:';
@@ -57,6 +58,16 @@ function TaskCard({ task, disabled, overlay = false, onOpen }) {
         <span className={`badge badge-p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
         {task.assignee && <span className="muted small">{task.assignee.name}</span>}
         {task.commentCount > 0 && <span className="muted small">댓글 {task.commentCount}</span>}
+        {openBlockers(task).length > 0 && (
+          <span
+            className="blocked-badge"
+            title={`선행 작업: ${openBlockers(task)
+              .map((b) => b.title)
+              .join(', ')}`}
+          >
+            ⛔ 선행 {openBlockers(task).length}
+          </span>
+        )}
         {checklistText(task.checklist) && (
           <span
             className={

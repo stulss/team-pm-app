@@ -2561,6 +2561,199 @@ try {
     );
   }
 
+  // --- 의존성·타임라인 (M18): 시작일 CHECK, 선행 사슬 재귀 CTE, 순환 방지 락, 복합 외래키, RLS, CASCADE 를 실제 DB 로 확인
+  {
+    const dpid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-deps', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const otherPid = (
+      await call('POST', '/projects', { token: t('manager'), body: { name: 'smoke-deps-other' } })
+    ).body.id;
+    const mk = async (title, extra = {}, id = dpid) =>
+      (
+        await call('POST', `/projects/${id}/tasks`, {
+          token: t('member'),
+          body: { title, ...extra },
+        })
+      ).body;
+    const link = (task, dependsOn, who = 'member') =>
+      call('POST', `/tasks/${task.id}/dependencies`, {
+        token: t(who),
+        body: { dependsOnId: dependsOn.id },
+      });
+
+    // 시작일
+    const ranged = await mk('smoke-deps 기간', { startDate: '2026-10-05', dueDate: '2026-10-09' });
+    check(
+      '시작일·마감일 저장과 응답 (날짜 문자열 그대로)',
+      ranged.startDate === '2026-10-05' && ranged.dueDate === '2026-10-09',
+    );
+    const reversed = await call('PATCH', `/tasks/${ranged.id}`, {
+      token: t('member'),
+      body: { startDate: '2026-10-10' },
+    });
+    let checkRejected = false;
+    try {
+      await db.query('UPDATE tasks SET start_date = $2 WHERE id = $1', [ranged.id, '2026-12-31']);
+    } catch {
+      checkRejected = true;
+    }
+    check('시작일이 마감일보다 늦으면 API 400', reversed.status === 400);
+    check('DB CHECK 도 시작일 > 마감일을 거부', checkRejected);
+
+    // 연결
+    const [a, b, c] = [
+      await mk('smoke-deps A'),
+      await mk('smoke-deps B'),
+      await mk('smoke-deps C'),
+    ];
+    const ab = await link(b, a);
+    const bc = await link(c, b);
+    check(
+      '선행 작업 연결 (201), 응답에 blockedBy 가 실림',
+      ab.status === 201 &&
+        bc.status === 201 &&
+        ab.body.blockedBy.map((x) => x.id).join() === a.id &&
+        ab.body.task.blockedBy.length === 1,
+    );
+    const listed = await call('GET', `/projects/${dpid}/tasks?groupBy=status`, {
+      token: t('member'),
+    });
+    const cInBoard = listed.body.columns.todo.find((x) => x.id === c.id);
+    const aInBoard = listed.body.columns.todo.find((x) => x.id === a.id);
+    check(
+      '보드 응답에도 blockedBy 가 실리고 선행 작업이 없으면 빈 배열',
+      cInBoard?.blockedBy.map((x) => x.id).join() === b.id && aInBoard?.blockedBy.length === 0,
+    );
+    const both = await call('GET', `/tasks/${b.id}/dependencies`, { token: t('member') });
+    check(
+      '양방향 조회: B 의 선행은 A, B 를 기다리는 것은 C',
+      both.body.blockedBy.map((x) => x.id).join() === a.id &&
+        both.body.blocks.map((x) => x.id).join() === c.id,
+    );
+
+    // 순환: 직접·간접
+    const direct = await link(a, b);
+    const indirect = await link(a, c);
+    check(
+      '순환 방지: 직접(A↔B)·간접(A→C→B→A) 모두 409 DEPENDENCY_CYCLE (재귀 CTE)',
+      direct.status === 409 &&
+        direct.body.error.code === 'DEPENDENCY_CYCLE' &&
+        indirect.status === 409 &&
+        indirect.body.error.code === 'DEPENDENCY_CYCLE',
+    );
+    check(
+      '같은 연결은 409 DEPENDENCY_EXISTS',
+      (await link(b, a)).body.error?.code === 'DEPENDENCY_EXISTS',
+    );
+
+    // 서로를 동시에 선행으로 걸면 한쪽만 성공 (프로젝트 단위 락)
+    const [x, y] = [await mk('smoke-deps X'), await mk('smoke-deps Y')];
+    const race = await Promise.all([link(x, y), link(y, x)]);
+    const raced = race
+      .map((r) => r.status)
+      .sort()
+      .join();
+    const edges = (
+      await db.query(
+        'SELECT count(*)::int AS n FROM task_dependencies WHERE task_id = ANY($1::uuid[])',
+        [[x.id, y.id]],
+      )
+    ).rows[0].n;
+    check(
+      '서로를 동시에 선행으로 걸면 정확히 한쪽만 성공, 나머지 409 (순환 방지 락)',
+      raced === '201,409' && edges === 1,
+      `${raced}, 연결 ${edges}개`,
+    );
+
+    // 다른 프로젝트·자기 자신: API 와 DB 모두 거부
+    const foreign = await mk('smoke-deps 외부', {}, otherPid);
+    let crossFk = false;
+    try {
+      await db.query(
+        'INSERT INTO task_dependencies (task_id, depends_on_id, project_id) VALUES ($1, $2, $3)',
+        [a.id, foreign.id, dpid],
+      );
+    } catch {
+      crossFk = true;
+    }
+    let selfRejected = false;
+    try {
+      await db.query(
+        'INSERT INTO task_dependencies (task_id, depends_on_id, project_id) VALUES ($1, $1, $2)',
+        [a.id, dpid],
+      );
+    } catch {
+      selfRejected = true;
+    }
+    check(
+      '다른 프로젝트·자기 자신은 API 400',
+      (await link(a, foreign)).status === 400 && (await link(a, a)).status === 400,
+    );
+    check('DB 복합 외래키가 다른 프로젝트 작업 연결을 거부', crossFk);
+    check('DB CHECK 가 자기 자신 연결을 거부', selfRejected);
+
+    // 상한 10
+    const target = await mk('smoke-deps 대상');
+    let okCount = 0;
+    for (let i = 0; i < 11; i += 1) {
+      const r = await link(target, await mk(`smoke-deps blocker ${i}`));
+      if (r.status === 201) okCount += 1;
+      else if (r.body.error.code !== 'LIMIT_REACHED') okCount = -99;
+    }
+    check('선행 작업 상한 10: 11번째는 409 LIMIT_REACHED', okCount === 10, `성공 ${okCount}건`);
+
+    // 해제·CASCADE·권한·RLS
+    const unlink = await call('DELETE', `/tasks/${c.id}/dependencies/${b.id}`, {
+      token: t('member'),
+    });
+    check(
+      '해제 (200), 없는 연결은 404',
+      unlink.status === 200 &&
+        unlink.body.blockedBy.length === 0 &&
+        (await call('DELETE', `/tasks/${c.id}/dependencies/${b.id}`, { token: t('member') }))
+          .status === 404,
+    );
+    check(
+      '비멤버는 읽기·연결 403',
+      (await call('GET', `/tasks/${a.id}/dependencies`, { token: t('outsider') })).status === 403 &&
+        (await link(c, a, 'outsider')).status === 403,
+    );
+    await call('DELETE', `/tasks/${a.id}`, { token: t('manager') });
+    check(
+      '선행 작업을 지우면 연결도 CASCADE 로 사라진다',
+      (
+        await db.query('SELECT 1 FROM task_dependencies WHERE task_id = $1 OR depends_on_id = $1', [
+          a.id,
+        ])
+      ).rowCount === 0 &&
+        (await call('GET', `/tasks/${b.id}`, { token: t('member') })).body.blockedBy.length === 0,
+    );
+    const rls = await db.query(
+      `SELECT relname FROM pg_class WHERE relname = 'task_dependencies' AND relrowsecurity`,
+    );
+    check('task_dependencies RLS 활성화', rls.rowCount === 1);
+
+    await call('PATCH', `/projects/${dpid}`, { token: t('manager'), body: { status: 'archived' } });
+    const archived = await link(c, b);
+    check(
+      '보관된 프로젝트: 연결 409 PROJECT_ARCHIVED, 읽기는 200',
+      archived.status === 409 &&
+        archived.body.error.code === 'PROJECT_ARCHIVED' &&
+        (await call('GET', `/tasks/${c.id}/dependencies`, { token: t('member') })).status === 200,
+    );
+    await call('DELETE', `/projects/${dpid}`, { token: t('manager') });
+    await call('DELETE', `/projects/${otherPid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 연결 CASCADE',
+      (await db.query('SELECT 1 FROM task_dependencies WHERE project_id = $1', [dpid])).rowCount ===
+        0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

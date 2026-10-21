@@ -1409,3 +1409,169 @@ button.cal-task.overdue {
   width: auto;
   max-width: 100%;
 }
+
+/* 선행 작업·타임라인 (M18) */
+.blocked-badge {
+  font-size: 0.75rem;
+  color: var(--error);
+}
+
+.conflict-badge {
+  font-size: 0.75rem;
+  color: #8a6d00;
+}
+
+@media (prefers-color-scheme: dark) {
+  .conflict-badge {
+    color: #e6c34a;
+  }
+}
+
+.linked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.linked-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.linked-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.linked-title.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.timeline-scroll {
+  overflow-x: auto;
+}
+
+.timeline-grid {
+  display: flex;
+  flex-direction: column;
+  min-width: 48rem;
+  border-top: 1px solid var(--border);
+}
+
+.tl-row {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.tl-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.3rem 0.5rem 0.3rem 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.tl-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  align-items: center;
+  min-height: 2.1rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(100% / var(--days) - 1px),
+    var(--border) calc(100% / var(--days) - 1px),
+    var(--border) calc(100% / var(--days))
+  );
+}
+
+.tl-track > * {
+  grid-row: 1;
+}
+
+.tl-days {
+  min-height: 0;
+}
+
+.tl-day {
+  padding: 0.2rem 0;
+  font-size: 0.65rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.tl-day.weekend {
+  background: var(--bg);
+}
+
+.tl-day.today {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.tl-today {
+  height: 100%;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  pointer-events: none;
+}
+
+button.tl-bar {
+  z-index: 1;
+  min-width: 0;
+  height: 1.1rem;
+  padding: 0;
+  background: var(--primary);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button.tl-bar.status-todo {
+  background: var(--muted);
+}
+
+button.tl-bar.status-review {
+  background: #b85c00;
+}
+
+button.tl-bar.status-done {
+  background: #1a7f37;
+  opacity: 0.6;
+}
+
+button.tl-bar.conflict {
+  border-color: var(--error);
+  outline: 2px solid var(--error);
+  outline-offset: 1px;
+}
+
+button.tl-bar.cut-left {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+button.tl-bar.cut-right {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.tl-empty {
+  padding: 0.75rem 0.25rem;
+}

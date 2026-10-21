@@ -14,6 +14,7 @@ import Modal from '../common/Modal.jsx';
 import CommentSection from './CommentSection.jsx';
 import TaskLabels from './TaskLabels.jsx';
 import ChecklistSection from './ChecklistSection.jsx';
+import DependencySection from './DependencySection.jsx';
 import ActivityFeed from '../activity/ActivityFeed.jsx';
 
 // task 가 있으면 수정, 없으면 생성. members 는 담당자 후보(프로젝트 멤버).
@@ -35,6 +36,7 @@ export default function TaskModal({
     status: task?.status ?? 'todo',
     priority: task?.priority ?? 'medium',
     assigneeId: task?.assignee?.id ?? '',
+    startDate: task?.startDate ?? '',
     dueDate: task?.dueDate ?? '',
   });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -52,6 +54,7 @@ export default function TaskModal({
         status: form.status,
         priority: form.priority,
         assigneeId: form.assigneeId || null,
+        startDate: form.startDate || null,
         dueDate: form.dueDate || null,
       };
       return editing ? updateTask(task.id, body) : createTask(projectId, body);
@@ -127,6 +130,16 @@ export default function TaskModal({
             </select>
           </label>
           <label>
+            시작일
+            <input
+              type="date"
+              disabled={readOnly}
+              max={form.dueDate || undefined}
+              value={form.startDate}
+              onChange={set('startDate')}
+            />
+          </label>
+          <label>
             마감일
             <input type="date" disabled={readOnly} value={form.dueDate} onChange={set('dueDate')} />
           </label>
@@ -168,6 +181,7 @@ export default function TaskModal({
       </form>
       {editing && <TaskLabels projectId={projectId} task={task} readOnly={readOnly} />}
       {editing && <ChecklistSection taskId={task.id} readOnly={readOnly} />}
+      {editing && <DependencySection projectId={projectId} taskId={task.id} readOnly={readOnly} />}
       {editing && (
         <CommentSection taskId={task.id} ownerId={ownerId} members={members} readOnly={readOnly} />
       )}

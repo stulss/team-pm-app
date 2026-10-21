@@ -76,6 +76,7 @@ erDiagram
     labels ||--o{ task_labels : applied
     projects ||--o{ saved_filters : has
     users ||--o{ saved_filters : saves
+    tasks ||--o{ task_dependencies : "is blocked by"
 
     users {
         uuid id PK
@@ -209,6 +210,12 @@ erDiagram
         uuid created_by FK "nullable"
         timestamptz created_at
     }
+    task_dependencies {
+        uuid task_id PK "이 작업은"
+        uuid depends_on_id PK "이 선행 작업이 끝나야 시작할 수 있다"
+        uuid project_id FK "두 작업이 같은 프로젝트임을 DB 가 보장"
+        timestamptz created_at
+    }
     saved_filters {
         uuid id PK
         uuid project_id FK
@@ -311,6 +318,12 @@ erDiagram
 - `labels`: 프로젝트별 라벨(프로젝트당 최대 20개). 이름은 `(project_id, lower(name))` 유일. 색은 정해진 팔레트 키만 허용(CHECK).
 - `task_labels`: 작업당 최대 10개. `(project_id, task_id)` → `tasks(project_id, id)`, `(project_id, label_id)` → `labels(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트의 라벨을 붙일 수 없게** DB 가 보장한다. 이를 위해 `tasks` 와 `labels` 에 `UNIQUE (project_id, id)` 를 추가한다.
 - 새 테이블 3개 모두 같은 마이그레이션에서 RLS 를 켠다. 인덱스: `checklist_items (task_id, position)`, `labels (project_id, lower(name))` 유일, `task_labels (label_id)`.
+
+**tasks.start_date / task_dependencies** (M18 의존성·타임라인, 마이그레이션 016)
+- `tasks.start_date`(date, 선택): 타임라인 막대의 시작. `CHECK (start_date IS NULL OR due_date IS NULL OR start_date <= due_date)`. 막대는 `start_date`(없으면 `due_date`)부터 `due_date`(없으면 `start_date`)까지이고, 둘 다 없으면 타임라인 밖의 "날짜 없음" 목록에 둔다.
+- `task_dependencies(task_id, depends_on_id)`: `task_id` 작업은 `depends_on_id`(선행 작업)가 끝나야 시작할 수 있다. 기본키 `(task_id, depends_on_id)`, `CHECK (task_id <> depends_on_id)`. `(project_id, task_id)`·`(project_id, depends_on_id)` → `tasks(project_id, id)` 복합 외래키(+`ON DELETE CASCADE`)로 **다른 프로젝트 작업끼리는 연결할 수 없게** DB 가 보장한다. 작업이 지워지면 연결도 사라진다. RLS 를 같은 마이그레이션에서 켠다. 인덱스: `(depends_on_id)`.
+- **순환 방지**: 연결을 추가할 때 프로젝트 단위 advisory lock 을 잡고, 새 선행 작업에서 거슬러 올라가는 선행 사슬(재귀 CTE)에 이 작업이 있으면 거부한다(`DEPENDENCY_CYCLE`). 락 덕분에 동시에 서로를 선행으로 걸어도 한쪽만 성공한다. 작업당 선행 작업은 최대 10개.
+- **강제하지 않는다**: 선행 작업이 끝나지 않았어도 후행 작업을 진행·완료로 옮길 수 있다(소프트 의존성). 화면이 "선행 n개 미완료" 배지와 타임라인의 일정 충돌 표시로 알려 줄 뿐이다.
 
 **saved_filters** (M17 저장된 필터, 마이그레이션 015)
 - 프로젝트 화면의 필터 조합(상태·우선순위·담당자·라벨·검색어)에 이름을 붙여 저장한다. **개인용**: 만든 사용자만 보고 지운다(다른 멤버·Admin 도 못 본다). `project_id`·`user_id` 모두 `ON DELETE CASCADE` 라 프로젝트가 지워지거나 사용자가 지워지면 함께 사라진다.
@@ -461,6 +474,15 @@ erDiagram
 | DELETE | `/tasks/:id/checklist/:itemId` | 항목 삭제 | 멤버 (보관 409) |
 
 > 구현 규칙(M16): 라벨 응답은 `{ id, name, color, createdBy }`(`createdBy` 는 만든 사용자 ID 또는 null), 작업 응답에 `labels: [{id,name,color}]`(이름순)와 `checklist: { done, total }` 이 붙는다. 작업 목록은 `?label=<uuid>` 로 거를 수 있다. 라벨·체크리스트가 바뀌면 `task:updated`(바뀐 작업 포함)를, 라벨 생성·수정·삭제는 `label:changed` `{ projectId }` 를 프로젝트 방(요청자 소켓 제외)에 보낸다. 활동 기록·알림은 남기지 않는다(체크 토글이 잦아 기록이 넘치므로).
+
+#### Dependencies (M18)
+| 메서드 | 경로 | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/tasks/:id/dependencies` | `{ blockedBy: [작업…], blocks: [작업…] }` — 이 작업의 선행 작업 / 이 작업을 기다리는 작업 | 멤버 |
+| POST | `/tasks/:id/dependencies` | 선행 작업 추가 `{ dependsOnId }` → `{ blockedBy, blocks, task }` | 멤버 (보관 409, 자기 자신·다른 프로젝트 400, 이미 있음 409 `DEPENDENCY_EXISTS`, 순환 409 `DEPENDENCY_CYCLE`, 10개 초과 409) |
+| DELETE | `/tasks/:id/dependencies/:dependsOnId` | 선행 작업 해제 → `{ blockedBy, blocks, task }` | 멤버 (보관 409, 없으면 404) |
+
+> 구현 규칙(M18): 목록의 작업은 `{ id, title, status, dueDate }` 만 담는다. 작업 응답(`GET /tasks/:id`, 목록, 보드)에는 `startDate` 와 `blockedBy: [{id,title,status,dueDate}]`(선행 작업, 생성순) 가 붙는다. 작업 생성·수정은 `startDate`(선택)를 받고 시작일이 마감일보다 늦으면 400. 연결이 바뀌면 `task:updated`(후행 작업 포함)를 프로젝트 방에 보낸다. 시작일 변경은 활동 기록의 "변경 이력"에 남기고, 연결 추가·해제는 기록·알림을 남기지 않는다. 타임라인은 서버 변경 없이 `GET /projects/:id/tasks` 를 그린다.
 
 #### Saved filters (M17)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -802,7 +824,7 @@ team-pm-app/
 | **M15** | 투표 | 프로젝트 안 익명 투표(선택지 2~10·복수 선택 여부·수동 마감), 실시간 집계, 1인 1표를 잠금 트랜잭션으로 서버 보장(`polls`·`poll_options`·`poll_votes`, 마이그레이션 012, §1.2·§2.2) |
 | **M16** | 하위 작업·라벨 | 작업별 체크리스트(진행률 `done/total` 카드 표시)와 프로젝트 라벨(색 팔레트, 필터) — `checklist_items`·`labels`·`task_labels`, 마이그레이션 014, §1.2·§2.2 |
 | **M17** | 캘린더 보기 + 저장된 필터 | 목록(표) 보기는 이미 있어 월간 캘린더(마감일 기준) 보기를 추가하고, 필터 조합을 이름 붙여 저장(`saved_filters`, 마이그레이션 015, 개인용, §1.2·§2.2) |
-| **M18** | 의존성·타임라인 | 작업 선후 관계(순환 방지)와 시작일~마감일 막대 타임라인(간트) |
+| **M18** | 의존성·타임라인 | 작업 선후 관계(순환 방지, 소프트)와 시작일~마감일 막대 타임라인(간트) — `tasks.start_date`·`task_dependencies`, 마이그레이션 016, §1.2·§2.2 |
 | **M19** | 이모지 반응·스레드·Ctrl+K | 댓글·채팅 이모지 반응, 댓글 답글 한 단계, 명령 팔레트(이동·검색·작업 만들기) |
 | 제외 | 파일 첨부 | 무료 플랜 용량·악성 파일 대책이 필요해 이번 범위에서 뺀다(2026-10-21 결정) |
 

@@ -24,6 +24,7 @@ export const store = {
   taskLabels: [],
   checklist: [],
   savedFilters: [],
+  deps: [],
 };
 
 export function reset() {
@@ -45,6 +46,7 @@ export function reset() {
   store.taskLabels = [];
   store.checklist = [];
   store.savedFilters = [];
+  store.deps = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -576,6 +578,47 @@ export const checklistRepo = {
   },
 };
 
+export const dependenciesRepo = {
+  MAX_BLOCKERS_PER_TASK: 10,
+  async list(taskId) {
+    const linked = (id) => {
+      const t = store.tasks.find((x) => x.id === id);
+      return { id: t.id, title: t.title, status: t.status, due_date: t.due_date };
+    };
+    return {
+      blockedBy: store.deps.filter((d) => d.task_id === taskId).map((d) => linked(d.depends_on_id)),
+      blocks: store.deps.filter((d) => d.depends_on_id === taskId).map((d) => linked(d.task_id)),
+    };
+  },
+  async add(task, dependsOnId) {
+    const mine = store.deps.filter((d) => d.task_id === task.id);
+    if (mine.some((d) => d.depends_on_id === dependsOnId)) return 'exists';
+    if (mine.length >= dependenciesRepo.MAX_BLOCKERS_PER_TASK) return 'full';
+    // dependsOn 의 선행 사슬에 이 작업이 있으면 순환
+    const seen = new Set();
+    const stack = [dependsOnId];
+    while (stack.length) {
+      const id = stack.pop();
+      for (const d of store.deps.filter((x) => x.task_id === id)) {
+        if (d.depends_on_id === task.id) return 'cycle';
+        if (!seen.has(d.depends_on_id)) {
+          seen.add(d.depends_on_id);
+          stack.push(d.depends_on_id);
+        }
+      }
+    }
+    store.deps.push({ task_id: task.id, depends_on_id: dependsOnId });
+    return 'ok';
+  },
+  async remove(taskId, dependsOnId) {
+    const before = store.deps.length;
+    store.deps = store.deps.filter(
+      (d) => !(d.task_id === taskId && d.depends_on_id === dependsOnId),
+    );
+    return store.deps.length < before;
+  },
+};
+
 export const savedFiltersRepo = {
   MAX_FILTERS_PER_USER: 20,
   async list(projectId, userId) {
@@ -796,6 +839,11 @@ const withNames = (t) => ({
   assignee_name: store.users.find((u) => u.id === t.assignee_id)?.name ?? null,
   project_name: store.projects.find((p) => p.id === t.project_id)?.name,
   comment_count: store.comments.filter((c) => c.task_id === t.id && !c.deleted_at).length,
+  blocked_by: store.deps
+    .filter((d) => d.task_id === t.id)
+    .map((d) => store.tasks.find((x) => x.id === d.depends_on_id))
+    .filter(Boolean)
+    .map((b) => ({ id: b.id, title: b.title, status: b.status, dueDate: b.due_date })),
   checklist_total: store.checklist.filter((i) => i.task_id === t.id).length,
   checklist_done: store.checklist.filter((i) => i.task_id === t.id && i.is_done).length,
   labels: store.taskLabels
@@ -863,6 +911,7 @@ export const tasksRepo = {
       priority: input.priority,
       assignee_id: input.assigneeId ?? null,
       created_by: input.createdBy,
+      start_date: input.startDate ?? null,
       due_date: input.dueDate ?? null,
       position: nextPosition(input.projectId, input.status),
       completed_at: input.status === 'done' ? new Date() : null,
@@ -880,6 +929,7 @@ export const tasksRepo = {
     if (patch.description !== undefined) t.description = patch.description;
     if (patch.priority !== undefined) t.priority = patch.priority;
     if (patch.assigneeId !== undefined) t.assignee_id = patch.assigneeId;
+    if (patch.startDate !== undefined) t.start_date = patch.startDate;
     if (patch.dueDate !== undefined) {
       t.due_date = patch.dueDate;
       t.due_notified_at = null;
@@ -944,6 +994,7 @@ export const tasksRepo = {
   async deleteTask(id) {
     const before = store.tasks.length;
     store.comments = store.comments.filter((c) => c.task_id !== id);
+    store.deps = store.deps.filter((d) => d.task_id !== id && d.depends_on_id !== id);
     store.checklist = store.checklist.filter((i) => i.task_id !== id);
     store.taskLabels = store.taskLabels.filter((tl) => tl.task_id !== id);
     store.notifications = store.notifications.filter((n) => n.task_id !== id);

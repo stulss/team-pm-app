@@ -125,7 +125,7 @@ describe('api limiter (IP, 1분 600회)', () => {
     }
     expect((await get('/data')).status).toBe(429);
     expect((await get('/health')).status).toBe(200);
-  });
+  }, 30_000); // 601번 요청이라 병렬 실행 중 부하가 있으면 기본 5초를 넘길 수 있다
 });
 
 describe('기본 limiter', () => {

@@ -51,6 +51,7 @@ const createBody = z.object({
   status: status.default('todo'),
   priority: priority.default('medium'),
   assigneeId: z.uuid('올바르지 않은 담당자 ID 입니다.').nullish(),
+  startDate: date.nullish(),
   dueDate: date.nullish(),
 });
 const patchBody = z
@@ -60,6 +61,7 @@ const patchBody = z
     status: status.optional(),
     priority: priority.optional(),
     assigneeId: z.uuid('올바르지 않은 담당자 ID 입니다.').nullable().optional(),
+    startDate: date.nullable().optional(),
     dueDate: date.nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' });

@@ -8,6 +8,7 @@ const FIELD_DESCRIBERS = {
   title: (c) => `제목 ${q(c.from)} → ${q(c.to)}`,
   status: (c) => `상태 ${label(STATUS_LABELS, c.from)} → ${label(STATUS_LABELS, c.to)}`,
   priority: (c) => `우선순위 ${label(PRIORITY_LABELS, c.from)} → ${label(PRIORITY_LABELS, c.to)}`,
+  startDate: (c) => `시작일 ${c.from ?? '없음'} → ${c.to ?? '없음'}`,
   dueDate: (c) => `마감일 ${c.from ?? '없음'} → ${c.to ?? '없음'}`,
   assignee: (c) => `담당자 ${person(c.from)} → ${person(c.to)}`,
   description: () => '설명 수정',

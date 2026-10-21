@@ -39,6 +39,7 @@ export function taskChanges(before, after) {
   diff('title', before.title, after.title);
   diff('status', before.status, after.status);
   diff('priority', before.priority, after.priority);
+  diff('startDate', before.start_date, after.startDate);
   diff('dueDate', before.due_date, after.dueDate);
   if ((before.assignee_id ?? null) !== (after.assignee?.id ?? null)) {
     changes.assignee = {

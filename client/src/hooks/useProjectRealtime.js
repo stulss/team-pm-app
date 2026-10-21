@@ -35,6 +35,7 @@ export function useProjectRealtime(projectId) {
       const id = payload?.task?.id;
       if (id) {
         queryClient.invalidateQueries({ queryKey: ['checklist', id] });
+        queryClient.invalidateQueries({ queryKey: ['dependencies'] });
         queryClient.invalidateQueries({ queryKey: ['task', id] });
       }
       refetchTasks();
@@ -65,6 +66,7 @@ export function useProjectRealtime(projectId) {
       refetchPolls();
       queryClient.invalidateQueries({ queryKey: ['labels', projectId] });
       queryClient.invalidateQueries({ queryKey: ['checklist'] });
+      queryClient.invalidateQueries({ queryKey: ['dependencies'] });
     };
     const onDisconnect = markOffline;
 

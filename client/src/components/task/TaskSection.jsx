@@ -16,6 +16,8 @@ import { listLabels } from '../../api/labels.js';
 import LabelChip from './LabelChip.jsx';
 import LabelManager from './LabelManager.jsx';
 import CalendarView from './CalendarView.jsx';
+import TimelineView from './TimelineView.jsx';
+import { openBlockers } from '../../utils/timeline.js';
 import SavedFilters from './SavedFilters.jsx';
 import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
@@ -24,7 +26,7 @@ const VIEW_KEY = 'team-pm:task-view';
 const readView = () => {
   try {
     const saved = localStorage.getItem(VIEW_KEY);
-    return ['list', 'calendar'].includes(saved) ? saved : 'board';
+    return ['list', 'calendar', 'timeline'].includes(saved) ? saved : 'board';
   } catch {
     return 'board'; // 저장소를 쓸 수 없어도 동작해야 한다
   }
@@ -85,6 +87,7 @@ export default function TaskSection({ project, archived }) {
               ['board', '보드'],
               ['list', '목록'],
               ['calendar', '캘린더'],
+              ['timeline', '타임라인'],
             ].map(([value, label]) => (
               <button
                 key={value}
@@ -188,6 +191,12 @@ export default function TaskSection({ project, archived }) {
           project={project}
           archived={archived}
           filters={common}
+          onOpenTask={(task) => setModal({ task })}
+        />
+      ) : view === 'timeline' ? (
+        <TimelineView
+          project={project}
+          params={{ ...common, status: filters.status || undefined }}
           onOpenTask={(task) => setModal({ task })}
         />
       ) : view === 'calendar' ? (
@@ -294,6 +303,9 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
                     </button>
                     {t.commentCount > 0 && (
                       <span className="muted small"> 댓글 {t.commentCount}</span>
+                    )}
+                    {openBlockers(t).length > 0 && (
+                      <span className="blocked-badge"> ⛔ 선행 {openBlockers(t).length}</span>
                     )}
                     {checklistText(t.checklist) && (
                       <span className="checklist-badge"> ✓ {checklistText(t.checklist)}</span>

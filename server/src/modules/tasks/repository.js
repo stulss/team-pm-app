@@ -15,7 +15,9 @@ export const toTask = (row) =>
     priority: row.priority,
     assignee: row.assignee_id ? { id: row.assignee_id, name: row.assignee_name } : null,
     createdBy: row.created_by,
+    startDate: row.start_date ?? null,
     dueDate: row.due_date,
+    blockedBy: row.blocked_by ?? [],
     position: row.position,
     completedAt: row.completed_at,
     createdAt: row.created_at,
@@ -35,7 +37,12 @@ const SELECT = `
          COALESCE((SELECT json_agg(json_build_object('id', l.id, 'name', l.name, 'color', l.color)
                                    ORDER BY lower(l.name))
                    FROM task_labels tl JOIN labels l ON l.id = tl.label_id
-                   WHERE tl.task_id = t.id), '[]'::json) AS labels
+                   WHERE tl.task_id = t.id), '[]'::json) AS labels,
+         COALESCE((SELECT json_agg(json_build_object('id', b.id, 'title', b.title,
+                                                     'status', b.status, 'dueDate', b.due_date)
+                                   ORDER BY d.created_at, b.id)
+                   FROM task_dependencies d JOIN tasks b ON b.id = d.depends_on_id
+                   WHERE d.task_id = t.id), '[]'::json) AS blocked_by
   FROM tasks t
   LEFT JOIN users a ON a.id = t.assignee_id
   JOIN projects p ON p.id = t.project_id`;
@@ -128,16 +135,17 @@ export async function insertTask({
   status,
   priority,
   assigneeId,
+  startDate,
   dueDate,
   createdBy,
 }) {
   const { rows } = await query(
     `INSERT INTO tasks
        (project_id, title, description, status, priority, assignee_id, due_date, created_by,
-        position, completed_at)
+        position, completed_at, start_date)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
         COALESCE((SELECT max(position) FROM tasks WHERE project_id = $1 AND status = $4), 0) + $9,
-        CASE WHEN $4 = 'done' THEN now() END)
+        CASE WHEN $4 = 'done' THEN now() END, $10)
      RETURNING id`,
     [
       projectId,
@@ -149,6 +157,7 @@ export async function insertTask({
       dueDate ?? null,
       createdBy,
       POSITION_STEP,
+      startDate ?? null,
     ],
   );
   return findById(rows[0].id);
@@ -159,6 +168,7 @@ const PATCHABLE = {
   description: 'description',
   priority: 'priority',
   assigneeId: 'assignee_id',
+  startDate: 'start_date',
   dueDate: 'due_date',
 };
 

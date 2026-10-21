@@ -1370,6 +1370,124 @@ try {
             .count()) === 0,
         '필터 삭제 반영',
       );
+      // 이후 단계를 위해 적용돼 있던 조건을 풀어 둔다
+      await rtMember.getByRole('button', { name: '필터 초기화' }).click();
+      await pollUntil(
+        async () => (await rtMember.getByLabel('우선순위 필터').inputValue()) === '',
+        '필터 초기화',
+      );
+    },
+  );
+  // ---- 의존성·타임라인 (M18)
+  const plusDays = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return d.toLocaleDateString('sv-SE');
+  };
+  const depProjectId = projectUrl.match(/projects\/([0-9a-f-]{36})/)?.[1];
+  let depTaskA;
+  let depTaskB;
+  await step(
+    '선행 작업: 모달에서 지정하면 두 화면의 카드에 ⛔ 배지가 실시간 반영되고, 순환 지정은 오류로 막힘',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const token = await apiLogin('manager');
+      const mk = async (body) => {
+        const r = await apiCall('POST', `/projects/${depProjectId}/tasks`, token, body);
+        if (r.status !== 201) throw new Error(`작업 생성 실패: ${r.status}`);
+        return r.body;
+      };
+      depTaskA = await mk({ title: '선행 작업 A', dueDate: plusDays(2) });
+      depTaskB = await mk({ title: '후행 작업 B', startDate: plusDays(0), dueDate: plusDays(3) });
+      await card(rtManager, '후행 작업 B').waitFor();
+      await card(rtMember, '후행 작업 B').waitFor({ timeout: 5000 });
+
+      await card(rtManager, '후행 작업 B').click();
+      const dlg = rtManager.getByRole('dialog');
+      const section = dlg.getByRole('region', { name: '선행 작업' });
+      await section.getByLabel('선행 작업 선택').selectOption({ label: '선행 작업 A (할 일)' });
+      await section.getByRole('button', { name: '선행으로 지정' }).click();
+      await section
+        .getByRole('list', { name: '선행 작업 목록' })
+        .getByText('선행 작업 A')
+        .waitFor();
+      await closeDialog(rtManager);
+      for (const [p, timeout] of [
+        [rtManager, T],
+        [rtMember, 5000],
+      ]) {
+        await card(p, '후행 작업 B').getByText('⛔ 선행 1').waitFor({ timeout });
+      }
+
+      // 반대로 A 가 B 를 기다리게 하면 순환 → 오류 메시지, 연결은 생기지 않음
+      await card(rtManager, '선행 작업 A').click();
+      const aSection = rtManager.getByRole('dialog').getByRole('region', { name: '선행 작업' });
+      await aSection.getByText('이 작업을 기다리는 작업').waitFor();
+      await aSection.getByLabel('선행 작업 선택').selectOption({ label: '후행 작업 B (할 일)' });
+      await aSection.getByRole('button', { name: '선행으로 지정' }).click();
+      await aSection.getByRole('alert').filter({ hasText: '순환' }).waitFor();
+      if ((await card(rtManager, '선행 작업 A').getByText('⛔').count()) !== 0) {
+        throw new Error('순환 연결이 만들어짐');
+      }
+      await closeDialog(rtManager);
+    },
+  );
+  await step(
+    '타임라인: 막대가 기간에 맞게 그려지고 선행 작업보다 먼저 시작하면 일정 충돌 표시, 기간 이동 동작',
+    async () => {
+      if (!depTaskB) throw new Error('준비 단계 실패');
+      await rtMember.getByRole('tab', { name: '타임라인' }).click();
+      const rowB = rtMember.locator(`[data-task-id="${depTaskB.id}"]`);
+      await rowB.locator('.tl-bar').waitFor();
+      await rowB.getByText('⚠ 일정 충돌').waitFor();
+      await rowB.getByText('⛔ 1').waitFor();
+      if (!(await rowB.locator('.tl-bar').getAttribute('class')).includes('conflict')) {
+        throw new Error('충돌한 막대가 강조되지 않음');
+      }
+      const rowA = rtMember.locator(`[data-task-id="${depTaskA.id}"]`);
+      await rowA.locator('.tl-bar').waitFor();
+      if ((await rowA.getByText('일정 충돌').count()) !== 0) {
+        throw new Error('선행이 없는 작업에 충돌이 표시됨');
+      }
+
+      // 기간을 앞으로 옮기면 오늘 기준 작업은 창 밖으로 나가고, 오늘로 돌아오면 다시 보임
+      const title = rtMember.getByTestId('timeline-title');
+      const before = await title.textContent();
+      await rtMember.getByRole('button', { name: '다음 기간' }).click();
+      await rtMember.getByRole('button', { name: '다음 기간' }).click();
+      await rtMember.getByRole('button', { name: '다음 기간' }).click();
+      if ((await title.textContent()) === before) throw new Error('기간이 바뀌지 않음');
+      await rowB.waitFor({ state: 'detached' });
+      await rtMember.getByRole('button', { name: '오늘', exact: true }).click();
+      await rtMember.locator(`[data-task-id="${depTaskB.id}"] .tl-bar`).waitFor();
+
+      await rtMember.locator(`[data-task-id="${depTaskB.id}"] .tl-bar`).click();
+      await rtMember.getByRole('dialog').getByLabel('시작일').waitFor();
+      if ((await rtMember.getByRole('dialog').getByLabel('시작일').inputValue()) !== plusDays(0)) {
+        throw new Error('모달의 시작일이 맞지 않음');
+      }
+      await closeDialog(rtMember);
+    },
+  );
+  await step(
+    '선행 작업이 완료되면 후행 작업의 ⛔ 배지와 일정 충돌 표시가 사라짐 (실시간)',
+    async () => {
+      if (!depTaskA) throw new Error('준비 단계 실패');
+      const token = await apiLogin('manager');
+      const done = await apiCall('PATCH', `/tasks/${depTaskA.id}`, token, { status: 'done' });
+      if (done.status !== 200) throw new Error(`완료 처리 실패: ${done.status}`);
+      await rtMember
+        .locator(`[data-task-id="${depTaskB.id}"]`)
+        .getByText('⚠ 일정 충돌')
+        .waitFor({ state: 'detached', timeout: 5000 });
+      await rtMember.getByRole('tab', { name: '보드' }).click();
+      await card(rtMember, '후행 작업 B').waitFor();
+      await pollUntil(
+        async () => (await card(rtMember, '후행 작업 B').getByText('⛔').count()) === 0,
+        '완료된 선행 작업의 배지 제거',
+      );
+      // 정리: 이후 단계에 영향이 없도록 만든 작업을 지운다
+      for (const t of [depTaskA, depTaskB]) await apiCall('DELETE', `/tasks/${t.id}`, token);
     },
   );
   await step(

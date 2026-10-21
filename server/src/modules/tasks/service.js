@@ -14,6 +14,15 @@ export function assertWritable(project) {
   }
 }
 
+// 시작일은 마감일보다 늦을 수 없다. (둘 다 있을 때만 검사)
+function assertDateRange(startDate, dueDate) {
+  if (startDate && dueDate && startDate > dueDate) {
+    throw badRequest('시작일은 마감일보다 늦을 수 없습니다.', [
+      { field: 'startDate', issue: 'after_due_date' },
+    ]);
+  }
+}
+
 // 담당자는 활성 상태인 프로젝트 멤버여야 한다.
 async function assertAssignable(projectId, assigneeId) {
   if (!assigneeId) return;
@@ -65,6 +74,7 @@ export async function create(project, user, body) {
       `작업은 프로젝트당 최대 ${env.MAX_TASKS_PER_PROJECT}개까지 만들 수 있습니다.`,
     );
   }
+  assertDateRange(body.startDate, body.dueDate);
   await assertAssignable(project.id, body.assigneeId);
   const task = await repo.insertTask({ ...body, projectId: project.id, createdBy: user.id });
   return repo.toTask(task);
@@ -72,6 +82,11 @@ export async function create(project, user, body) {
 
 export async function update(task, project, patch) {
   assertWritable(project);
+  // 한쪽만 바꿔도 다른 쪽의 현재 값과 비교한다.
+  assertDateRange(
+    patch.startDate === undefined ? task.start_date : patch.startDate,
+    patch.dueDate === undefined ? task.due_date : patch.dueDate,
+  );
   // 담당자를 새로 지정/변경할 때만 검사한다(이미 담당자인 사람이 비활성화돼도 다른 필드 수정은 막지 않는다).
   if (patch.assigneeId && patch.assigneeId !== task.assignee_id) {
     await assertAssignable(project.id, patch.assigneeId);

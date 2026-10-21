@@ -153,11 +153,13 @@ async function readChecks(label, who) {
     const board = await call('GET', `/projects/${pid}/tasks?limit=5`, { token: t });
     const tasks = board.body?.data ?? [];
     check(
-      `${label}: 작업 응답에 labels·checklist 가 있음`,
+      `${label}: 작업 응답에 labels·checklist·startDate·blockedBy 가 있음`,
       board.status === 200 &&
         tasks.every(
           (x) =>
             Array.isArray(x.labels) &&
+            Array.isArray(x.blockedBy) &&
+            'startDate' in x &&
             typeof x.checklist?.done === 'number' &&
             x.checklist.total >= x.checklist.done,
         ),
@@ -167,6 +169,14 @@ async function readChecks(label, who) {
       check(
         `${label}: 체크리스트 (200) 개수가 작업의 total 과 일치`,
         items.status === 200 && items.body.data.length === tasks[0].checklist.total,
+      );
+      const deps = await call('GET', `/tasks/${tasks[0].id}/dependencies`, { token: t });
+      check(
+        `${label}: 선행 작업 조회 (200) blockedBy 가 작업 응답과 일치`,
+        deps.status === 200 &&
+          Array.isArray(deps.body?.blocks) &&
+          deps.body.blockedBy.map((x) => x.id).join() ===
+            tasks[0].blockedBy.map((x) => x.id).join(),
       );
     }
   }
