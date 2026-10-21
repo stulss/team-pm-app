@@ -134,6 +134,34 @@ async function readChecks(label, who) {
     check(`${label}: 투표 응답에 투표자 정보가 없음(익명 집계)`, anonymous);
     check(`${label}: 활동 기록 (200)`, acts.status === 200 && Array.isArray(acts.body?.data));
     check(`${label}: 대시보드 (200)`, dash.status === 200);
+
+    // M16: 라벨 목록, 작업 응답의 labels·checklist 필드, 체크리스트 읽기
+    const labels = await call('GET', `/projects/${pid}/labels`, { token: t });
+    check(
+      `${label}: 라벨 목록 (200)`,
+      labels.status === 200 &&
+        Array.isArray(labels.body?.data) &&
+        labels.body.data.every((l) => l.id && l.name && l.color),
+    );
+    const board = await call('GET', `/projects/${pid}/tasks?limit=5`, { token: t });
+    const tasks = board.body?.data ?? [];
+    check(
+      `${label}: 작업 응답에 labels·checklist 가 있음`,
+      board.status === 200 &&
+        tasks.every(
+          (x) =>
+            Array.isArray(x.labels) &&
+            typeof x.checklist?.done === 'number' &&
+            x.checklist.total >= x.checklist.done,
+        ),
+    );
+    if (tasks[0]) {
+      const items = await call('GET', `/tasks/${tasks[0].id}/checklist`, { token: t });
+      check(
+        `${label}: 체크리스트 (200) 개수가 작업의 total 과 일치`,
+        items.status === 200 && items.body.data.length === tasks[0].checklist.total,
+      );
+    }
   }
   return mine;
 }
@@ -201,12 +229,12 @@ async function main() {
       if (who.user.role === 'admin') continue;
       for (const id of ids.slice(0, 3)) {
         const rs = await Promise.all(
-          ['chat', 'polls', 'activities', 'dashboard'].map((p) =>
+          ['chat', 'polls', 'activities', 'dashboard', 'labels'].map((p) =>
             call('GET', `/projects/${id}/${p}`, { token: who.token }),
           ),
         );
         check(
-          `${label}: 접근 권한이 없는 프로젝트의 채팅·투표·활동·대시보드는 403`,
+          `${label}: 접근 권한이 없는 프로젝트의 채팅·투표·활동·대시보드·라벨은 403`,
           rs.every((r) => r.status === 403),
           rs.map((r) => r.status).join(),
         );
