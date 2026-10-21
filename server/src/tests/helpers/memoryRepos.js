@@ -23,6 +23,7 @@ export const store = {
   labels: [],
   taskLabels: [],
   checklist: [],
+  savedFilters: [],
 };
 
 export function reset() {
@@ -43,6 +44,7 @@ export function reset() {
   store.labels = [];
   store.taskLabels = [];
   store.checklist = [];
+  store.savedFilters = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -571,6 +573,42 @@ export const checklistRepo = {
   },
   async remove(itemId) {
     store.checklist = store.checklist.filter((i) => i.id !== itemId);
+  },
+};
+
+export const savedFiltersRepo = {
+  MAX_FILTERS_PER_USER: 20,
+  async list(projectId, userId) {
+    return store.savedFilters
+      .filter((f) => f.project_id === projectId && f.user_id === userId)
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  },
+  async findOwn(projectId, userId, filterId) {
+    return (
+      store.savedFilters.find(
+        (f) => f.project_id === projectId && f.user_id === userId && f.id === filterId,
+      ) ?? null
+    );
+  },
+  async insert({ projectId, userId, name, filters }) {
+    const mine = store.savedFilters.filter(
+      (f) => f.project_id === projectId && f.user_id === userId,
+    );
+    if (mine.length >= savedFiltersRepo.MAX_FILTERS_PER_USER) return { full: true };
+    if (mine.some((f) => f.name.toLowerCase() === name.toLowerCase())) return { duplicate: true };
+    const row = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      user_id: userId,
+      name,
+      filters,
+      created_at: new Date(),
+    };
+    store.savedFilters.push(row);
+    return { row };
+  },
+  async remove(filterId) {
+    store.savedFilters = store.savedFilters.filter((f) => f.id !== filterId);
   },
 };
 

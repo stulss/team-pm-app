@@ -143,6 +143,13 @@ async function readChecks(label, who) {
         Array.isArray(labels.body?.data) &&
         labels.body.data.every((l) => l.id && l.name && l.color),
     );
+    const saved = await call('GET', `/projects/${pid}/saved-filters`, { token: t });
+    check(
+      `${label}: 저장된 필터 목록 (200, 내 것만)`,
+      saved.status === 200 &&
+        Array.isArray(saved.body?.data) &&
+        saved.body.data.every((f) => f.id && f.name && typeof f.filters === 'object'),
+    );
     const board = await call('GET', `/projects/${pid}/tasks?limit=5`, { token: t });
     const tasks = board.body?.data ?? [];
     check(
@@ -229,12 +236,12 @@ async function main() {
       if (who.user.role === 'admin') continue;
       for (const id of ids.slice(0, 3)) {
         const rs = await Promise.all(
-          ['chat', 'polls', 'activities', 'dashboard', 'labels'].map((p) =>
+          ['chat', 'polls', 'activities', 'dashboard', 'labels', 'saved-filters'].map((p) =>
             call('GET', `/projects/${id}/${p}`, { token: who.token }),
           ),
         );
         check(
-          `${label}: 접근 권한이 없는 프로젝트의 채팅·투표·활동·대시보드·라벨은 403`,
+          `${label}: 접근 권한이 없는 프로젝트의 채팅·투표·활동·대시보드·라벨·저장된 필터는 403`,
           rs.every((r) => r.status === 403),
           rs.map((r) => r.status).join(),
         );

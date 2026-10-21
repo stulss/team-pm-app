@@ -1307,3 +1307,105 @@ button.label-toggle.on {
   flex-basis: 100%;
   margin: 0;
 }
+
+/* 캘린더 보기·저장된 필터 (M17) */
+.saved-filters {
+  align-items: center;
+}
+
+.calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.calendar-scroll {
+  overflow-x: auto;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(5.5rem, 1fr));
+  min-width: 40rem;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.cal-head {
+  padding: 0.25rem;
+  font-size: 0.8rem;
+  text-align: center;
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.cal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  min-height: 5.5rem;
+  padding: 0.25rem;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.cal-cell.blank {
+  background: var(--bg);
+}
+
+.cal-cell.today {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.cal-day {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.cal-cell.today .cal-day {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+button.cal-task {
+  display: block;
+  width: 100%;
+  padding: 0.1rem 0.35rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button.cal-task:hover {
+  border-color: var(--primary);
+}
+
+button.cal-task.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+button.cal-task.overdue {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.cal-undated {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cal-undated button.cal-task {
+  width: auto;
+  max-width: 100%;
+}

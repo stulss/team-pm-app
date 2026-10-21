@@ -1273,6 +1273,105 @@ try {
       await closeDialog(rtManager);
     },
   );
+  // ---- 캘린더 보기·저장된 필터 (M17)
+  await step(
+    '캘린더: 마감일이 오늘인 작업이 오늘 칸에 보이고, 달 이동·오늘 버튼·카드 열기가 동작',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      const taskId = await card(rtMember, '둘째').getAttribute('data-task-id');
+      const today = new Date().toLocaleDateString('sv-SE');
+      const token = await apiLogin('manager');
+      const patched = await apiCall('PATCH', `/tasks/${taskId}`, token, { dueDate: today });
+      if (patched.status !== 200) throw new Error(`마감일 지정 실패: ${patched.status}`);
+
+      await rtMember.getByRole('tab', { name: '캘린더' }).click();
+      const now = new Date();
+      const title = rtMember.getByTestId('calendar-title');
+      await title.filter({ hasText: `${now.getFullYear()}년 ${now.getMonth() + 1}월` }).waitFor();
+      const cell = rtMember.locator(`[data-date="${today}"]`);
+      await cell.getByRole('button', { name: '둘째' }).waitFor();
+      if (!(await cell.getAttribute('class')).includes('today')) {
+        throw new Error('오늘 칸이 강조되지 않음');
+      }
+
+      await rtMember.getByRole('button', { name: '다음 달' }).click();
+      const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      await title.filter({ hasText: `${next.getFullYear()}년 ${next.getMonth() + 1}월` }).waitFor();
+      if ((await rtMember.locator(`[data-date="${today}"]`).count()) !== 0) {
+        throw new Error('다음 달에 오늘 칸이 남아 있음');
+      }
+      await rtMember.getByRole('button', { name: '오늘', exact: true }).click();
+      await rtMember
+        .locator(`[data-date="${today}"]`)
+        .getByRole('button', { name: '둘째' })
+        .click();
+      await rtMember.getByRole('dialog').getByLabel('제목').waitFor();
+      await closeDialog(rtMember);
+    },
+  );
+  await step('캘린더: 상태 필터가 캘린더에도 적용됨', async () => {
+    if (!rtReady) throw new Error('준비 단계 실패');
+    const today = new Date().toLocaleDateString('sv-SE');
+    const chip = rtMember.locator(`[data-date="${today}"]`).getByRole('button', { name: '둘째' });
+    await chip.waitFor();
+    await rtMember.getByLabel('상태 필터').selectOption('done');
+    await chip.waitFor({ state: 'detached' });
+    await rtMember.getByLabel('상태 필터').selectOption('');
+    await chip.waitFor();
+    await rtMember.getByRole('tab', { name: '보드' }).click();
+    await column(rtMember, 'todo').waitFor();
+  });
+  await step(
+    '저장된 필터: 저장 → 초기화 → 불러와 적용, 새로고침 후에도 남고, 다른 사용자에게는 안 보이며, 삭제됨',
+    async () => {
+      if (!rtReady) throw new Error('준비 단계 실패');
+      await rtMember.getByLabel('우선순위 필터').selectOption({ label: '긴급' });
+      await rtMember.getByRole('button', { name: '이 조건 기억하기' }).click();
+      await rtMember.getByLabel('기억할 필터 이름').fill('ui-긴급');
+      await rtMember.getByRole('button', { name: '기억', exact: true }).click();
+      await rtMember.getByLabel('저장된 필터').locator('option', { hasText: 'ui-긴급' }).waitFor({
+        state: 'attached',
+      });
+
+      await rtMember.getByRole('button', { name: '필터 초기화' }).click();
+      if ((await rtMember.getByLabel('우선순위 필터').inputValue()) !== '') {
+        throw new Error('초기화되지 않음');
+      }
+      await rtMember.getByLabel('저장된 필터').selectOption({ label: 'ui-긴급' });
+      await pollUntil(
+        async () => (await rtMember.getByLabel('우선순위 필터').inputValue()) === 'urgent',
+        '저장된 필터 적용',
+      );
+
+      // 서버에 저장돼 새로고침해도 남고, 개인용이라 다른 사용자(소유자)에게는 보이지 않는다
+      await rtMember.reload();
+      await rtMember
+        .getByLabel('저장된 필터')
+        .locator('option', { hasText: 'ui-긴급' })
+        .waitFor({ state: 'attached' });
+      await rtManager.reload();
+      await rtManager.getByLabel('저장된 필터').waitFor();
+      if (
+        (await rtManager
+          .getByLabel('저장된 필터')
+          .locator('option', { hasText: 'ui-긴급' })
+          .count()) !== 0
+      ) {
+        throw new Error('다른 사용자에게 개인 필터가 보임');
+      }
+
+      await rtMember.getByLabel('저장된 필터').selectOption({ label: 'ui-긴급' });
+      await rtMember.getByRole('button', { name: '기억 지우기' }).click();
+      await pollUntil(
+        async () =>
+          (await rtMember
+            .getByLabel('저장된 필터')
+            .locator('option', { hasText: 'ui-긴급' })
+            .count()) === 0,
+        '필터 삭제 반영',
+      );
+    },
+  );
   await step(
     '활동 기록: 이동·생성·삭제·댓글이 타임라인에 기록되고 다른 사용자 화면에 실시간 반영',
     async () => {

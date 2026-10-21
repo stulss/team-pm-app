@@ -15,13 +15,16 @@ import { checklistText } from '../../constants/labels.js';
 import { listLabels } from '../../api/labels.js';
 import LabelChip from './LabelChip.jsx';
 import LabelManager from './LabelManager.jsx';
+import CalendarView from './CalendarView.jsx';
+import SavedFilters from './SavedFilters.jsx';
 import TaskBoard from './TaskBoard.jsx';
 import TaskModal from './TaskModal.jsx';
 
 const VIEW_KEY = 'team-pm:task-view';
 const readView = () => {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'board';
+    const saved = localStorage.getItem(VIEW_KEY);
+    return ['list', 'calendar'].includes(saved) ? saved : 'board';
   } catch {
     return 'board'; // 저장소를 쓸 수 없어도 동작해야 한다
   }
@@ -81,6 +84,7 @@ export default function TaskSection({ project, archived }) {
             {[
               ['board', '보드'],
               ['list', '목록'],
+              ['calendar', '캘린더'],
             ].map(([value, label]) => (
               <button
                 key={value}
@@ -110,7 +114,7 @@ export default function TaskSection({ project, archived }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        {view === 'list' && (
+        {view !== 'board' && (
           <select aria-label="상태 필터" value={filters.status} onChange={setFilter('status')}>
             <option value="">상태 전체</option>
             {STATUSES.map((s) => (
@@ -167,11 +171,29 @@ export default function TaskSection({ project, archived }) {
         )}
       </div>
 
+      <SavedFilters
+        projectId={project.id}
+        filters={filters}
+        q={q}
+        labelIds={new Set((labels.data?.data ?? []).map((l) => l.id))}
+        memberIds={new Set(activeMembers.map((m) => m.id))}
+        onApply={({ filters: next, q: nextQ }) => {
+          setFilters(next);
+          setQ(nextQ);
+        }}
+      />
+
       {view === 'board' ? (
         <TaskBoard
           project={project}
           archived={archived}
           filters={common}
+          onOpenTask={(task) => setModal({ task })}
+        />
+      ) : view === 'calendar' ? (
+        <CalendarView
+          project={project}
+          params={{ ...common, status: filters.status || undefined }}
           onOpenTask={(task) => setModal({ task })}
         />
       ) : (

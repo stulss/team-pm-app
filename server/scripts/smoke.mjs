@@ -2467,6 +2467,100 @@ try {
     );
   }
 
+  // --- 저장된 필터 (M17): jsonb 저장, 개인 한정, 이름 유일 인덱스, 상한 잠금, RLS, CASCADE 를 실제 DB 로 확인
+  {
+    const spid = (
+      await call('POST', '/projects', {
+        token: t('manager'),
+        body: { name: 'smoke-filter', memberIds: [people.member.id] },
+      })
+    ).body.id;
+    const url = (path = '') => `/projects/${spid}/saved-filters${path}`;
+    const save = (who, name, filters = { status: 'todo', assignee: 'me', q: '시안' }) =>
+      call('POST', url(), { token: t(who), body: { name, filters } });
+
+    const first = await save('member', 'Mine');
+    check(
+      '필터 저장 (201), jsonb 가 그대로 왕복한다',
+      first.status === 201 &&
+        first.body.filters.status === 'todo' &&
+        first.body.filters.assignee === 'me' &&
+        first.body.filters.q === '시안',
+    );
+    const dup = await save('member', 'MINE');
+    check(
+      '이름 중복은 대소문자 무시 409 FILTER_EXISTS (DB 유일 인덱스), 다른 사용자는 같은 이름 가능',
+      dup.status === 409 &&
+        dup.body.error.code === 'FILTER_EXISTS' &&
+        (await save('manager', 'mine')).status === 201,
+    );
+    const mine = await call('GET', url(), { token: t('member') });
+    const theirs = await call('GET', url(), { token: t('manager') });
+    check(
+      '개인용: 각자 자기 필터만 보이고, Admin 도 남의 필터는 보이지 않는다',
+      mine.body.data.length === 1 &&
+        theirs.body.data.length === 1 &&
+        mine.body.data[0].id !== theirs.body.data[0].id &&
+        (await call('GET', url(), { token: t('admin') })).body.data.length === 0,
+    );
+    const stranger = await call('DELETE', url(`/${first.body.id}`), { token: t('manager') });
+    check(
+      '남의 필터 삭제는 404 이고 지워지지 않는다',
+      stranger.status === 404 &&
+        (await db.query('SELECT 1 FROM saved_filters WHERE id = $1', [first.body.id])).rowCount ===
+          1,
+    );
+    const badKey = await save('member', 'bad', { status: 'todo', admin: true });
+    const badValue = await save('member', 'bad2', { assignee: 'someone' });
+    check('허용되지 않는 키·값은 400', badKey.status === 400 && badValue.status === 400);
+    check(
+      '비멤버는 읽기·저장 403',
+      (await call('GET', url(), { token: t('outsider') })).status === 403 &&
+        (await save('outsider', 'x')).status === 403,
+    );
+
+    // 상한 20: 19개까지 채우고 동시에 4건을 보내면 정확히 1건만 들어간다 (사용자·프로젝트 단위 잠금)
+    await db.query(
+      `INSERT INTO saved_filters (project_id, user_id, name)
+       SELECT $1, $2, 'bulk-' || g FROM generate_series(1, 18) g`,
+      [spid, people.member.id],
+    );
+    const burst = await Promise.all([1, 2, 3, 4].map((n) => save('member', `burst-${n}`)));
+    const okCount = burst.filter((r) => r.status === 201).length;
+    const total = (
+      await db.query(
+        'SELECT count(*)::int AS n FROM saved_filters WHERE project_id = $1 AND user_id = $2',
+        [spid, people.member.id],
+      )
+    ).rows[0].n;
+    check(
+      '저장된 필터 상한 20: 동시 4건 중 1건만 성공, 나머지 409 LIMIT_REACHED',
+      okCount === 1 &&
+        total === 20 &&
+        burst.filter((r) => r.status === 409).every((r) => r.body.error.code === 'LIMIT_REACHED'),
+      `성공 ${okCount}건, 총 ${total}개`,
+    );
+
+    const rls = await db.query(
+      `SELECT relname FROM pg_class WHERE relname = 'saved_filters' AND relrowsecurity`,
+    );
+    check('saved_filters RLS 활성화', rls.rowCount === 1);
+    check(
+      '내 필터 삭제 (204)',
+      (await call('DELETE', url(`/${first.body.id}`), { token: t('member') })).status === 204,
+    );
+    await call('PATCH', `/projects/${spid}`, { token: t('manager'), body: { status: 'archived' } });
+    check(
+      '보관된 프로젝트에서도 개인 필터는 저장·삭제할 수 있다',
+      (await save('manager', 'archived-ok')).status === 201,
+    );
+    await call('DELETE', `/projects/${spid}`, { token: t('manager') });
+    check(
+      '프로젝트 삭제 시 저장된 필터 CASCADE',
+      (await db.query('SELECT 1 FROM saved_filters WHERE project_id = $1', [spid])).rowCount === 0,
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',
