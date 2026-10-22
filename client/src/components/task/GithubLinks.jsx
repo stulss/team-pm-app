@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { listGithubLinks } from '../../api/github.js';
-import { PR_STATE_LABELS } from '../../constants/github.js';
+import { ISSUE_STATE_LABELS, PR_STATE_LABELS } from '../../constants/github.js';
 
-// 작업 모달의 GitHub 영역: 웹훅으로 연결된 PR·커밋을 보여 준다(읽기 전용).
+// 작업 모달의 GitHub 영역: 웹훅으로 연결된 PR·커밋·이슈를 보여 준다(읽기 전용).
 export default function GithubLinks({ taskId }) {
   const { data = [] } = useQuery({
     queryKey: ['github-links', taskId],
@@ -18,6 +18,10 @@ export default function GithubLinks({ taskId }) {
             {l.kind === 'pull_request' ? (
               <span className={`pr-state pr-${l.state}`}>
                 PR #{l.externalId} {PR_STATE_LABELS[l.state] ?? ''}
+              </span>
+            ) : l.kind === 'issue' ? (
+              <span className={`pr-state pr-${l.state}`}>
+                이슈 #{l.externalId} {ISSUE_STATE_LABELS[l.state] ?? ''}
               </span>
             ) : (
               <code className="commit-ref">{l.externalId.slice(0, 7)}</code>

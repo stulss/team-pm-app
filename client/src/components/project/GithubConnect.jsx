@@ -112,6 +112,22 @@ export default function GithubConnect({ projectId }) {
             />{' '}
             작업 키 없는 PR 을 작업 카드로 자동 등록
           </label>
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={connection.syncIssues}
+              disabled={options.isPending}
+              onChange={(e) => options.mutate({ syncIssues: e.target.checked })}
+            />{' '}
+            GitHub 이슈를 작업 카드로 동기화
+          </label>
+          {connection.syncIssues && (
+            <p className="muted small">
+              작업 키가 없는 이슈가 열리면 카드를 만들고, 이슈를 닫으면 완료로, 다시 열면 할 일로
+              옮기며, 이슈 제목을 고치면 카드 제목도 바뀝니다(GitHub → 앱 한 방향). 웹훅 이벤트에{' '}
+              <strong>Issues</strong> 를 꼭 추가하세요.
+            </p>
+          )}
           {connection.createOnPr && (
             <p className="muted small">
               작업 키(예: <code>ABC-12</code>)가 없는 PR 이 열리면 PR 제목으로 카드를 만들고 PR 을
@@ -142,7 +158,8 @@ export default function GithubConnect({ projectId }) {
                 </button>
               </li>
               <li>
-                이벤트: <strong>Pull requests</strong>, <strong>Pushes</strong>
+                이벤트: <strong>Pull requests</strong>, <strong>Pushes</strong>,{' '}
+                <strong>Issues</strong>(이슈 동기화를 쓸 때)
               </li>
             </ol>
           </details>

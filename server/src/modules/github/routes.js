@@ -22,6 +22,7 @@ const connectBody = z.object({
   moveOnOpen: z.boolean().optional(),
   doneOnMerge: z.boolean().optional(),
   createOnPr: z.boolean().optional(),
+  syncIssues: z.boolean().optional(),
 });
 
 // /projects/:id/github — 소유자·Admin 만(웹훅 비밀이 보이므로)

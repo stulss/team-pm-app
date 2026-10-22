@@ -270,9 +270,9 @@ describe('웹훅 인증', () => {
     const res = await hook('pull_request', other);
     expect(res.status).toBe(202);
     expect(await links(t.id)).toEqual([]);
-    const issues = await hook('issues', { action: 'opened' });
+    const issues = await hook('issue_comment', { action: 'created' });
     expect(issues.status).toBe(200);
-    expect(issues.body.ignored).toBe('issues');
+    expect(issues.body.ignored).toBe('issue_comment');
   });
 
   it('처리하면 연결의 마지막 이벤트 시각이 갱신된다', async () => {
@@ -659,5 +659,151 @@ describe('키 없는 PR 을 작업 카드로 자동 등록 (M34)', () => {
     await api('patch', `/projects/${pid}`, 'owner', { status: 'archived' });
     await open({ number: 12 });
     expect(cards()).toHaveLength(2);
+  });
+});
+
+describe('GitHub 이슈 동기화 (M35)', () => {
+  const enable = (extra = {}) =>
+    connect('owner', { repo: 'octo/hello', syncIssues: true, ...extra });
+  const issue = (action, over = {}) => ({
+    action,
+    repository: { full_name: 'octo/hello' },
+    issue: {
+      number: 3,
+      title: '결제 화면이 멈춤',
+      body: '재현 방법…',
+      html_url: 'https://github.com/octo/hello/issues/3',
+      state: action === 'closed' ? 'closed' : 'open',
+      user: { login: 'reporter' },
+      assignees: [],
+      ...over,
+    },
+  });
+  const send = (action, over) => hook('issues', issue(action, over));
+  const cards = () => store.tasks.filter((t) => t.project_id === pid);
+
+  it('옵션은 기본 꺼짐: 이슈 이벤트를 받아도 카드를 만들지 않는다', async () => {
+    expect(connection.syncIssues).toBe(false);
+    const res = await send('opened');
+    expect(res.status).toBe(200);
+    expect(cards()).toHaveLength(0);
+
+    const on = await enable();
+    expect(on.body.connection.syncIssues).toBe(true);
+    expect((await connect('alice', { repo: 'octo/hello', syncIssues: false })).status).toBe(403);
+  });
+
+  it('이슈를 열면 카드를 만들고 이슈를 연결하며, 같은 이슈는 다시 만들지 않는다', async () => {
+    await enable();
+    store.users.find((u) => u.id === people.alice.id).github_login = 'Assignee1';
+    const res = await send('opened', { assignees: [{ login: 'assignee1' }] });
+    expect(res.body.created).toBe(1);
+    const [card] = cards();
+    expect(card).toMatchObject({
+      title: '결제 화면이 멈춤',
+      status: 'todo',
+      assignee_id: people.alice.id,
+    });
+    expect(card.description).toBe(
+      '재현 방법…\n\nGitHub 이슈 #3: https://github.com/octo/hello/issues/3',
+    );
+    expect(await links(card.id)).toEqual([
+      expect.objectContaining({
+        kind: 'issue',
+        externalId: '3',
+        state: 'open',
+        author: 'reporter',
+      }),
+    ]);
+    const acts = (
+      await api('get', `/projects/${pid}/activities?taskId=${card.id}`, 'owner')
+    ).body.data.map((a) => [a.action, a.actor, a.meta.ref]);
+    expect(acts).toContainEqual(['task.created', null, undefined]);
+    expect(acts).toContainEqual(['github.linked', null, '#3']);
+    expect(emitToProject).toHaveBeenCalledWith(null, pid, 'task:created', expect.anything());
+
+    await send('opened');
+    await send('reopened');
+    expect(cards()).toHaveLength(1);
+  });
+
+  it('닫으면 완료로, 완료인 카드를 다시 열면 할 일로, 제목이 바뀌면 따라 바뀐다(설명은 그대로)', async () => {
+    await enable();
+    await send('opened');
+    const id = cards()[0].id;
+    await api('patch', `/tasks/${id}`, 'owner', { description: '사람이 고친 설명' });
+
+    await send('closed');
+    expect(await statusOf(id)).toBe('done');
+    expect((await links(id))[0].state).toBe('closed');
+
+    await send('reopened');
+    expect(await statusOf(id)).toBe('todo');
+    expect((await links(id))[0].state).toBe('open');
+
+    // 진행 중인 카드는 다시 열어도 그대로
+    await api('patch', `/tasks/${id}/move`, 'owner', { status: 'in_progress' });
+    await send('reopened');
+    expect(await statusOf(id)).toBe('in_progress');
+
+    await send('edited', { title: '결제 화면이 멈춤 (수정)' });
+    const row = (await api('get', `/tasks/${id}`, 'owner')).body;
+    expect(row.title).toBe('결제 화면이 멈춤 (수정)');
+    expect(row.description).toBe('사람이 고친 설명');
+    const acts = (await api('get', `/projects/${pid}/activities?taskId=${id}`, 'owner')).body.data;
+    expect(acts.some((a) => a.action === 'task.moved' && a.meta.via === 'github')).toBe(true);
+    expect(acts.some((a) => a.action === 'task.updated' && a.meta.via === 'github')).toBe(true);
+  });
+
+  it('카드를 지운 뒤에는 닫기·다시 열기·수정에도 아무 일 없고 다시 만들지 않는다', async () => {
+    await enable();
+    await send('opened');
+    await api('delete', `/tasks/${cards()[0].id}`, 'owner');
+    for (const action of ['edited', 'closed', 'reopened']) {
+      expect((await send(action)).status).toBe(200);
+    }
+    expect(cards()).toHaveLength(0);
+  });
+
+  it('키가 있는 이슈는 그 작업에 링크만 걸고 상태는 건드리지 않는다', async () => {
+    await enable();
+    const t = await mkTask('기존 작업');
+    await send('opened', { title: `TPM-${t.number} 관련 이슈` });
+    await send('closed', { title: `TPM-${t.number} 관련 이슈` });
+    expect(cards()).toHaveLength(1);
+    expect(await statusOf(t.id)).toBe('todo');
+    expect(await links(t.id)).toEqual([
+      expect.objectContaining({ kind: 'issue', state: 'closed' }),
+    ]);
+  });
+
+  it('PR(issue.pull_request)·봇·보관된 프로젝트·지원하지 않는 동작은 무시한다', async () => {
+    await enable();
+    await send('opened', { pull_request: { url: 'x' } });
+    await send('opened', { user: { login: 'bot', type: 'Bot' } });
+    await send('labeled');
+    await send('assigned');
+    expect(cards()).toHaveLength(0);
+
+    await api('patch', `/projects/${pid}`, 'owner', { status: 'archived' });
+    await send('opened', { number: 9 });
+    expect(cards()).toHaveLength(0);
+  });
+
+  it('작업 수 한도에서는 만들지 않고 자리를 풀어 한도가 풀리면 다시 열 때 등록한다', async () => {
+    await enable();
+    const prev = env.MAX_TASKS_PER_PROJECT;
+    env.MAX_TASKS_PER_PROJECT = 1;
+    try {
+      await mkTask('자리 차지');
+      await send('opened');
+      expect(cards()).toHaveLength(1);
+      expect(store.issueCards).toHaveLength(0);
+      env.MAX_TASKS_PER_PROJECT = 10;
+      await send('reopened');
+      expect(cards()).toHaveLength(2);
+    } finally {
+      env.MAX_TASKS_PER_PROJECT = prev;
+    }
   });
 });

@@ -25,7 +25,7 @@ export async function getForManager(project, baseUrl) {
 export async function connect(
   project,
   user,
-  { repo: fullName, moveOnOpen, doneOnMerge, createOnPr },
+  { repo: fullName, moveOnOpen, doneOnMerge, createOnPr, syncIssues },
   baseUrl,
 ) {
   assertWritable(project);
@@ -37,6 +37,7 @@ export async function connect(
       moveOnOpen,
       doneOnMerge,
       createOnPr,
+      syncIssues,
       createdBy: user.id,
     });
   } catch (err) {
@@ -96,7 +97,7 @@ async function autoMove(project, taskId, to) {
 }
 
 const refOf = (kind, externalId) =>
-  kind === 'pull_request' ? `#${externalId}` : String(externalId).slice(0, 7);
+  kind === 'commit' ? String(externalId).slice(0, 7) : `#${externalId}`;
 
 // 작업에 PR/커밋을 연결(갱신)하고 활동을 남긴다. 연결이 새로 생겼거나 PR 상태가 바뀌면 true.
 async function link(project, task, input) {
@@ -147,16 +148,19 @@ async function announce(project, taskId, event = 'task:updated') {
   }
 }
 
-const MAX_BODY_CHARS = 9000; // 설명은 1만자까지라 PR 주소를 덧붙일 자리를 남긴다
+const MAX_BODY_CHARS = 9000; // 설명은 1만자까지라 주소를 덧붙일 자리를 남긴다
 
-// 키 없는 PR 을 작업 카드로 만든다(옵션 createOnPr). PR 하나는 한 번만 — 자리를 먼저 잡아 동시 전달·재오픈에도 안 겹친다.
-async function createCardFromPr(connection, project, pr) {
-  if (!(await repo.claimPrCard(project.id, pr.number))) return null;
+// PR·이슈 하나를 작업 카드로 만든다. 항목 하나는 한 번만 — 자리(ops.claim)를 먼저 잡아 동시 전달·재오픈에도 안 겹친다.
+// 카드를 만들었으면 작업을, 이미 등록했거나(자리 없음) 한도·보관으로 못 만들었으면 null 을 돌려준다.
+async function createCard(connection, project, item) {
+  const { number, ops } = item;
+  if (!(await ops.claim(project.id, number))) return null;
   let task;
   try {
-    const login = pr.user?.login;
-    const assigneeId = login ? await repo.findMemberByGithubLogin(project.id, login) : null;
-    const body = String(pr.body ?? '')
+    const assigneeId = item.login
+      ? await repo.findMemberByGithubLogin(project.id, item.login)
+      : null;
+    const body = String(item.body ?? '')
       .trim()
       .slice(0, MAX_BODY_CHARS);
     task = await createTask(
@@ -164,24 +168,24 @@ async function createCardFromPr(connection, project, pr) {
       { id: connection.created_by ?? project.owner_id },
       {
         title:
-          String(pr.title ?? '')
+          String(item.title ?? '')
             .trim()
-            .slice(0, 200) || `PR #${pr.number}`,
-        description: [body, `GitHub PR #${pr.number}: ${pr.html_url ?? ''}`.trim()]
+            .slice(0, 200) || `${item.label} #${number}`,
+        description: [body, `GitHub ${item.label} #${number}: ${item.url ?? ''}`.trim()]
           .filter(Boolean)
           .join('\n\n'),
-        status: connection.move_on_open ? 'in_progress' : 'todo',
+        status: item.status,
         priority: 'medium',
         assigneeId,
       },
     );
   } catch (err) {
     // 카드를 못 만들었으면 자리를 풀어 나중 이벤트가 다시 시도할 수 있게 한다
-    await repo.releasePrCard(project.id, pr.number);
+    await ops.release(project.id, number);
     if (err.status === 409) return null; // 작업 수 한도·보관된 프로젝트: 등록하지 않는다
     throw err;
   }
-  await repo.setPrCardTask(project.id, pr.number, task.id);
+  await ops.set(project.id, number, task.id);
   await record({
     projectId: project.id,
     taskId: task.id,
@@ -196,6 +200,29 @@ async function createCardFromPr(connection, project, pr) {
   });
   return task;
 }
+
+const PR_CARDS = {
+  claim: repo.claimPrCard,
+  set: repo.setPrCardTask,
+  release: repo.releasePrCard,
+};
+const ISSUE_CARDS = {
+  claim: repo.claimIssueCard,
+  set: repo.setIssueCardTask,
+  release: repo.releaseIssueCard,
+};
+
+const createCardFromPr = (connection, project, pr) =>
+  createCard(connection, project, {
+    number: pr.number,
+    title: pr.title,
+    body: pr.body,
+    url: pr.html_url,
+    label: 'PR',
+    login: pr.user?.login,
+    status: connection.move_on_open ? 'in_progress' : 'todo',
+    ops: PR_CARDS,
+  });
 
 async function handlePullRequest(connection, project, payload) {
   const pr = payload.pull_request;
@@ -252,6 +279,89 @@ async function handlePullRequest(connection, project, payload) {
   return { tasks: tasks.length, linked, moved, created };
 }
 
+// 이슈 → 카드(옵션 syncIssues). 한 방향(GitHub → 앱): 열면 만들고, 닫으면 완료, 다시 열면 할 일, 제목이 바뀌면 따라 바꾼다.
+async function handleIssue(connection, project, payload) {
+  const issue = payload.issue;
+  if (!issue?.number || issue.pull_request) return { ignored: 'issue' }; // PR 은 pull_request 이벤트로 다룬다
+  if (!connection.sync_issues) return { ignored: 'issues' };
+  const action = payload.action;
+  if (!['opened', 'reopened', 'closed', 'edited'].includes(action)) return { ignored: 'issues' };
+
+  const numbers = extractNumbersFrom([issue.title, issue.body], project.key);
+  const keyed = await repo.findTasksByNumbers(project.id, numbers);
+  const open = issue.state === 'open';
+  let taskId = await repo.getIssueCardTaskId(project.id, issue.number);
+  let created = 0;
+  let moved = 0;
+
+  if (!taskId && numbers.length === 0 && open && ['opened', 'reopened'].includes(action)) {
+    if (project.status === 'active' && issue.user?.type !== 'Bot') {
+      const card = await createCard(connection, project, {
+        number: issue.number,
+        title: issue.title,
+        body: issue.body,
+        url: issue.html_url,
+        label: '이슈',
+        login: issue.assignees?.[0]?.login ?? issue.assignee?.login,
+        status: 'todo',
+        ops: ISSUE_CARDS,
+      });
+      if (card) {
+        taskId = card.id;
+        created = 1;
+      }
+    }
+  }
+
+  // 키가 있는 이슈는 그 작업에 링크만 건다(상태는 건드리지 않는다)
+  const targets = [...keyed];
+  if (taskId && !targets.some((t) => t.id === taskId)) {
+    targets.push({ id: taskId, title: issue.title });
+  }
+  const state = open ? 'open' : 'closed';
+  for (const task of targets) {
+    await link(project, task, {
+      kind: 'issue',
+      externalId: String(issue.number),
+      title: issue.title ?? `이슈 #${issue.number}`,
+      url: issue.html_url ?? '',
+      state,
+      author: issue.user?.login,
+    });
+  }
+
+  if (taskId && project.status === 'active') {
+    const row = await tasksRepo.findById(taskId);
+    if (row) {
+      if (action === 'closed' && (await autoMove(project, taskId, 'done'))) moved += 1;
+      if (action === 'reopened' && row.status === 'done') {
+        if (await autoMove(project, taskId, 'todo')) moved += 1;
+      }
+      const title = String(issue.title ?? '')
+        .trim()
+        .slice(0, 200);
+      if (action === 'edited' && title && title !== row.title) {
+        await tasksRepo.updateTask(taskId, { title }, row);
+        await record({
+          projectId: project.id,
+          taskId,
+          actorId: null,
+          action: 'task.updated',
+          meta: { title, changes: { title: { from: row.title, to: title } }, via: 'github' },
+        });
+      }
+    }
+  }
+  for (const task of targets) {
+    await announce(
+      project,
+      task.id,
+      created && task.id === taskId ? 'task:created' : 'task:updated',
+    );
+  }
+  return { tasks: targets.length, created, moved };
+}
+
 async function handlePush(project, payload) {
   if (payload.deleted) return { ignored: 'deleted' };
   const commits = (payload.commits ?? []).slice(0, MAX_COMMITS_PER_PUSH);
@@ -281,7 +391,7 @@ async function handlePush(project, payload) {
 // 서명이 검증된 전달 하나를 처리한다. 반환값은 응답 본문(status 가 있으면 그 상태로 답한다).
 export async function handleWebhook(connection, event, payload) {
   if (event === 'ping') return { pong: true };
-  if (event !== 'pull_request' && event !== 'push') return { ignored: event };
+  if (!['pull_request', 'push', 'issues'].includes(event)) return { ignored: event };
 
   const fullName = payload?.repository?.full_name;
   if (!fullName || fullName.toLowerCase() !== connection.repo.toLowerCase()) {
@@ -290,10 +400,12 @@ export async function handleWebhook(connection, event, payload) {
   const project = await projectsRepo.findById(connection.project_id);
   if (!project) return { ignored: 'project', status: 202 };
 
-  const result =
-    event === 'pull_request'
-      ? await handlePullRequest(connection, project, payload)
-      : await handlePush(project, payload);
+  const handlers = {
+    pull_request: () => handlePullRequest(connection, project, payload),
+    push: () => handlePush(project, payload),
+    issues: () => handleIssue(connection, project, payload),
+  };
+  const result = await handlers[event]();
   await repo.touch(connection.id);
   return result;
 }

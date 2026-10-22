@@ -1,5 +1,5 @@
 import { PRIORITY_LABELS, STATUS_LABELS } from './task.js';
-import { PR_STATE_LABELS } from './github.js';
+import { GITHUB_KIND_LABELS, PR_STATE_LABELS } from './github.js';
 import { hourCycle } from '../utils/displayFormat.js';
 
 const label = (map, key) => map[key] ?? key;
@@ -62,7 +62,7 @@ function describeBase(a, { showTask = true } = {}) {
     case 'github.disconnected':
       return `GitHub 저장소 ${m.repo} 연결을 해제했습니다.`;
     case 'github.linked':
-      return `${task(m.title)}에 GitHub ${m.kind === 'pull_request' ? 'PR' : '커밋'} ${m.ref}이(가) 연결됐습니다.`;
+      return `${task(m.title)}에 GitHub ${GITHUB_KIND_LABELS[m.kind] ?? '항목'} ${m.ref}이(가) 연결됐습니다.`;
     case 'github.pr_state':
       return `${task(m.title)}의 PR ${m.ref} 상태가 ${PR_STATE_LABELS[m.state] ?? m.state}(으)로 바뀌었습니다.`;
     case 'share.created':

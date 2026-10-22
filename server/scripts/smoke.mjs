@@ -3823,6 +3823,136 @@ try {
     );
   }
 
+  // --- GitHub 이슈 동기화 (M35): kind='issue' CHECK·등록 자리 유일 제약·닫기/다시 열기 이동을 실DB 로 확인
+  {
+    const ip = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-issues', key: 'ISS', memberIds: [people.member.id] },
+    });
+    const ipid = ip.body.id;
+    const repoName = `smoke-${run}/issues`;
+    const conn = (
+      await call('PUT', `/projects/${ipid}/github`, {
+        token: t('manager'),
+        body: { repo: repoName, syncIssues: true },
+      })
+    ).body.connection;
+    const send = async (action, number, extra = {}) => {
+      const text = JSON.stringify({
+        action,
+        repository: { full_name: repoName },
+        issue: {
+          number,
+          title: `결제 화면이 멈춤 ${number}`,
+          body: '재현 방법',
+          html_url: `https://github.com/${repoName}/issues/${number}`,
+          state: action === 'closed' ? 'closed' : 'open',
+          user: { login: 'reporter' },
+          assignees: [],
+          ...extra,
+        },
+      });
+      const res = await fetch(conn.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'issues',
+          'x-github-delivery': crypto.randomUUID(),
+          'x-hub-signature-256': `sha256=${crypto.createHmac('sha256', conn.secret).update(text).digest('hex')}`,
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: text,
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    const tasksOf = async () =>
+      (await db.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY number', [ipid])).rows;
+
+    const burst = await Promise.all(Array.from({ length: 5 }, () => send('opened', 3)));
+    const made = await tasksOf();
+    const links = (await db.query('SELECT * FROM github_task_links WHERE project_id = $1', [ipid]))
+      .rows;
+    check(
+      '이슈 카드: 같은 이슈가 동시에 5번 전달돼도 카드는 하나이고 이슈 링크(kind=issue)가 저장된다',
+      burst.every((r) => r.status === 200) &&
+        made.length === 1 &&
+        links.length === 1 &&
+        links[0].kind === 'issue' &&
+        links[0].state === 'open' &&
+        made[0].title === '결제 화면이 멈춤 3' &&
+        made[0].status === 'todo',
+      `${made.length} ${links.length} ${JSON.stringify(burst.map((r) => r.status))}`,
+    );
+
+    const id = made[0].id;
+    await send('closed', 3);
+    const closed = (await db.query('SELECT status, completed_at FROM tasks WHERE id = $1', [id]))
+      .rows[0];
+    const closedLink = (
+      await db.query('SELECT state FROM github_task_links WHERE task_id = $1', [id])
+    ).rows[0];
+    await send('reopened', 3);
+    const reopened = (await db.query('SELECT status, completed_at FROM tasks WHERE id = $1', [id]))
+      .rows[0];
+    await send('edited', 3, { title: '결제 화면이 멈춤 (수정)' });
+    const edited = (await db.query('SELECT title, description FROM tasks WHERE id = $1', [id]))
+      .rows[0];
+    const moves = (
+      await db.query(
+        `SELECT meta FROM activity_logs WHERE task_id = $1 AND action = 'task.moved' ORDER BY seq`,
+        [id],
+      )
+    ).rows.map((r) => `${r.meta.from}>${r.meta.to}:${r.meta.via}`);
+    check(
+      '이슈 카드: 닫으면 완료(completed_at 설정), 다시 열면 할 일(completed_at 해제), 제목 수정이 반영된다',
+      closed.status === 'done' &&
+        closed.completed_at !== null &&
+        closedLink.state === 'closed' &&
+        reopened.status === 'todo' &&
+        reopened.completed_at === null &&
+        edited.title === '결제 화면이 멈춤 (수정)' &&
+        edited.description.includes('GitHub 이슈 #3') &&
+        moves.join() === 'todo>done:github,done>todo:github',
+      JSON.stringify({ closed, reopened, edited, moves }),
+    );
+
+    await call('DELETE', `/tasks/${id}`, { token: t('manager') });
+    const gone = (
+      await db.query(
+        'SELECT task_id FROM github_issue_cards WHERE project_id = $1 AND issue_number = 3',
+        [ipid],
+      )
+    ).rows;
+    await send('reopened', 3);
+    check(
+      '이슈 카드: 카드를 지우면 기록의 task_id 가 NULL 이 되고 같은 이슈를 다시 열어도 만들지 않는다',
+      gone.length === 1 && gone[0].task_id === null && (await tasksOf()).length === 0,
+    );
+
+    // PR 페이로드·봇은 무시, 옵션을 끄면 만들지 않는다
+    await send('opened', 4, { pull_request: { url: 'x' } });
+    await send('opened', 5, { user: { login: 'bot', type: 'Bot' } });
+    const ignored = (await tasksOf()).length;
+    await call('PUT', `/projects/${ipid}/github`, {
+      token: t('manager'),
+      body: { repo: repoName, syncIssues: false },
+    });
+    await send('opened', 6);
+    check(
+      '이슈 카드: PR·봇 페이로드는 무시하고 옵션을 끄면 만들지 않는다',
+      ignored === 0 && (await tasksOf()).length === 0,
+    );
+
+    await call('DELETE', `/projects/${ipid}`, { token: t('manager') });
+    check(
+      '이슈 카드: 프로젝트를 지우면 등록 기록도 CASCADE 로 사라진다',
+      (await db.query('SELECT 1 FROM github_issue_cards WHERE project_id = $1', [ipid]))
+        .rowCount === 0,
+    );
+  }
+
   // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인
   {
     const usersRepo = await import('../src/modules/users/repository.js');

@@ -68,7 +68,7 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 
 ## 4. 마이그레이션
 
-- `node-pg-migrate` 로 `server/db/migrations/` 에 순서대로 작성한다(001 ~ 027). 되돌릴 수 있는 `down` 을 함께 둔다.
+- `node-pg-migrate` 로 `server/db/migrations/` 에 순서대로 작성한다(001 ~ 028). 되돌릴 수 있는 `down` 을 함께 둔다.
 - **자동 적용되지 않는다.** `main` 푸시가 코드를 배포하므로, **새 마이그레이션이 있는 변경은 코드를 푸시하기 전에 먼저 적용한다**(이전 코드가 새 스키마에서 깨지지 않는지 확인).
 - 적용: `npm run migrate -w server -- up` (`DIRECT_URL`, Session pooler 사용). Transaction pooler 로는 실행하지 않는다.
 - 모든 테이블은 같은 마이그레이션에서 `ENABLE ROW LEVEL SECURITY` 를 켠다(정책은 두지 않음 → Supabase 공개 API 직접 접근 차단).

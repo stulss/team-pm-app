@@ -2364,6 +2364,54 @@ try {
         throw new Error('키 없는 PR 전달 실패');
       }
       await setPage.locator('[data-status="in_progress"]').getByText(noKey).waitFor();
+
+      // 이슈 동기화(M35): 옵션을 켜면 이슈가 카드로 들어오고, 닫으면 완료 컬럼으로 옮겨진다
+      const issueTitle = `이슈 ${run}`;
+      const sendIssue = async (action, over = {}) => {
+        const text = JSON.stringify({
+          action,
+          repository: { full_name: repoName },
+          issue: {
+            number: 21,
+            title: issueTitle,
+            body: '',
+            html_url: `https://github.com/${repoName}/issues/21`,
+            state: action === 'closed' ? 'closed' : 'open',
+            user: { login: 'reporter' },
+            assignees: [],
+            ...over,
+          },
+        });
+        const res = await fetch(target, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-github-event': 'issues',
+            'x-github-delivery': crypto.randomUUID(),
+            'x-hub-signature-256': `sha256=${crypto.createHmac('sha256', secret).update(text).digest('hex')}`,
+            ...(process.env.VERCEL_BYPASS && {
+              'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+            }),
+          },
+          body: text,
+        });
+        return res.status;
+      };
+      await sendIssue('opened');
+      if ((await setPage.getByText(issueTitle).count()) !== 0) {
+        throw new Error('옵션이 꺼졌는데 이슈 카드가 생김');
+      }
+      await panel.getByLabel('GitHub 이슈를 작업 카드로 동기화').click();
+      await pollUntil(
+        async () =>
+          (await apiCall('GET', `/projects/${settingsProjectId}/github`, token)).body.connection
+            ?.syncIssues === true,
+        '이슈 동기화 옵션 저장',
+      );
+      if ((await sendIssue('opened')) !== 200) throw new Error('이슈 opened 실패');
+      await setPage.locator('[data-status="todo"]').getByText(issueTitle).waitFor();
+      if ((await sendIssue('closed')) !== 200) throw new Error('이슈 closed 실패');
+      await setPage.locator('[data-status="done"]').getByText(issueTitle).waitFor();
     },
   );
   await step(

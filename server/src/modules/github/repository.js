@@ -8,6 +8,7 @@ export const toConnection = (row) =>
     moveOnOpen: row.move_on_open,
     doneOnMerge: row.done_on_merge,
     createOnPr: row.create_on_pr,
+    syncIssues: row.sync_issues,
     lastEventAt: row.last_event_at,
   };
 
@@ -35,18 +36,36 @@ export async function getById(id) {
 }
 
 // 프로젝트당 하나: 있으면 저장소·옵션을 바꾸고 없으면 만든다. 저장소가 다른 프로젝트에 이미 연결돼 있으면 23505.
-export async function upsert({ projectId, repo, moveOnOpen, doneOnMerge, createOnPr, createdBy }) {
+export async function upsert({
+  projectId,
+  repo,
+  moveOnOpen,
+  doneOnMerge,
+  createOnPr,
+  syncIssues,
+  createdBy,
+}) {
   const { rows } = await query(
     `INSERT INTO github_connections
-       (project_id, repo, move_on_open, done_on_merge, create_on_pr, created_by)
-     VALUES ($1, $2, COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), $6)
+       (project_id, repo, move_on_open, done_on_merge, create_on_pr, sync_issues, created_by)
+     VALUES ($1, $2, COALESCE($3, false), COALESCE($4, false), COALESCE($5, false),
+             COALESCE($6, false), $7)
      ON CONFLICT (project_id) DO UPDATE
        SET repo = EXCLUDED.repo,
            move_on_open = COALESCE($3, github_connections.move_on_open),
            done_on_merge = COALESCE($4, github_connections.done_on_merge),
-           create_on_pr = COALESCE($5, github_connections.create_on_pr)
+           create_on_pr = COALESCE($5, github_connections.create_on_pr),
+           sync_issues = COALESCE($6, github_connections.sync_issues)
      RETURNING *`,
-    [projectId, repo, moveOnOpen ?? null, doneOnMerge ?? null, createOnPr ?? null, createdBy],
+    [
+      projectId,
+      repo,
+      moveOnOpen ?? null,
+      doneOnMerge ?? null,
+      createOnPr ?? null,
+      syncIssues ?? null,
+      createdBy,
+    ],
   );
   return rows[0];
 }
@@ -124,6 +143,40 @@ export async function releasePrCard(projectId, prNumber) {
     projectId,
     prNumber,
   ]);
+}
+
+// ---- 이슈 동기화 (M35): PR 카드와 같은 방식으로 이슈 하나를 한 번만 등록한다 ----
+
+export async function claimIssueCard(projectId, issueNumber) {
+  const { rowCount } = await query(
+    `INSERT INTO github_issue_cards (project_id, issue_number) VALUES ($1, $2)
+     ON CONFLICT (project_id, issue_number) DO NOTHING`,
+    [projectId, issueNumber],
+  );
+  return rowCount === 1;
+}
+
+export async function setIssueCardTask(projectId, issueNumber, taskId) {
+  await query(
+    'UPDATE github_issue_cards SET task_id = $3 WHERE project_id = $1 AND issue_number = $2',
+    [projectId, issueNumber, taskId],
+  );
+}
+
+export async function releaseIssueCard(projectId, issueNumber) {
+  await query('DELETE FROM github_issue_cards WHERE project_id = $1 AND issue_number = $2', [
+    projectId,
+    issueNumber,
+  ]);
+}
+
+// 이슈에 연결된 카드의 id. 등록한 적이 없거나 카드를 지웠으면 null.
+export async function getIssueCardTaskId(projectId, issueNumber) {
+  const { rows } = await query(
+    'SELECT task_id FROM github_issue_cards WHERE project_id = $1 AND issue_number = $2',
+    [projectId, issueNumber],
+  );
+  return rows[0]?.task_id ?? null;
 }
 
 // GitHub 로그인 이름이 같은 활성 프로젝트 멤버(대소문자 무시). 없으면 null.

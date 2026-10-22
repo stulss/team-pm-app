@@ -32,6 +32,7 @@ export const store = {
   chatReactions: [],
   apiTokens: [],
   prCards: [],
+  issueCards: [],
 };
 
 export function reset() {
@@ -61,6 +62,7 @@ export function reset() {
   store.chatReactions = [];
   store.apiTokens = [];
   store.prCards = [];
+  store.issueCards = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -795,6 +797,7 @@ export const githubRepo = {
       moveOnOpen: row.move_on_open,
       doneOnMerge: row.done_on_merge,
       createOnPr: row.create_on_pr ?? false,
+      syncIssues: row.sync_issues ?? false,
       lastEventAt: row.last_event_at,
     },
   toLink: (row) => ({
@@ -813,7 +816,7 @@ export const githubRepo = {
   async getById(id) {
     return store.githubConnections.find((c) => c.id === id) ?? null;
   },
-  async upsert({ projectId, repo, moveOnOpen, doneOnMerge, createOnPr, createdBy }) {
+  async upsert({ projectId, repo, moveOnOpen, doneOnMerge, createOnPr, syncIssues, createdBy }) {
     const taken = store.githubConnections.find(
       (c) => c.project_id !== projectId && c.repo.toLowerCase() === repo.toLowerCase(),
     );
@@ -826,6 +829,7 @@ export const githubRepo = {
       if (moveOnOpen !== undefined) row.move_on_open = moveOnOpen;
       if (doneOnMerge !== undefined) row.done_on_merge = doneOnMerge;
       if (createOnPr !== undefined) row.create_on_pr = createOnPr;
+      if (syncIssues !== undefined) row.sync_issues = syncIssues;
     } else {
       row = {
         id: crypto.randomUUID(),
@@ -835,6 +839,7 @@ export const githubRepo = {
         move_on_open: moveOnOpen ?? false,
         done_on_merge: doneOnMerge ?? false,
         create_on_pr: createOnPr ?? false,
+        sync_issues: syncIssues ?? false,
         created_by: createdBy,
         last_event_at: null,
       };
@@ -867,6 +872,31 @@ export const githubRepo = {
     store.prCards = store.prCards.filter(
       (c) => !(c.project_id === projectId && c.pr_number === prNumber),
     );
+  },
+  async claimIssueCard(projectId, number) {
+    if (store.issueCards.some((c) => c.project_id === projectId && c.issue_number === number)) {
+      return false;
+    }
+    store.issueCards.push({ project_id: projectId, issue_number: number, task_id: null });
+    return true;
+  },
+  async setIssueCardTask(projectId, number, taskId) {
+    const row = store.issueCards.find(
+      (c) => c.project_id === projectId && c.issue_number === number,
+    );
+    if (row) row.task_id = taskId;
+  },
+  async releaseIssueCard(projectId, number) {
+    store.issueCards = store.issueCards.filter(
+      (c) => !(c.project_id === projectId && c.issue_number === number),
+    );
+  },
+  async getIssueCardTaskId(projectId, number) {
+    const row = store.issueCards.find(
+      (c) => c.project_id === projectId && c.issue_number === number,
+    );
+    // 카드를 지웠으면(SQL 의 ON DELETE SET NULL) null
+    return row && store.tasks.some((t) => t.id === row.task_id) ? row.task_id : null;
   },
   async findMemberByGithubLogin(projectId, login) {
     const user = store.users.find(
