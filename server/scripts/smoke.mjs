@@ -36,11 +36,16 @@ const run = Date.now().toString(36);
 const emailOf = (k) => `smoke-${run}-${k}@example.test`;
 const people = {};
 
+const anonymizedIds = []; // 탈퇴 테스트로 익명화된 사용자(이메일이 바뀌어 이름으로는 못 찾는다)
+
 async function cleanup() {
   await db.query(
     `DELETE FROM projects WHERE owner_id IN (SELECT id FROM users WHERE email LIKE 'smoke-%@example.test')`,
   );
   await db.query(`DELETE FROM users WHERE email LIKE 'smoke-%@example.test'`);
+  if (anonymizedIds.length > 0) {
+    await db.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [anonymizedIds]);
+  }
 }
 
 await db.connect();
@@ -3874,6 +3879,110 @@ try {
         left.body.data.length === 1 &&
         left.body.data[0].current === true,
       JSON.stringify(others.body),
+    );
+  }
+
+  // --- 내 데이터 내보내기·계정 삭제 (M30): 실제 SQL(조인·익명화 트랜잭션)과 RESTRICT 관계를 확인
+  {
+    const reg = await call('POST', '/auth/register', {
+      body: { email: emailOf('leaver'), password: 'S3cure!pass', name: 'smoke-leaver' },
+    });
+    let leaverId = reg.body.user.id;
+    anonymizedIds.push(leaverId);
+    let leaverToken = reg.body.accessToken;
+    if (reg.body.needsVerification) {
+      await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [leaverId]);
+      leaverToken = (
+        await call('POST', '/auth/login', {
+          body: { email: emailOf('leaver'), password: 'S3cure!pass' },
+        })
+      ).body.accessToken;
+    }
+    const leave = (body) => call('DELETE', '/users/me', { token: leaverToken, body });
+
+    // 소유한 프로젝트가 있으면 막힌다
+    const lp = await call('POST', '/projects', {
+      token: leaverToken,
+      body: { name: 'smoke-leaver' },
+    });
+    const blocked = await leave({
+      confirmEmail: emailOf('leaver'),
+      currentPassword: 'S3cure!pass',
+    });
+    check(
+      '계정 삭제: 소유한 프로젝트가 있으면 409 OWNS_PROJECTS',
+      blocked.status === 409 && blocked.body.error.code === 'OWNS_PROJECTS',
+      JSON.stringify(blocked.body),
+    );
+    await call('DELETE', `/projects/${lp.body.id}`, { token: leaverToken });
+
+    // 다른 프로젝트에 작업·댓글을 남긴다(탈퇴 뒤에도 남아야 하는 데이터)
+    await db.query('INSERT INTO project_members (project_id, user_id) VALUES ($1, $2)', [
+      pid,
+      leaverId,
+    ]);
+    const leaverTask = await db.query(
+      `INSERT INTO tasks (project_id, title, created_by, assignee_id, position)
+       VALUES ($1, 'smoke-leaver task', $2, $2, 999999) RETURNING id`,
+      [pid, leaverId],
+    );
+    await db.query('INSERT INTO comments (task_id, author_id, body) VALUES ($1, $2, $3)', [
+      leaverTask.rows[0].id,
+      leaverId,
+      'smoke leaver comment',
+    ]);
+
+    const exp = await fetch(`${BASE}/users/me/export`, { headers: headers(leaverToken) });
+    const dump = await exp.json();
+    check(
+      '내 데이터: 내려받기 SQL 이 내 프로젝트·작업(키)·댓글만 담는다',
+      exp.status === 200 &&
+        /attachment/.test(exp.headers.get('content-disposition') ?? '') &&
+        dump.user.email === emailOf('leaver') &&
+        dump.projects.length === 1 &&
+        dump.assignedTasks.length === 1 &&
+        /^[A-Z][A-Z0-9]+-\d+$/.test(dump.assignedTasks[0].key) &&
+        dump.createdTasks.length === 1 &&
+        dump.comments.length === 1 &&
+        !JSON.stringify(dump).includes('password'),
+      JSON.stringify(dump).slice(0, 300),
+    );
+
+    check(
+      '계정 삭제: 이메일이 다르면 400, 비밀번호가 틀리면 401',
+      (await leave({ confirmEmail: 'x@example.test', currentPassword: 'S3cure!pass' })).status ===
+        400 &&
+        (await leave({ confirmEmail: emailOf('leaver'), currentPassword: 'wrong-pass-1' }))
+          .status === 401,
+    );
+    const gone = await leave({ confirmEmail: emailOf('leaver'), currentPassword: 'S3cure!pass' });
+    const row = (await db.query('SELECT * FROM users WHERE id = $1', [leaverId])).rows[0];
+    const keptTask = (
+      await db.query('SELECT created_by, assignee_id FROM tasks WHERE id = $1', [
+        leaverTask.rows[0].id,
+      ])
+    ).rows[0];
+    const memberLeft = (
+      await db.query('SELECT 1 FROM project_members WHERE user_id = $1', [leaverId])
+    ).rowCount;
+    check(
+      '계정 삭제: 익명화되고(이메일·이름·비활성) 작성한 작업은 남되 담당은 풀리고 소속은 사라진다',
+      gone.status === 204 &&
+        row.name === '탈퇴한 사용자' &&
+        row.email === `deleted-${leaverId}@deleted.invalid` &&
+        row.is_active === false &&
+        row.github_id === null &&
+        keptTask.created_by === leaverId &&
+        keptTask.assignee_id === null &&
+        memberLeft === 0,
+    );
+    check(
+      '계정 삭제: 삭제한 계정은 로그인할 수 없다',
+      (
+        await call('POST', '/auth/login', {
+          body: { email: emailOf('leaver'), password: 'S3cure!pass' },
+        })
+      ).status === 401,
     );
   }
 

@@ -1,4 +1,4 @@
-import { query } from '../../config/db.js';
+import { query, withTransaction } from '../../config/db.js';
 import { withDefaults } from './preferences.js';
 
 const PUBLIC_COLUMNS =
@@ -64,6 +64,69 @@ export async function unlinkGithub(id) {
     [id],
   );
   return rowCount === 1;
+}
+
+// ---- 내 데이터 (M30) ----
+const EXPORT_LIMIT = 5000;
+
+export async function exportData(userId) {
+  const projects = await query(
+    `SELECT p.id, p.name, p.key, p.status, p.owner_id = $1 AS is_owner, m.joined_at
+     FROM project_members m JOIN projects p ON p.id = m.project_id
+     WHERE m.user_id = $1 ORDER BY m.joined_at LIMIT ${EXPORT_LIMIT}`,
+    [userId],
+  );
+  const taskSelect = `SELECT t.id, p.key || '-' || t.number AS key, t.title, t.description, t.status,
+            t.priority, t.due_date, t.created_at, t.updated_at, p.name AS project
+     FROM tasks t JOIN projects p ON p.id = t.project_id`;
+  const assigned = await query(
+    `${taskSelect} WHERE t.assignee_id = $1 ORDER BY t.created_at DESC LIMIT ${EXPORT_LIMIT}`,
+    [userId],
+  );
+  const created = await query(
+    `${taskSelect} WHERE t.created_by = $1 ORDER BY t.created_at DESC LIMIT ${EXPORT_LIMIT}`,
+    [userId],
+  );
+  const comments = await query(
+    `SELECT c.id, p.key || '-' || t.number AS task_key, t.title AS task_title, c.body, c.created_at
+     FROM comments c JOIN tasks t ON t.id = c.task_id JOIN projects p ON p.id = t.project_id
+     WHERE c.author_id = $1 AND c.deleted_at IS NULL
+     ORDER BY c.created_at DESC LIMIT ${EXPORT_LIMIT}`,
+    [userId],
+  );
+  return {
+    projects: projects.rows,
+    assignedTasks: assigned.rows,
+    createdTasks: created.rows,
+    comments: comments.rows,
+  };
+}
+
+export async function ownedProjectNames(userId) {
+  const { rows } = await query(
+    'SELECT name FROM projects WHERE owner_id = $1 ORDER BY created_at LIMIT 10',
+    [userId],
+  );
+  return rows.map((r) => r.name);
+}
+
+// 계정을 지우지 않고 익명화한다: 작업·댓글·활동 기록이 사용자를 참조하므로 행은 남겨야 한다.
+export async function anonymize(userId, passwordHash) {
+  return withTransaction(async (client) => {
+    await client.query(
+      `UPDATE users
+         SET email = 'deleted-' || id || '@deleted.invalid', name = '탈퇴한 사용자',
+             password_hash = $2, password_set = false, is_active = false,
+             github_id = NULL, github_login = NULL, preferences = '{}'::jsonb,
+             updated_at = now()
+       WHERE id = $1`,
+      [userId, passwordHash],
+    );
+    await client.query('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1', [userId]);
+    for (const table of ['project_members', 'notifications', 'saved_filters', 'email_tokens']) {
+      await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+    }
+  });
 }
 
 export async function countUsers() {

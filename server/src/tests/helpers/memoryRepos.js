@@ -124,6 +124,34 @@ export const usersRepo = {
     store.users.push(user);
     return pub(user);
   },
+  async exportData(userId) {
+    const mine = store.members.filter((m) => m.user_id === userId);
+    return {
+      projects: mine.map((m) => store.projects.find((p) => p.id === m.project_id)).filter(Boolean),
+      assignedTasks: store.tasks.filter((t) => t.assignee_id === userId),
+      createdTasks: store.tasks.filter((t) => t.created_by === userId),
+      comments: store.comments.filter((c) => c.author_id === userId && !c.deleted_at),
+    };
+  },
+  async ownedProjectNames(userId) {
+    return store.projects.filter((p) => p.owner_id === userId).map((p) => p.name);
+  },
+  async anonymize(userId, passwordHash) {
+    const u = store.users.find((x) => x.id === userId);
+    Object.assign(u, {
+      email: `deleted-${u.id}@deleted.invalid`,
+      name: '탈퇴한 사용자',
+      password_hash: passwordHash,
+      password_set: false,
+      is_active: false,
+      github_id: null,
+      github_login: null,
+      preferences: {},
+    });
+    for (const t of store.tasks) if (t.assignee_id === userId) t.assignee_id = null;
+    store.members = store.members.filter((m) => m.user_id !== userId);
+    store.notifications = store.notifications.filter((n) => n.user_id !== userId);
+  },
   async unlinkGithub(id) {
     const u = store.users.find((x) => x.id === id);
     if (!u?.github_id) return false;

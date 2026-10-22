@@ -41,11 +41,17 @@ const step = async (label, fn) => {
   }
 };
 
+const anonymizedIds = [];
+
 async function cleanup() {
   await db.query(
     `DELETE FROM projects WHERE owner_id IN (SELECT id FROM users WHERE email LIKE 'ui-%@example.test')`,
   );
   await db.query(`DELETE FROM users WHERE email LIKE 'ui-%@example.test'`);
+  // 탈퇴(익명화)한 사용자는 이메일이 바뀌어 위 조건에 걸리지 않는다
+  if (anonymizedIds.length > 0) {
+    await db.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [anonymizedIds]);
+  }
 }
 
 const apiRegister = async (k) => {
@@ -2440,6 +2446,50 @@ try {
         .waitFor({ state: 'detached' });
       if ((await card.getByRole('listitem').count()) !== 1)
         throw new Error('지금 기기만 남아야 함');
+    },
+  );
+  await step(
+    '설정: 내 데이터를 JSON 으로 내려받고, 이메일을 입력해야 계정을 삭제할 수 있음',
+    async () => {
+      await apiRegister('leaver');
+      const leaverId = (
+        await db.query('SELECT id FROM users WHERE email = $1', [emailOf('leaver')])
+      ).rows[0].id;
+      anonymizedIds.push(leaverId); // 정리할 때 함께 지운다(익명화되면 이메일로 못 찾는다)
+      const leaver = await newPage();
+      await login(leaver, 'leaver');
+      await leaver.goto(`${BASE}/settings`);
+      const card = leaver.getByRole('region', { name: '내 데이터' });
+
+      const [download] = await Promise.all([
+        leaver.waitForEvent('download'),
+        card.getByRole('button', { name: 'JSON 으로 내려받기' }).click(),
+      ]);
+      if (!/^team-pm-export-\d{4}-\d{2}-\d{2}\.json$/.test(download.suggestedFilename())) {
+        throw new Error(`내보내기 파일 이름: ${download.suggestedFilename()}`);
+      }
+
+      const del = card.getByRole('button', { name: '계정 삭제' });
+      if (!(await del.isDisabled())) throw new Error('이메일을 입력하기 전에는 눌리면 안 됨');
+      await card.getByLabel(/내 이메일/).fill(emailOf('leaver'));
+      await card.getByLabel('현재 비밀번호').fill('wrong-pass-123');
+      leaver.once('dialog', (d) => d.accept());
+      await del.click();
+      await card
+        .getByRole('alert')
+        .filter({ hasText: '현재 비밀번호가 올바르지 않습니다' })
+        .waitFor();
+
+      await card.getByLabel('현재 비밀번호').fill(PASSWORD);
+      leaver.once('dialog', (d) => d.accept());
+      await del.click();
+      // "로그인한 기기" 제목과 겹치지 않게 정확히 일치시킨다
+    await leaver.getByRole('heading', { name: '로그인', exact: true }).waitFor();
+
+      const row = await db.query('SELECT name, is_active FROM users WHERE id = $1', [leaverId]);
+      if (row.rows[0]?.name !== '탈퇴한 사용자' || row.rows[0].is_active) {
+        throw new Error(`계정이 익명화되지 않음: ${JSON.stringify(row.rows)}`);
+      }
     },
   );
   await step(

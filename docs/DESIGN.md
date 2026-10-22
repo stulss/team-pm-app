@@ -476,6 +476,8 @@ erDiagram
 | PATCH | `/users/:id/status` | 활성/비활성 | Admin |
 | PATCH | `/users/me` | 내 프로필(이름/비밀번호) 수정 | 본인 |
 | PATCH | `/users/me/preferences` | 내 설정 일부 수정(M22) `{ theme?, accent?, density?, defaultView?, notifications?: { assigned?, due?, comment?, mention? } }` — 빈 객체·허용되지 않은 키·값은 400. 응답 `{ user }` 의 `preferences` 는 기본값이 채워진 전체 설정 | 본인 |
+| GET | `/users/me/export` | 내 데이터를 JSON 파일로 내려받는다(프로필·소속 프로젝트·내가 맡았거나 만든 작업·내 댓글, 각 최대 5000건). `Content-Disposition: attachment` | 로그인 |
+| DELETE | `/users/me` | 계정 삭제(탈퇴). `{ confirmEmail, currentPassword? }` — 이메일을 똑같이 입력해야 하고, 비밀번호가 있는 계정은 현재 비밀번호도 필요(401 `INVALID_CREDENTIALS`). 소유한 프로젝트가 있으면 409 `OWNS_PROJECTS`, 마지막 관리자면 409 `LAST_ADMIN`. 성공하면 계정을 **익명화**하고 모든 세션을 끊는다 → 204 | 로그인 |
 
 #### Projects
 | 메서드 | 경로 | 설명 | 권한 |
@@ -950,6 +952,7 @@ team-pm-app/
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
 | **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
+| **M30** | 내 데이터 내보내기·계정 삭제(설정) | 설정 → "내 데이터"에서 JSON 으로 내보내고, 계정을 삭제한다. 작업·댓글·활동 기록이 사용자를 `RESTRICT` 로 참조하므로 행을 지우지 않고 **익명화**한다(이메일 `deleted-<id>@deleted.invalid`, 이름 "탈퇴한 사용자", 비활성, 비밀번호 무효화, GitHub 연결·설정 제거, 프로젝트 멤버십·알림·저장된 필터·세션 삭제, 맡은 작업의 담당자 해제). 작성한 작업·댓글은 "탈퇴한 사용자" 이름으로 남는다. 마이그레이션 없음 |
 | **M29** | 로그인한 기기 관리(설정) | 설정 → 보안에서 로그인한 기기(브라우저·OS·IP·마지막 사용)를 보고 하나씩 또는 "다른 모든 기기"를 로그아웃한다. `refresh_tokens.session_id·user_agent·ip`(마이그레이션 025), 회전해도 같은 `session_id` 를 이어받는다. 이미 발급된 access 토큰은 최대 15분 더 유효하다(새로 받을 수 없을 뿐) |
 | **M28** | GitHub 계정 연결(설정) | 이메일로 가입한 기존 계정이 설정 → 보안에서 GitHub 계정을 연결·해제한다(§2.2 `/auth/github/link`, `DELETE /auth/github`, 마이그레이션 024 `users.password_set`). 연결 뒤에는 GitHub 로 로그인할 수 있다 |
 | **M27** | GitHub 로그인 | GitHub OAuth App 으로 로그인/가입한다(`users.github_id`·`github_login`, 마이그레이션 023). GitHub 가 **인증했다고 알려 주는 기본 이메일**만 믿고, ① 같은 `github_id` 계정이 있으면 로그인 ② 같은 이메일의 기존 계정이 있으면 연결 후 로그인 ③ 없으면 새 계정(이메일 인증 완료로 간주, 가입 닫힘이면 거절). 비활성 계정은 거절. 비밀번호 없는 계정은 임의 해시를 두고 "비밀번호 찾기"로 나중에 설정할 수 있다. CSRF 는 `state`(10분짜리 httpOnly 쿠키)로 막는다. `GITHUB_CLIENT_ID`·`GITHUB_CLIENT_SECRET` 이 둘 다 있어야 켜진다 |

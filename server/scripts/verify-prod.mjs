@@ -215,6 +215,17 @@ async function readChecks(label, who) {
           sessions.body.data.filter((x) => x.current).length === 1,
         JSON.stringify(sessions.body)?.slice(0, 200),
       );
+      const exp = await fetch(`${BASE}/users/me/export`, {
+        headers: { authorization: `Bearer ${t}` },
+      });
+      const dump = await exp.json().catch(() => null);
+      check(
+        '내 데이터 내려받기가 첨부 파일 JSON 으로 열림 (M30)',
+        exp.status === 200 &&
+          /attachment/.test(exp.headers.get('content-disposition') ?? '') &&
+          Array.isArray(dump?.projects) &&
+          dump?.user?.email === who.user?.email,
+      );
       const me = await call('GET', '/auth/me', { token: t });
       check(
         '내 정보에 githubLogin·emailLogin 이 있음 (M28)',

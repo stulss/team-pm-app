@@ -1724,3 +1724,10 @@ dialog.palette::backdrop {
   color: var(--success);
   background: var(--success-soft);
 }
+
+/* 계정 삭제 영역 (M30) */
+.danger-zone {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}

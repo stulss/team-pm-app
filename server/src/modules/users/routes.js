@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
-import { clientMeta, setRefreshCookie } from '../auth/routes.js';
+import { COOKIE_NAME, clientMeta, refreshCookieOptions, setRefreshCookie } from '../auth/routes.js';
 import { disconnectUser } from '../../sockets/emitter.js';
 import { preferencesPatch } from './preferences.js';
 import * as service from './service.js';
@@ -46,6 +46,26 @@ usersRouter.patch('/me', validate(meBody), async (req, res) => {
   if (!accessToken) return res.json({ user });
   setRefreshCookie(res, refreshToken);
   res.json({ user, accessToken });
+});
+
+usersRouter.get('/me/export', async (req, res) => {
+  const data = await service.exportMyData(req.user.id);
+  const day = new Date().toISOString().slice(0, 10);
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `attachment; filename="team-pm-export-${day}.json"`);
+  res.type('application/json').send(JSON.stringify(data, null, 2));
+});
+
+const deleteMeBody = z.object({
+  confirmEmail: z.string().trim().min(1, '이메일을 입력해 주세요.').max(255),
+  currentPassword: z.string().max(128).optional(),
+});
+
+usersRouter.delete('/me', validate(deleteMeBody), async (req, res) => {
+  await service.deleteMe(req.user.id, req.body);
+  await disconnectUser(req.user.id);
+  res.clearCookie(COOKIE_NAME, refreshCookieOptions);
+  res.status(204).end();
 });
 
 usersRouter.patch('/me/preferences', validate(preferencesPatch), async (req, res) => {
