@@ -500,6 +500,8 @@ erDiagram
 |---|---|---|---|
 | GET | `/projects/:id/tasks` | 작업 목록/칸반 데이터 (필터: `status, assignee, priority, due_before, q`) | 멤버 |
 | POST | `/projects/:id/tasks` | 작업 생성 | 멤버 |
+| PATCH | `/projects/:id/tasks/bulk` | **일괄 수정** `{ taskIds: uuid[1..50], patch: { status?, priority?, assigneeId?(null 이면 미배정), dueDate?(null 이면 해제) } }` → `{ updated, tasks }`. `patch` 는 하나 이상 필요 | 멤버 (보관 409) |
+| POST | `/projects/:id/tasks/bulk-delete` | **일괄 삭제** `{ taskIds: uuid[1..50] }` → `{ deleted }` | 멤버 — Admin/Manager/소유자는 모두, 그 외는 본인이 만든 작업만 (보관 409) |
 | GET | `/tasks/:id` | 상세 | 멤버 |
 | PATCH | `/tasks/:id` | 필드 수정 (제목, 설명, 담당자, 우선순위, 마감일) | 멤버 |
 | PATCH | `/tasks/:id/move` | 칸반 이동 (상태+위치) | 멤버 |
@@ -574,6 +576,7 @@ erDiagram
 > 구현 규칙(M26): 웹훅은 JSON(`application/json`) 본문의 **원문 바이트**로 `X-Hub-Signature-256: sha256=…` 를 상수 시간 비교로 검증한다(본문은 2MB 까지, 이 경로만 전용 파서). 없는 연결·서명 불일치는 같은 401 로 답해 연결 존재 여부를 알리지 않는다. 처리하는 이벤트는 `ping`(200 pong), `pull_request`, `push`이고 그 외는 200 으로 무시한다. 다른 저장소 이름의 페이로드는 무시한다(202). 작업 응답에는 카드 배지용 `pullRequests: [{ number, state, url }]`(최근 PR 최대 3건)이 붙는다. 연결·자동 이동·링크 생성은 `task:updated`(상태가 바뀌면 포함)와 활동 기록(`github.linked`, `github.pr_state`, 자동 이동은 `task.moved`)을 남긴다. 알림은 만들지 않는다.
 > 구현 규칙(M34 PR 자동 등록): 연결 옵션 `createOnPr`(기본 false, 마이그레이션 027 `github_connections.create_on_pr`)를 켜면, **작업 키가 하나도 없는**(제목·본문·브랜치 이름 모두) PR 이 `opened`·`reopened`·`ready_for_review` 로 *열린(open)* 상태가 될 때 작업 카드를 만든다. 초안(draft) PR 은 `ready_for_review` 가 올 때 등록하고, 봇이 연 PR(`user.type = Bot`)·머지/닫힌 PR·보관된 프로젝트는 등록하지 않는다. 키가 있지만 없는 작업을 가리키는 PR 도 등록하지 않는다(오타일 수 있다). 카드는 제목 = PR 제목(200자), 설명 = PR 본문 + PR 주소(1만자 이내), 상태 = `moveOnOpen` 이 켜져 있으면 진행 중 아니면 할 일, 우선순위 = 보통, 담당자 = 프로젝트 멤버 중 `users.github_login` 이 PR 작성자와 같은 사람(없으면 미지정), 만든 사람 = 연결한 사용자(없으면 프로젝트 소유자)이고 활동 기록은 행위자 없이 `task.created`(`meta.via = 'github'`)와 `github.linked` 를 남긴다. **한 PR 은 한 번만** 등록한다 — 새 테이블 `github_pr_cards (project_id, pr_number, task_id)`(마이그레이션 027, RLS)에 먼저 자리를 잡는 `INSERT … ON CONFLICT DO NOTHING` 으로 동시 전달·재전송·카드를 지운 뒤의 재오픈에서도 다시 만들지 않는다(`task_id` 는 카드가 지워지면 NULL). 프로젝트의 작업 수 한도에 닿으면 자리를 풀고 등록하지 않는다. 알림은 보내지 않는다(담당자는 "내 작업"에서 본다).
 > 구현 규칙(M35 이슈 동기화): 연결 옵션 `syncIssues`(기본 false, 마이그레이션 028 `github_connections.sync_issues`)를 켜면 웹훅 이벤트 `issues` 를 처리한다(꺼져 있으면 200 으로 무시, PR 코멘트 이벤트 `issue_comment` 등은 계속 무시). 이슈 → 카드는 **한 방향(GitHub → 앱)** 이다. `opened`·`reopened` 로 열린 이슈에 작업 키가 하나도 없으면 카드를 만든다(제목 = 이슈 제목 200자, 설명 = 본문 + 이슈 주소 1만자 이내, 상태 = 할 일, 담당 = 이슈 담당자(`assignees[0]`)와 GitHub 로그인이 같은 프로젝트 멤버, 만든 사람·활동 기록·봇/보관 프로젝트/한도 처리는 M34 와 같다). 키가 있는 이슈는 그 작업에 링크(`kind = 'issue'`, 마이그레이션 028 이 `github_task_links.kind` 에 추가)만 건다. 한 이슈는 한 번만 등록한다(`github_issue_cards (project_id, issue_number, task_id)`, RLS, 카드를 지워도 기록이 남는다). 등록된 카드는 이슈가 `closed` 면 완료로, 완료 상태의 카드가 `reopened` 면 할 일로 옮기고(활동 기록 `task.moved` `via: 'github'`), `edited` 로 제목이 바뀌면 카드 제목을 따라 바꾼다(설명은 사람이 고칠 수 있으므로 덮어쓰지 않는다). 이슈가 지워지거나 다른 저장소로 옮겨져도 카드는 그대로 둔다. `issues` 페이로드에 `issue.pull_request` 가 있으면 PR 이므로 무시한다. 웹훅 설정 안내에는 이벤트로 **Issues** 를 더한다.
+> 구현 규칙(M39 일괄 선택·수정): 한 번에 최대 50개이고 중복 id 는 한 번만 처리한다. **먼저 전부 검증한 뒤** 적용한다 — 이 프로젝트에 속하지 않는 작업이 하나라도 있으면 404 `NOT_FOUND`, 보관된 프로젝트는 409 `PROJECT_ARCHIVED`, 담당자가 활성 멤버가 아니면 400, `dueDate` 가 시작일보다 앞서는 작업이 있으면 400, 일괄 삭제에서 하나라도 지울 권한이 없으면 403 으로 **아무것도 바꾸지 않는다**. 검증을 통과하면 작업마다 개별 수정·삭제와 같은 일을 순서대로 한다(상태가 바뀌면 컬럼 맨 아래로, `completed_at` 갱신, 마감일이 바뀌면 임박 알림 표시 초기화, `task:updated`·`task:deleted` 이벤트, 활동 기록 `task.updated`·`task.deleted`, 담당자가 바뀐 작업마다 배정 알림). 적용 도중 DB 오류가 나면 앞선 작업은 이미 바뀐 상태이므로(단일 트랜잭션 아님) 오류 응답 후 목록을 다시 불러와 확인한다. API 토큰은 쓰기 토큰이면 호출할 수 있다. 화면은 **목록 보기**에서 체크박스로 고르고(머리글 체크박스는 지금 보이는 작업 전체), 선택하면 상단에 일괄 작업 줄(상태·우선순위·담당자·마감일 변경, 선택 삭제, 선택 해제)이 나온다. 필터·정렬이 바뀌어 보이지 않게 된 작업은 선택에서 빠진다.
 
 #### Task keys (M25)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -958,6 +961,9 @@ team-pm-app/
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
 | **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
+| **M39** | 일괄 선택·수정 | 목록 보기에서 작업 여러 개를 골라 상태·우선순위·담당자·마감일을 한 번에 바꾸거나 한꺼번에 삭제한다(`PATCH /projects/:id/tasks/bulk`, `POST …/bulk-delete`). 마이그레이션 없음 |
+| **M38** | 번들 분할·설정 화면 분리 | 페이지를 처음 열 때 내려받고(첫 화면 JS 594KB → 341KB), 설정 페이지를 카드별 파일로 나눈다. 동작 변화 없음 |
+| **M37** | 정리 묶음 | 공개 공유 이력에서 API 토큰 이름 제거, 일일 정리에 만료·폐기 토큰 삭제, 패치 의존성 업데이트 |
 | **M36** | 이메일 인증 제거 | 가입 후 인증 메일·인증 전 로그인 차단·재발송(`POST /auth/verify-email`, `/auth/resend-verification`, `needsVerification`, 403 `EMAIL_NOT_VERIFIED`)과 화면(`/verify-email`, 인증 메일 다시 받기)을 없앤다. 비밀번호 재설정은 그대로. 마이그레이션 없음(`email_verified_at` 컬럼은 남김) |
 | **M35** | GitHub 이슈 동기화 | 연동 옵션 `syncIssues` 를 켜면 이슈가 열릴 때 작업 카드를 만들고(키 없는 이슈), 이슈를 닫으면 카드를 완료로, 다시 열면 할 일로, 제목을 고치면 카드 제목을 따라 바꾼다. 한 방향(GitHub → 앱), 한 이슈는 한 번만 등록. 마이그레이션 028 |
 | **M34** | PR → 작업 카드 자동 등록 | GitHub 연동 옵션 `createOnPr` 를 켜면 작업 키가 없는 PR 을 열 때(또는 초안이 준비될 때) 작업 카드를 만들고 PR 을 연결한다. PR 하나는 한 번만 등록한다(`github_pr_cards`). 마이그레이션 027 |

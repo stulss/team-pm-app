@@ -1,5 +1,5 @@
 import { withTransaction } from '../../config/db.js';
-import { badRequest, conflict, forbidden } from '../../utils/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../utils/errors.js';
 import * as projectsRepo from '../projects/repository.js';
 import * as usersRepo from '../users/repository.js';
 import * as repo from './repository.js';
@@ -102,6 +102,32 @@ export async function move(task, project, { status, beforeTaskId, afterTaskId })
     repo.moveTask(client, task, { status, beforeId: beforeTaskId, afterId: afterTaskId }),
   );
   return repo.toTask(await repo.findById(task.id));
+}
+
+// ---- 일괄 수정·삭제 (M39): 먼저 전부 검증하고, 하나라도 안 되면 아무것도 바꾸지 않는다 ----
+
+// 이 프로젝트의 작업이 아닌 것(없는 id·다른 프로젝트)이 하나라도 있으면 404.
+export async function loadForBulk(project, ids) {
+  const rows = await Promise.all(ids.map((id) => repo.findById(id)));
+  if (rows.some((row) => !row || row.project_id !== project.id)) {
+    throw notFound('일부 작업을 찾을 수 없습니다.');
+  }
+  return rows;
+}
+
+export async function assertBulkUpdatable(project, rows, patch) {
+  assertWritable(project);
+  await assertAssignable(project.id, patch.assigneeId);
+  if (patch.dueDate !== undefined) {
+    for (const row of rows) assertDateRange(row.start_date, patch.dueDate);
+  }
+}
+
+export function assertBulkDeletable(project, user, rows) {
+  assertWritable(project);
+  if (rows.some((row) => !canDelete(user, row, project))) {
+    throw forbidden('선택한 작업 중 삭제할 권한이 없는 작업이 있습니다.');
+  }
 }
 
 export async function remove(task, project, user) {

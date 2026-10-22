@@ -3935,6 +3935,140 @@ try {
     );
   }
 
+  // --- 일괄 선택·수정 (M39): 검증 먼저(전부 아니면 전무)·컬럼 맨 아래 이동·완료 시각·삭제 권한을 실DB 로 확인
+  {
+    const bp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-bulk', key: 'BLKS', memberIds: [people.member.id] },
+    });
+    const bpid = bp.body.id;
+    const mkTask = async (who, title) =>
+      (await call('POST', `/projects/${bpid}/tasks`, { token: t(who), body: { title } })).body;
+    const mine = [
+      await mkTask('member', 'bulk 1'),
+      await mkTask('member', 'bulk 2'),
+      await mkTask('member', 'bulk 3'),
+    ];
+    const theirs = await mkTask('manager', 'bulk 매니저 작업');
+    const doneFirst = await mkTask('manager', 'bulk 이미 완료');
+    await call('PATCH', `/tasks/${doneFirst.id}`, {
+      token: t('manager'),
+      body: { status: 'done' },
+    });
+    const bulkPatch = (who, ids, patch) =>
+      call('PATCH', `/projects/${bpid}/tasks/bulk`, {
+        token: t(who),
+        body: { taskIds: ids, patch },
+      });
+    const rowsOf = async (ids) =>
+      (
+        await db.query(
+          'SELECT id, status, priority, assignee_id, due_date, position, completed_at FROM tasks WHERE id = ANY($1::uuid[]) ORDER BY title',
+          [ids],
+        )
+      ).rows;
+
+    const ids = mine.map((x) => x.id);
+    const res = await bulkPatch('member', ids, {
+      status: 'done',
+      priority: 'urgent',
+      assigneeId: people.manager.id,
+      dueDate: '2031-03-04',
+    });
+    const after = await rowsOf(ids);
+    const doneMax = (
+      await db.query('SELECT max(position) AS m FROM tasks WHERE id = $1', [doneFirst.id])
+    ).rows[0].m;
+    check(
+      '일괄 수정: 상태·우선순위·담당자·마감일이 한 번에 반영되고 완료 시각이 기록된다',
+      res.status === 200 &&
+        res.body.updated === 3 &&
+        after.every(
+          (r) =>
+            r.status === 'done' &&
+            r.priority === 'urgent' &&
+            r.assignee_id === people.manager.id &&
+            String(r.due_date).startsWith('2031') &&
+            r.completed_at !== null,
+        ),
+      JSON.stringify(res.body).slice(0, 200),
+    );
+    const positions = after.map((r) => Number(r.position));
+    check(
+      '일괄 수정: 상태가 바뀐 작업은 완료 컬럼 맨 아래로 순서대로 쌓이고 위치가 겹치지 않는다',
+      new Set(positions).size === 3 && positions.every((x) => x > Number(doneMax)),
+      JSON.stringify({ positions, doneMax }),
+    );
+    const acts = (
+      await db.query(
+        `SELECT count(*)::int AS n FROM activity_logs
+         WHERE project_id = $1 AND action = 'task.updated' AND task_id = ANY($2::uuid[])`,
+        [bpid, ids],
+      )
+    ).rows[0].n;
+    check('일괄 수정: 작업마다 활동 기록(task.updated)이 남는다', acts === 3, String(acts));
+
+    // 전부 아니면 전무: 다른 프로젝트의 작업이 섞이면 404 이고 아무것도 바뀌지 않는다
+    const foreign = (
+      await call(
+        'POST',
+        `/projects/${(await call('POST', '/projects', { token: t('manager'), body: { name: 'smoke-bulk-other' } })).body.id}/tasks`,
+        {
+          token: t('manager'),
+          body: { title: 'bulk 다른 프로젝트' },
+        },
+      )
+    ).body;
+    const mixed = await bulkPatch('member', [theirs.id, foreign.id], { priority: 'low' });
+    const untouched = (await rowsOf([theirs.id]))[0];
+    check(
+      '일괄 수정: 다른 프로젝트 작업이 섞이면 404 이고 아무것도 바뀌지 않는다',
+      mixed.status === 404 && untouched.priority === 'medium',
+      `${mixed.status} ${untouched.priority}`,
+    );
+    const outsider = await bulkPatch('outsider', [theirs.id], { priority: 'low' });
+    check('일괄 수정: 비멤버는 403', outsider.status === 403);
+
+    // 삭제: 일반 멤버는 남의 작업이 섞이면 403(전부 취소), 본인 작업만이면 삭제
+    const del = (who, taskIds) =>
+      call('POST', `/projects/${bpid}/tasks/bulk-delete`, { token: t(who), body: { taskIds } });
+    const denied = await del('member', [ids[0], theirs.id]);
+    const stillThere = (await rowsOf([ids[0], theirs.id])).length;
+    check(
+      '일괄 삭제: 남의 작업이 섞이면 403 이고 아무것도 지우지 않는다',
+      denied.status === 403 && stillThere === 2,
+      `${denied.status} ${stillThere}`,
+    );
+    const ownDel = await del('member', ids);
+    const left = (await rowsOf(ids)).length;
+    const delActs = (
+      await db.query(
+        `SELECT count(*)::int AS n FROM activity_logs WHERE project_id = $1 AND action = 'task.deleted'`,
+        [bpid],
+      )
+    ).rows[0].n;
+    check(
+      '일괄 삭제: 본인이 만든 작업은 지울 수 있고 활동 기록이 남는다',
+      ownDel.status === 200 && ownDel.body.deleted === 3 && left === 0 && delActs === 3,
+      `${ownDel.status} ${left} ${delActs}`,
+    );
+    const mgrDel = await del('manager', [theirs.id, doneFirst.id]);
+    check(
+      '일괄 삭제: 소유자는 남이 만든 작업도 지울 수 있다',
+      mgrDel.status === 200 && (await rowsOf([theirs.id, doneFirst.id])).length === 0,
+    );
+    check(
+      '일괄: 51개는 400',
+      (
+        await del(
+          'manager',
+          Array.from({ length: 51 }, () => crypto.randomUUID()),
+        )
+      ).status === 400,
+    );
+    await call('DELETE', `/projects/${bpid}`, { token: t('manager') });
+  }
+
   // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인
   {
     const usersRepo = await import('../src/modules/users/repository.js');

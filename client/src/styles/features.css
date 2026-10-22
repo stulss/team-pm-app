@@ -1761,3 +1761,30 @@ dialog.palette::backdrop {
   background: var(--surface-2);
   font-size: 0.85rem;
 }
+
+/* 일괄 선택·수정 (M39) */
+.select-col {
+  width: 2rem;
+  text-align: center;
+}
+tr.selected td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.bulk-count {
+  margin-right: 0.25rem;
+}
+.bulk-field {
+  margin: 0;
+}
