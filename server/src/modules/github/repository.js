@@ -7,6 +7,7 @@ export const toConnection = (row) =>
     repo: row.repo,
     moveOnOpen: row.move_on_open,
     doneOnMerge: row.done_on_merge,
+    createOnPr: row.create_on_pr,
     lastEventAt: row.last_event_at,
   };
 
@@ -34,16 +35,18 @@ export async function getById(id) {
 }
 
 // 프로젝트당 하나: 있으면 저장소·옵션을 바꾸고 없으면 만든다. 저장소가 다른 프로젝트에 이미 연결돼 있으면 23505.
-export async function upsert({ projectId, repo, moveOnOpen, doneOnMerge, createdBy }) {
+export async function upsert({ projectId, repo, moveOnOpen, doneOnMerge, createOnPr, createdBy }) {
   const { rows } = await query(
-    `INSERT INTO github_connections (project_id, repo, move_on_open, done_on_merge, created_by)
-     VALUES ($1, $2, COALESCE($3, false), COALESCE($4, false), $5)
+    `INSERT INTO github_connections
+       (project_id, repo, move_on_open, done_on_merge, create_on_pr, created_by)
+     VALUES ($1, $2, COALESCE($3, false), COALESCE($4, false), COALESCE($5, false), $6)
      ON CONFLICT (project_id) DO UPDATE
        SET repo = EXCLUDED.repo,
            move_on_open = COALESCE($3, github_connections.move_on_open),
-           done_on_merge = COALESCE($4, github_connections.done_on_merge)
+           done_on_merge = COALESCE($4, github_connections.done_on_merge),
+           create_on_pr = COALESCE($5, github_connections.create_on_pr)
      RETURNING *`,
-    [projectId, repo, moveOnOpen ?? null, doneOnMerge ?? null, createdBy],
+    [projectId, repo, moveOnOpen ?? null, doneOnMerge ?? null, createOnPr ?? null, createdBy],
   );
   return rows[0];
 }
@@ -93,6 +96,46 @@ export async function findTasksByNumbers(projectId, numbers) {
     [projectId, numbers],
   );
   return rows;
+}
+
+// ---- PR → 작업 카드 자동 등록 (M34) ----
+
+// PR 하나의 등록 자리를 잡는다. 처음이면 true, 이미 등록했거나 다른 전달이 먼저 잡았으면 false.
+export async function claimPrCard(projectId, prNumber) {
+  const { rowCount } = await query(
+    `INSERT INTO github_pr_cards (project_id, pr_number) VALUES ($1, $2)
+     ON CONFLICT (project_id, pr_number) DO NOTHING`,
+    [projectId, prNumber],
+  );
+  return rowCount === 1;
+}
+
+export async function setPrCardTask(projectId, prNumber, taskId) {
+  await query('UPDATE github_pr_cards SET task_id = $3 WHERE project_id = $1 AND pr_number = $2', [
+    projectId,
+    prNumber,
+    taskId,
+  ]);
+}
+
+// 카드를 만들지 못했을 때 자리를 풀어, 나중 이벤트가 다시 시도할 수 있게 한다.
+export async function releasePrCard(projectId, prNumber) {
+  await query('DELETE FROM github_pr_cards WHERE project_id = $1 AND pr_number = $2', [
+    projectId,
+    prNumber,
+  ]);
+}
+
+// GitHub 로그인 이름이 같은 활성 프로젝트 멤버(대소문자 무시). 없으면 null.
+export async function findMemberByGithubLogin(projectId, login) {
+  const { rows } = await query(
+    `SELECT u.id FROM users u
+     JOIN project_members m ON m.user_id = u.id AND m.project_id = $1
+     WHERE lower(u.github_login) = lower($2) AND u.is_active
+     LIMIT 1`,
+    [projectId, login],
+  );
+  return rows[0]?.id ?? null;
 }
 
 // 같은 (작업, 종류, 외부 id) 는 한 행으로 갱신한다. 새로 만들었는지(inserted)와 이전 상태(prevState)를 돌려준다.

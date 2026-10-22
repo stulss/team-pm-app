@@ -3681,6 +3681,148 @@ try {
     }
   }
 
+  // --- PR → 작업 카드 자동 등록 (M34): 자리 잡기(INSERT ON CONFLICT)·동시 전달·카드 삭제 후 재오픈을 실DB 로 확인
+  {
+    const login = `smoke-octo-${run}`;
+    await db.query('UPDATE users SET github_login = $2 WHERE id = $1', [people.member.id, login]);
+    const cp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-prcards', key: 'PRC', memberIds: [people.member.id] },
+    });
+    const cpid = cp.body.id;
+    const repoName = `smoke-${run}/cards`;
+    const conn = (
+      await call('PUT', `/projects/${cpid}/github`, {
+        token: t('manager'),
+        body: { repo: repoName, createOnPr: true },
+      })
+    ).body.connection;
+    const send = async (payload) => {
+      const text = JSON.stringify(payload);
+      const res = await fetch(conn.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'pull_request',
+          'x-github-delivery': crypto.randomUUID(),
+          'x-hub-signature-256': `sha256=${crypto.createHmac('sha256', conn.secret).update(text).digest('hex')}`,
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: text,
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    const pr = (action, number, extra = {}) => ({
+      action,
+      repository: { full_name: repoName },
+      pull_request: {
+        number,
+        title: `로그인 오류 수정 ${number}`,
+        body: '세션이 끊기는 문제',
+        html_url: `https://github.com/${repoName}/pull/${number}`,
+        state: 'open',
+        draft: false,
+        merged: false,
+        head: { ref: 'fix/login' },
+        user: { login: login.toUpperCase() },
+        ...extra,
+      },
+    });
+    const tasksOf = async () =>
+      (await db.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY number', [cpid])).rows;
+
+    // 같은 PR 의 전달이 동시에 5번 와도 카드는 하나
+    const burst = await Promise.all(Array.from({ length: 5 }, () => send(pr('opened', 7))));
+    const made = await tasksOf();
+    const prCard = (await db.query('SELECT * FROM github_pr_cards WHERE project_id = $1', [cpid]))
+      .rows;
+    check(
+      'PR 카드: 같은 PR 이 동시에 5번 전달돼도 카드는 하나(등록 자리 유일 제약)',
+      burst.every((r) => r.status === 200) && made.length === 1 && prCard.length === 1,
+      `${made.length} ${prCard.length} ${JSON.stringify(burst.map((r) => r.status))}`,
+    );
+    const card = made[0];
+    const link = (await db.query('SELECT * FROM github_task_links WHERE task_id = $1', [card.id]))
+      .rows;
+    const act = (
+      await db.query(
+        `SELECT actor_id, meta FROM activity_logs WHERE task_id = $1 AND action = 'task.created'`,
+        [card.id],
+      )
+    ).rows;
+    check(
+      'PR 카드: 제목·설명·상태·담당(GitHub 로그인 대소문자 무시)·만든 사람·PR 연결·활동 기록',
+      card.title === '로그인 오류 수정 7' &&
+        card.status === 'todo' &&
+        card.description ===
+          `세션이 끊기는 문제\n\nGitHub PR #7: https://github.com/${repoName}/pull/7` &&
+        card.assignee_id === people.member.id &&
+        card.created_by === people.manager.id &&
+        prCard[0].task_id === card.id &&
+        link.length === 1 &&
+        link[0].kind === 'pull_request' &&
+        act.length === 1 &&
+        act[0].actor_id === null &&
+        act[0].meta.via === 'github',
+      JSON.stringify({ card, link, act }),
+    );
+
+    // 카드를 지워도 PR 기록은 남아(task_id 만 NULL) 다시 열어도 새로 만들지 않는다
+    await call('DELETE', `/tasks/${card.id}`, { token: t('manager') });
+    const afterDelete = (
+      await db.query(
+        'SELECT task_id FROM github_pr_cards WHERE project_id = $1 AND pr_number = 7',
+        [cpid],
+      )
+    ).rows;
+    await send(pr('reopened', 7));
+    check(
+      'PR 카드: 카드를 지우면 기록의 task_id 가 NULL 이 되고, 같은 PR 을 다시 열어도 만들지 않는다',
+      afterDelete.length === 1 && afterDelete[0].task_id === null && (await tasksOf()).length === 0,
+    );
+
+    // 초안은 준비될 때, 봇·키 있는 PR 은 만들지 않는다
+    await send(pr('opened', 8, { draft: true }));
+    const draftOnly = (await tasksOf()).length;
+    await send(pr('ready_for_review', 8));
+    await send(pr('opened', 9, { user: { login: 'bot', type: 'Bot' } }));
+    await send(pr('opened', 10, { title: 'PRC-999 없는 작업' }));
+    const after = await tasksOf();
+    check(
+      'PR 카드: 초안은 준비될 때 등록되고 봇 PR·키가 있는 PR 은 등록되지 않는다',
+      draftOnly === 0 && after.length === 1 && after[0].title === '로그인 오류 수정 8',
+      JSON.stringify(after.map((x) => x.title)),
+    );
+
+    // 옵션을 끄면 만들지 않고, 켜져 있어도 진행 중 옵션이면 진행 중 상태로 만든다
+    await call('PUT', `/projects/${cpid}/github`, {
+      token: t('manager'),
+      body: { repo: repoName, createOnPr: false },
+    });
+    await send(pr('opened', 11));
+    const offCount = (await tasksOf()).length;
+    await call('PUT', `/projects/${cpid}/github`, {
+      token: t('manager'),
+      body: { repo: repoName, createOnPr: true, moveOnOpen: true },
+    });
+    await send(pr('opened', 12));
+    const last = (await tasksOf()).at(-1);
+    check(
+      'PR 카드: 옵션을 끄면 등록하지 않고, moveOnOpen 이 켜져 있으면 진행 중으로 만든다',
+      offCount === 1 && last.title === '로그인 오류 수정 12' && last.status === 'in_progress',
+      JSON.stringify([offCount, last?.title, last?.status]),
+    );
+
+    await call('DELETE', `/projects/${cpid}`, { token: t('manager') });
+    check(
+      'PR 카드: 프로젝트를 지우면 등록 기록도 CASCADE 로 사라진다',
+      (await db.query('SELECT 1 FROM github_pr_cards WHERE project_id = $1', [cpid])).rowCount ===
+        0,
+    );
+  }
+
   // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인
   {
     const usersRepo = await import('../src/modules/users/repository.js');

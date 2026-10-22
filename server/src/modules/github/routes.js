@@ -21,6 +21,7 @@ const connectBody = z.object({
     .refine((v) => v !== null, 'GitHub 저장소는 owner/repo 형식이거나 저장소 주소여야 합니다.'),
   moveOnOpen: z.boolean().optional(),
   doneOnMerge: z.boolean().optional(),
+  createOnPr: z.boolean().optional(),
 });
 
 // /projects/:id/github — 소유자·Admin 만(웹훅 비밀이 보이므로)

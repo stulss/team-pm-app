@@ -46,7 +46,7 @@ function describeBase(a, { showTask = true } = {}) {
     case 'member.removed':
       return `${m.user?.name ?? '사용자'}님을 멤버에서 제거했습니다.`;
     case 'task.created':
-      return `${task(m.title)}을(를) 만들었습니다.${m.assignee ? ` (담당 ${m.assignee.name})` : ''}`;
+      return `${task(m.title)}을(를) ${m.via === 'github' ? 'GitHub PR 에서 ' : ''}만들었습니다.${m.assignee ? ` (담당 ${m.assignee.name})` : ''}`;
     case 'task.updated':
       return `${task(m.title)}을(를) 수정했습니다. (${describeChanges(m.changes).join(', ')})`;
     case 'task.moved':

@@ -509,3 +509,155 @@ describe('커밋 연결 (push)', () => {
     expect(await links(b.id)).toHaveLength(1);
   });
 });
+
+describe('키 없는 PR 을 작업 카드로 자동 등록 (M34)', () => {
+  const enable = (extra = {}) =>
+    connect('owner', { repo: 'octo/hello', createOnPr: true, ...extra });
+  const open = (over = {}, action = 'opened') => hook('pull_request', pr(action, over));
+  const cards = () => store.tasks.filter((t) => t.project_id === pid);
+
+  it('옵션은 기본 꺼짐이고 켜기·끄기는 소유자만(멤버 403)', async () => {
+    expect(connection.createOnPr).toBe(false);
+    await open();
+    expect(cards()).toHaveLength(0);
+
+    expect((await connect('alice', { repo: 'octo/hello', createOnPr: true })).status).toBe(403);
+    const on = await enable();
+    expect(on.body.connection.createOnPr).toBe(true);
+    expect((await api('get', `/projects/${pid}/github`, 'owner')).body.connection.createOnPr).toBe(
+      true,
+    );
+    // 다른 옵션만 바꿔도 이 옵션은 그대로
+    expect(
+      (await connect('owner', { repo: 'octo/hello', moveOnOpen: true })).body.connection,
+    ).toMatchObject({ createOnPr: true, moveOnOpen: true });
+  });
+
+  it('PR 을 열면 제목·본문·주소로 카드를 만들고 PR 을 연결하며 활동과 실시간 이벤트를 남긴다', async () => {
+    await enable();
+    const res = await open({ title: '로그인 오류 수정', body: '세션이 끊기는 문제' });
+    expect(res.body.created).toBe(1);
+
+    const [card] = cards();
+    expect(card).toMatchObject({
+      title: '로그인 오류 수정',
+      status: 'todo',
+      priority: 'medium',
+      assignee_id: null,
+      created_by: people.owner.id,
+    });
+    expect(card.description).toBe(
+      '세션이 끊기는 문제\n\nGitHub PR #7: https://github.com/octo/hello/pull/7',
+    );
+    expect(await links(card.id)).toEqual([
+      expect.objectContaining({ kind: 'pull_request', externalId: '7', state: 'open' }),
+    ]);
+
+    const activity = (
+      await api('get', `/projects/${pid}/activities?taskId=${card.id}`, 'owner')
+    ).body.data.map((a) => [a.action, a.actor, a.meta.via]);
+    expect(activity).toContainEqual(['task.created', null, 'github']);
+    expect(activity.map((a) => a[0])).toContain('github.linked');
+    expect(emitToProject).toHaveBeenCalledWith(
+      null,
+      pid,
+      'task:created',
+      expect.objectContaining({ task: expect.objectContaining({ id: card.id }) }),
+    );
+  });
+
+  it('상태는 moveOnOpen 이 켜졌으면 진행 중, 아니면 할 일', async () => {
+    await enable({ moveOnOpen: true });
+    await open();
+    expect(cards()[0].status).toBe('in_progress');
+  });
+
+  it('PR 하나는 한 번만: 재전송·다시 열기·카드를 지운 뒤에도 다시 만들지 않는다', async () => {
+    await enable();
+    await open();
+    await open();
+    await open({}, 'reopened');
+    expect(cards()).toHaveLength(1);
+
+    await api('delete', `/tasks/${cards()[0].id}`, 'owner');
+    expect(cards()).toHaveLength(0);
+    await open({}, 'reopened');
+    expect(cards()).toHaveLength(0);
+
+    // 다른 PR 은 새 카드
+    await open({ number: 8, title: '다음' });
+    expect(cards().map((t) => t.title)).toEqual(['다음']);
+  });
+
+  it('초안 PR 은 준비되면 등록하고, 머지·닫힌·수정 이벤트로는 만들지 않는다', async () => {
+    await enable();
+    await open({ draft: true });
+    expect(cards()).toHaveLength(0);
+    await open({ draft: false }, 'ready_for_review');
+    expect(cards()).toHaveLength(1);
+
+    store.tasks.length = 0;
+    store.prCards.length = 0;
+    await hook('pull_request', pr('closed', { state: 'closed', merged: true, number: 9 }));
+    await hook('pull_request', pr('closed', { state: 'closed', number: 10 }));
+    await hook('pull_request', pr('edited', { number: 11 }));
+    expect(cards()).toHaveLength(0);
+  });
+
+  it('작업 키가 있는 PR 은 새로 만들지 않는다(없는 작업을 가리키는 오타도)', async () => {
+    await enable();
+    const t = await mkTask('기존 작업');
+    await open({ title: `TPM-${t.number} 로그인` });
+    await open({ number: 8, title: 'TPM-999 오타' });
+    await open({ number: 9, head: { ref: `feature/TPM-${t.number}-x` } });
+    expect(cards()).toHaveLength(1);
+    expect((await links(t.id)).map((l) => l.externalId).sort()).toEqual(['7', '9']);
+  });
+
+  it('봇이 연 PR 은 등록하지 않는다', async () => {
+    await enable();
+    await open({ user: { login: 'dependabot[bot]', type: 'Bot' }, title: 'Bump x' });
+    expect(cards()).toHaveLength(0);
+  });
+
+  it('PR 작성자와 GitHub 로그인이 같은 프로젝트 멤버가 담당자가 된다(멤버가 아니면 미지정)', async () => {
+    await enable();
+    store.users.find((u) => u.id === people.alice.id).github_login = 'OctoCat';
+    await open();
+    expect(cards()[0].assignee_id).toBe(people.alice.id);
+
+    store.users.find((u) => u.id === people.outsider.id).github_login = 'stranger';
+    await open({ number: 8, user: { login: 'stranger' } });
+    expect(cards()[1].assignee_id).toBeNull();
+  });
+
+  it('긴 제목·본문은 잘라 한도 안에 넣는다', async () => {
+    await enable();
+    await open({ title: 'ㄱ'.repeat(300), body: 'ㄴ'.repeat(20_000) });
+    expect(cards()[0].title).toHaveLength(200);
+    expect(cards()[0].description.length).toBeLessThanOrEqual(10_000);
+    expect(cards()[0].description).toContain('GitHub PR #7');
+  });
+
+  it('보관된 프로젝트·작업 수 한도에서는 만들지 않고, 한도가 풀리면 다음 이벤트에서 등록한다', async () => {
+    await enable();
+    const prev = env.MAX_TASKS_PER_PROJECT;
+    env.MAX_TASKS_PER_PROJECT = 1;
+    try {
+      await mkTask('자리 차지');
+      const full = await open();
+      expect(full.status).toBe(200);
+      expect(cards()).toHaveLength(1);
+      expect(store.prCards).toHaveLength(0); // 자리를 풀었다
+      env.MAX_TASKS_PER_PROJECT = 10;
+      await open({}, 'reopened');
+      expect(cards()).toHaveLength(2);
+    } finally {
+      env.MAX_TASKS_PER_PROJECT = prev;
+    }
+
+    await api('patch', `/projects/${pid}`, 'owner', { status: 'archived' });
+    await open({ number: 12 });
+    expect(cards()).toHaveLength(2);
+  });
+});

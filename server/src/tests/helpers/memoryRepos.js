@@ -31,6 +31,7 @@ export const store = {
   commentReactions: [],
   chatReactions: [],
   apiTokens: [],
+  prCards: [],
 };
 
 export function reset() {
@@ -59,6 +60,7 @@ export function reset() {
   store.commentReactions = [];
   store.chatReactions = [];
   store.apiTokens = [];
+  store.prCards = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -792,6 +794,7 @@ export const githubRepo = {
       repo: row.repo,
       moveOnOpen: row.move_on_open,
       doneOnMerge: row.done_on_merge,
+      createOnPr: row.create_on_pr ?? false,
       lastEventAt: row.last_event_at,
     },
   toLink: (row) => ({
@@ -810,7 +813,7 @@ export const githubRepo = {
   async getById(id) {
     return store.githubConnections.find((c) => c.id === id) ?? null;
   },
-  async upsert({ projectId, repo, moveOnOpen, doneOnMerge, createdBy }) {
+  async upsert({ projectId, repo, moveOnOpen, doneOnMerge, createOnPr, createdBy }) {
     const taken = store.githubConnections.find(
       (c) => c.project_id !== projectId && c.repo.toLowerCase() === repo.toLowerCase(),
     );
@@ -822,6 +825,7 @@ export const githubRepo = {
       row.repo = repo;
       if (moveOnOpen !== undefined) row.move_on_open = moveOnOpen;
       if (doneOnMerge !== undefined) row.done_on_merge = doneOnMerge;
+      if (createOnPr !== undefined) row.create_on_pr = createOnPr;
     } else {
       row = {
         id: crypto.randomUUID(),
@@ -830,6 +834,7 @@ export const githubRepo = {
         secret_version: 1,
         move_on_open: moveOnOpen ?? false,
         done_on_merge: doneOnMerge ?? false,
+        create_on_pr: createOnPr ?? false,
         created_by: createdBy,
         last_event_at: null,
       };
@@ -846,6 +851,31 @@ export const githubRepo = {
     const before = store.githubConnections.length;
     store.githubConnections = store.githubConnections.filter((c) => c.project_id !== projectId);
     return store.githubConnections.length < before;
+  },
+  async claimPrCard(projectId, prNumber) {
+    if (store.prCards.some((c) => c.project_id === projectId && c.pr_number === prNumber)) {
+      return false;
+    }
+    store.prCards.push({ project_id: projectId, pr_number: prNumber, task_id: null });
+    return true;
+  },
+  async setPrCardTask(projectId, prNumber, taskId) {
+    const row = store.prCards.find((c) => c.project_id === projectId && c.pr_number === prNumber);
+    if (row) row.task_id = taskId;
+  },
+  async releasePrCard(projectId, prNumber) {
+    store.prCards = store.prCards.filter(
+      (c) => !(c.project_id === projectId && c.pr_number === prNumber),
+    );
+  },
+  async findMemberByGithubLogin(projectId, login) {
+    const user = store.users.find(
+      (u) =>
+        u.is_active &&
+        u.github_login?.toLowerCase() === login.toLowerCase() &&
+        store.members.some((m) => m.project_id === projectId && m.user_id === u.id),
+    );
+    return user?.id ?? null;
   },
   async touch(id) {
     const row = store.githubConnections.find((c) => c.id === id);

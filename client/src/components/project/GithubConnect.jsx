@@ -103,6 +103,21 @@ export default function GithubConnect({ projectId }) {
             />{' '}
             PR 이 머지되면 완료로 이동
           </label>
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={connection.createOnPr}
+              disabled={options.isPending}
+              onChange={(e) => options.mutate({ createOnPr: e.target.checked })}
+            />{' '}
+            작업 키 없는 PR 을 작업 카드로 자동 등록
+          </label>
+          {connection.createOnPr && (
+            <p className="muted small">
+              작업 키(예: <code>ABC-12</code>)가 없는 PR 이 열리면 PR 제목으로 카드를 만들고 PR 을
+              연결합니다. 초안 PR 은 준비되면 등록하고, 봇이 연 PR 은 등록하지 않습니다.
+            </p>
+          )}
 
           <details className="github-setup" open={!connection.lastEventAt}>
             <summary>GitHub 웹훅 설정 방법</summary>

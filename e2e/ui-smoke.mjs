@@ -2347,6 +2347,23 @@ try {
       ) {
         throw new Error('다른 저장소 이벤트는 202 여야 함');
       }
+
+      // 작업 키 없는 PR 자동 등록(M34): 옵션을 켜면 키 없는 PR 이 새 카드로 실시간 등록된다
+      const noKey = `키 없는 PR ${run}`;
+      await send('pull_request', pr('opened', { number: 6, title: noKey }));
+      if ((await setPage.getByText(noKey).count()) !== 0)
+        throw new Error('옵션이 꺼졌는데 카드가 생김');
+      await panel.getByLabel('작업 키 없는 PR 을 작업 카드로 자동 등록').click();
+      await pollUntil(
+        async () =>
+          (await apiCall('GET', `/projects/${settingsProjectId}/github`, token)).body.connection
+            ?.createOnPr === true,
+        '자동 등록 옵션 저장',
+      );
+      if ((await send('pull_request', pr('opened', { number: 8, title: noKey }))) !== 200) {
+        throw new Error('키 없는 PR 전달 실패');
+      }
+      await setPage.locator('[data-status="in_progress"]').getByText(noKey).waitFor();
     },
   );
   await step(
