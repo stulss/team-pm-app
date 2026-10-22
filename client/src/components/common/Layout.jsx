@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { listProjects } from '../../api/projects.js';
@@ -182,7 +182,9 @@ export default function Layout() {
           </div>
         </header>
         <main className="page">
-          <Outlet />
+          <Suspense fallback={<p className="center muted">불러오는 중…</p>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} />}

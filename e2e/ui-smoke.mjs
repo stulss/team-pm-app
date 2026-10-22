@@ -1918,6 +1918,23 @@ try {
     }
     await setPage.getByRole('status').filter({ hasText: '저장했습니다' }).first().waitFor();
   });
+  // 페이지 파일은 처음 열 때 내려받는다. 배포로 이전 파일이 사라진 상황(첫 내려받기 실패)에서는 한 번 새로고침해 복구한다.
+  await step('지연 로딩: 페이지 파일 내려받기가 한 번 실패해도 새로고침으로 복구됨', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    await setPage.goto(`${BASE}/settings`);
+    await setPage.getByRole('heading', { name: '설정' }).waitFor();
+    await setPage.evaluate(() => sessionStorage.removeItem('chunk-reload-at'));
+    let attempts = 0;
+    await setPage.route(/DashboardPage/, (route) => {
+      attempts += 1;
+      return attempts === 1 ? route.abort() : route.continue();
+    });
+    await setPage.getByRole('link', { name: '대시보드' }).click();
+    await setPage.getByRole('heading', { name: '대시보드' }).waitFor();
+    await setPage.unroute(/DashboardPage/);
+    if (attempts < 2) throw new Error(`새로고침으로 다시 받지 않음: ${attempts}`);
+    await setPage.goto(`${BASE}/settings`); // 뒤따르는 설정 단계가 설정 화면에서 시작한다
+  });
   await step('설정: 계정에 저장되어 다른 브라우저에서 로그인해도 같은 설정으로 보임', async () => {
     if (!setPage) throw new Error('준비 단계 실패');
     const other = await newPage(); // 새 브라우저 컨텍스트: 로컬 저장소를 공유하지 않는다
