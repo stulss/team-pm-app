@@ -26,20 +26,6 @@ function layout({ title, intro, buttonLabel, link, outro }) {
   return { text, html };
 }
 
-export function verifyEmailMessage(name, token) {
-  const link = `${appUrl()}/verify-email?token=${encodeURIComponent(token)}`;
-  return {
-    subject: '[Team PM] 이메일 주소를 인증해 주세요',
-    ...layout({
-      title: '이메일 인증',
-      intro: `${name}님, 가입해 주셔서 감사합니다. 아래 버튼을 눌러 이메일 주소를 인증하면 로그인할 수 있습니다. 링크는 24시간 동안 유효합니다.`,
-      buttonLabel: '이메일 인증하기',
-      link,
-      outro: '본인이 가입한 것이 아니라면 이 메일을 무시해 주세요.',
-    }),
-  };
-}
-
 export function resetPasswordMessage(name, token) {
   const link = `${appUrl()}/reset-password?token=${encodeURIComponent(token)}`;
   return {

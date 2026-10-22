@@ -48,12 +48,9 @@ export function AuthProvider({ children }) {
         const { data } = await http.post('/auth/login', { email, password });
         applySession(data);
       },
-      // 서버가 이메일 인증을 요구하면 세션 없이 { needsVerification: true } 만 온다.
       async register(input) {
         const { data } = await http.post('/auth/register', input);
-        if (data.needsVerification) return { needsVerification: true };
         applySession(data);
-        return { needsVerification: false };
       },
       // 이름·비밀번호 변경. 비밀번호를 바꾸면 서버가 다른 세션을 모두 끊고 새 세션을 준다.
       async updateProfile(body) {

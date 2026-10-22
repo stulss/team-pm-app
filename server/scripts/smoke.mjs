@@ -58,16 +58,7 @@ try {
     });
     if (r.status !== 201)
       throw new Error(`register ${k} failed: ${r.status} ${JSON.stringify(r.body)}`);
-    let { accessToken } = r.body;
-    if (r.body.needsVerification) {
-      // 운영처럼 이메일 인증이 켜져 있으면 세션이 없다. 테스트 계정은 DB 에서 인증 처리한 뒤 로그인한다.
-      await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [r.body.user.id]);
-      const login = await call('POST', '/auth/login', {
-        body: { email: emailOf(k), password: 'S3cure!pass' },
-      });
-      accessToken = login.body.accessToken;
-    }
-    people[k] = { id: r.body.user.id, token: accessToken };
+    people[k] = { id: r.body.user.id, token: r.body.accessToken };
   }
   const roles = {
     admin: 'admin',
@@ -1068,26 +1059,26 @@ try {
       body: { email: mailEmail, password: 'S3cure!pass', name: 'smoke-mailflow' },
     });
     const uid = reg.body.user.id;
-    const verifiedAt = async () =>
-      (await db.query('SELECT email_verified_at FROM users WHERE id = $1', [uid])).rows[0]
-        .email_verified_at;
-    await db.query('UPDATE users SET email_verified_at = NULL WHERE id = $1', [uid]);
     const inHour = new Date(Date.now() + 3600_000);
     const put = (kind, token, expiresAt = inHour) =>
       authRepo.insertEmailToken({ userId: uid, kind, tokenHash: hashOf(token), expiresAt });
     const post = (path, body) => call('POST', path, { body });
 
-    // 메일이 켜진 환경에서는 가입 직후 인증 토큰이 이미 발급돼 있다 → 비우고 시작한다.
-    await db.query('DELETE FROM email_tokens WHERE user_id = $1', [uid]);
     check(
-      '발급 이력이 없으면 쿨다운 조회는 null',
-      (await authRepo.secondsSinceLastEmailToken(uid, 'verify')) === null,
+      '가입 직후에는 이메일 인증 토큰이 발급되지 않고(인증 없음) 쿨다운 조회는 null',
+      (await authRepo.secondsSinceLastEmailToken(uid, 'reset')) === null &&
+        (await db.query('SELECT 1 FROM email_tokens WHERE user_id = $1', [uid])).rowCount === 0,
     );
-    const v1 = newToken();
-    const v2 = newToken();
-    await put('verify', v1);
-    await put('verify', v2);
-    const since = await authRepo.secondsSinceLastEmailToken(uid, 'verify');
+    check(
+      '인증 엔드포인트는 없다 (404)',
+      (await post('/auth/verify-email', { token: newToken() })).status === 404 &&
+        (await post('/auth/resend-verification', { email: mailEmail })).status === 404,
+    );
+    const r0 = newToken();
+    const r0b = newToken();
+    await put('reset', r0);
+    await put('reset', r0b);
+    const since = await authRepo.secondsSinceLastEmailToken(uid, 'reset');
     check(
       '방금 발급한 토큰의 경과 시간은 몇 초 이내',
       since !== null && since >= 0 && since < 30,
@@ -1095,30 +1086,22 @@ try {
     );
     check(
       '새 링크를 발급하면 이전 링크는 무효 (400)',
-      (await post('/auth/verify-email', { token: v1 })).status === 400,
-    );
-    check('인증 전에는 email_verified_at 이 비어 있음', (await verifiedAt()) === null);
-    check(
-      '유효한 인증 링크 (200) → 인증 시각 기록',
-      (await post('/auth/verify-email', { token: v2 })).status === 200 &&
-        (await verifiedAt()) !== null,
-    );
-    check(
-      '같은 링크 재사용 불가 (400 INVALID_TOKEN)',
-      (await post('/auth/verify-email', { token: v2 })).body?.error?.code === 'INVALID_TOKEN',
+      (await post('/auth/reset-password', { token: r0, password: 'N3w-secure-pass' })).status ===
+        400,
     );
     const expired = newToken();
-    await put('verify', expired, new Date(Date.now() - 3600_000));
+    await put('reset', expired, new Date(Date.now() - 3600_000));
     check(
       '만료된 링크 (400)',
-      (await post('/auth/verify-email', { token: expired })).status === 400,
+      (await post('/auth/reset-password', { token: expired, password: 'N3w-secure-pass' }))
+        .status === 400,
     );
 
-    // 비밀번호 재설정
-    const before = await post('/auth/login', { email: mailEmail, password: 'S3cure!pass' });
-    check('재설정 전 로그인 가능', before.status === 200, JSON.stringify(before.body));
+    // 비밀번호 재설정(위에서 만든 만료 토큰이 이전 링크를 모두 무효화했으므로 새로 발급한다)
     const r1 = newToken();
     await put('reset', r1);
+    const before = await post('/auth/login', { email: mailEmail, password: 'S3cure!pass' });
+    check('재설정 전 로그인 가능', before.status === 200, JSON.stringify(before.body));
     const weak = await post('/auth/reset-password', { token: r1, password: 'short' });
     const unused = await db.query(
       "SELECT 1 FROM email_tokens WHERE user_id = $1 AND kind = 'reset' AND used_at IS NULL",
@@ -1148,9 +1131,8 @@ try {
     );
     const ghostEmail = `nobody-${run}@example.test`;
     check(
-      '없는 이메일의 재설정·재발송 요청도 같은 202 (계정 존재 비노출)',
-      (await post('/auth/forgot-password', { email: ghostEmail })).status === 202 &&
-        (await post('/auth/resend-verification', { email: ghostEmail })).status === 202,
+      '없는 이메일의 재설정 요청도 같은 202 (계정 존재 비노출)',
+      (await post('/auth/forgot-password', { email: ghostEmail })).status === 202,
     );
 
     // 정리: 만료된 지 하루 지난 토큰은 cron 이 지운다
@@ -3995,10 +3977,7 @@ try {
       githubId: gid,
       login: 'smoke-gh',
     });
-    check(
-      'GitHub 로그인: 가입 SQL 이 member 로 만들고 이메일을 인증 완료로 둔다',
-      created?.role === 'member' && created.email_verified_at !== null,
-    );
+    check('GitHub 로그인: 가입 SQL 이 member 로 만든다', created?.role === 'member');
     const found = await usersRepo.findByGithubId(gid);
     check('GitHub 로그인: github_id 로 사용자를 찾는다', found?.email === ghEmail);
 
@@ -4162,17 +4141,9 @@ try {
     const reg = await call('POST', '/auth/register', {
       body: { email: emailOf('leaver'), password: 'S3cure!pass', name: 'smoke-leaver' },
     });
-    let leaverId = reg.body.user.id;
+    const leaverId = reg.body.user.id;
     anonymizedIds.push(leaverId);
-    let leaverToken = reg.body.accessToken;
-    if (reg.body.needsVerification) {
-      await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [leaverId]);
-      leaverToken = (
-        await call('POST', '/auth/login', {
-          body: { email: emailOf('leaver'), password: 'S3cure!pass' },
-        })
-      ).body.accessToken;
-    }
+    const leaverToken = reg.body.accessToken;
     const leave = (body) => call('DELETE', '/users/me', { token: leaverToken, body });
 
     // 소유한 프로젝트가 있으면 막힌다

@@ -153,7 +153,5 @@ export async function loginWithProfile({ githubId, login, email, name }, meta) {
     }
   }
   if (!row.is_active) throw fail('inactive');
-  // GitHub 가 이메일 소유를 확인했으므로 인증된 것으로 본다.
-  if (!row.email_verified_at) await users.markEmailVerified(row.id);
   return createSession(row.id, meta);
 }

@@ -101,7 +101,6 @@ describe('GET /auth/github/callback', () => {
       github_id: 4242,
       role: 'admin',
     });
-    expect(store.users[0].email_verified_at).toBeTruthy();
   });
 
   it('받은 세션으로 /auth/refresh 가 된다', async () => {

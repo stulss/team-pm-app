@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../context/AuthContext.jsx';
 import { errorMessage } from '../api/http.js';
-import { errorCode } from '../api/auth.js';
-import ResendVerification from '../components/auth/ResendVerification.jsx';
 import GithubLoginButton from '../components/auth/GithubLoginButton.jsx';
 import { githubErrorMessage } from '../constants/githubLogin.js';
 
@@ -16,18 +14,15 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const [error, setError] = useState(githubErrorMessage(searchParams.get('github')));
   const [busy, setBusy] = useState(false);
-  const [unverified, setUnverified] = useState(false);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setUnverified(false);
     setBusy(true);
     try {
       await login(email, password);
       navigate(location.state?.from?.pathname ?? '/', { replace: true });
     } catch (err) {
-      setUnverified(errorCode(err) === 'EMAIL_NOT_VERIFIED');
       setError(errorMessage(err, '로그인에 실패했습니다.'));
     } finally {
       setBusy(false);
@@ -63,7 +58,6 @@ export default function LoginPage() {
           {error}
         </p>
       )}
-      {unverified && <ResendVerification email={email} />}
       <button type="submit" disabled={busy}>
         {busy ? '로그인 중…' : '로그인'}
       </button>

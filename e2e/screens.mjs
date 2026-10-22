@@ -69,7 +69,6 @@ async function seed() {
       password: PASSWORD,
       name,
     });
-    await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [r.user.id]);
     people[k] = { id: r.user.id, name };
   }
   await db.query('UPDATE users SET role = $2 WHERE id = $1', [people.admin.id, 'admin']);

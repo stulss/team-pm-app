@@ -74,7 +74,6 @@ const pub = (u) => ({
   role: u.role,
   is_active: u.is_active,
   created_at: u.created_at,
-  email_verified_at: u.email_verified_at ?? null,
   preferences: u.preferences ?? {},
   github_login: u.github_login ?? null,
   password_set: u.password_set,
@@ -122,7 +121,6 @@ export const usersRepo = {
       role: store.users.length === 0 ? 'admin' : 'member',
       is_active: true,
       created_at: new Date(),
-      email_verified_at: new Date(),
       github_id: githubId,
       github_login: login,
       password_set: false,
@@ -204,10 +202,6 @@ export const usersRepo = {
     if (!u) return null;
     u.is_active = isActive;
     return pub(u);
-  },
-  async markEmailVerified(id) {
-    const u = store.users.find((x) => x.id === id);
-    if (u && !u.email_verified_at) u.email_verified_at = new Date();
   },
   async updatePreferences(id, patch) {
     const u = store.users.find((x) => x.id === id);

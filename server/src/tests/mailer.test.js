@@ -7,8 +7,7 @@ vi.stubEnv('APP_URL', 'https://pm.example.org/');
 vi.mock('../config/db.js', () => ({ query: vi.fn(), pool: {}, withTransaction: (fn) => fn({}) }));
 
 const { sendMail, mailEnabled, isDeliverable } = await import('../utils/mailer.js');
-const { verifyEmailMessage, resetPasswordMessage, appUrl } =
-  await import('../utils/mailTemplates.js');
+const { resetPasswordMessage, appUrl } = await import('../utils/mailTemplates.js');
 
 let fetchMock;
 beforeEach(() => {
@@ -65,8 +64,8 @@ describe('sendMail', () => {
 describe('메일 템플릿', () => {
   it('링크는 설정한 APP_URL 로만 만들고 토큰은 URL 인코딩한다', () => {
     expect(appUrl()).toBe('https://pm.example.org');
-    expect(verifyEmailMessage('지호', 'a+b/c').text).toContain(
-      'https://pm.example.org/verify-email?token=a%2Bb%2Fc',
+    expect(resetPasswordMessage('지호', 'a+b/c').text).toContain(
+      'https://pm.example.org/reset-password?token=a%2Bb%2Fc',
     );
     expect(resetPasswordMessage('지호', 'tok').text).toContain(
       'https://pm.example.org/reset-password?token=tok',
@@ -74,7 +73,7 @@ describe('메일 템플릿', () => {
   });
 
   it('이름의 HTML 은 이스케이프한다', () => {
-    const m = verifyEmailMessage('<script>x</script>', 'tok');
+    const m = resetPasswordMessage('<script>x</script>', 'tok');
     expect(m.html).not.toContain('<script>');
     expect(m.html).toContain('&lt;script&gt;');
   });

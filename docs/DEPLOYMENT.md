@@ -54,7 +54,7 @@ Vercel 프로젝트 설정(Production / Preview)에 등록한다. 비밀값은 �
 | `APP_TIMEZONE` | "오늘/내일" 마감 판정 시간대 | 기본 `Asia/Seoul` |
 | `ALLOW_REGISTRATION` | `false` 면 새 가입을 막음(첫 계정은 허용) | 기본 `true`. **팀 구성이 끝나면 `false` 권장** |
 | `MAX_PROJECTS_PER_USER` / `MAX_MEMBERS_PER_PROJECT` / `MAX_TASKS_PER_PROJECT` | 공개 가입 시 무료 DB 용량을 지키는 사용량 상한(초과 시 409 `LIMIT_REACHED`) | 기본 20 / 50 / 1000. Admin 은 프로젝트 수 제한 없음 |
-| `BREVO_API_KEY` / `MAIL_FROM` | 인증·재설정 메일 발송(Brevo 무료 하루 300통). **둘 다 있어야 이메일 인증이 켜진다** | 비밀. 없으면 인증 없이 가입 즉시 사용, 재설정 메일 없음 |
+| `BREVO_API_KEY` / `MAIL_FROM` | 비밀번호 재설정 메일 발송(Brevo 무료 하루 300통). **둘 다 있어야 재설정 메일이 나간다**(가입에 이메일 인증은 없다) | 비밀. 없으면 재설정 메일이 없다 |
 | `MAIL_FROM_NAME` | 보낸 사람 이름 | 기본 `Team PM` |
 | `APP_URL` | 메일 링크의 기준 주소 | 예: `https://team-pm-app-sand.vercel.app`. 없으면 Vercel 운영 도메인 |
 | `DB_SSL_VERIFY` | DB TLS 서버 인증서 검증 | 기본 `true`. 인증서 문제로 접속이 안 될 때만 비상용 `false` |
@@ -98,7 +98,7 @@ BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라�
 | 상황 | 방법 |
 |---|---|
 | 배포 롤백 | Vercel 대시보드에서 이전 배포로 Instant Rollback. 마이그레이션이 포함된 배포는 `down` 가능 여부를 먼저 확인 |
-| 메일 설정(이메일 인증·재설정 켜기) | Brevo 에서 발신자(Sender) 이메일 인증 + API 키 발급 → Vercel 환경변수 `BREVO_API_KEY`, `MAIL_FROM`(인증한 발신 주소), `APP_URL` 등록 후 재배포. 켜기 전에 가입한 계정은 로그인 때 "인증 필요" 가 나오고 로그인 화면의 "인증 메일 다시 받기" 로 해결한다(006 마이그레이션 이전 계정은 이미 인증됨) |
+| 메일 설정(비밀번호 재설정 켜기) | Brevo 에서 발신자(Sender) 이메일 인증 + API 키 발급 → Vercel 환경변수 `BREVO_API_KEY`, `MAIL_FROM`(인증한 발신 주소), `APP_URL` 등록 후 재배포 |
 | 메일이 안 옴 | Brevo 대시보드 Transactional 로그, 스팸함, `MAIL_FROM` 이 Brevo 에서 인증된 발신자인지, 하루 300통 한도 확인. 서버 로그의 `mail send failed`(상태 코드만 기록) |
 | 공유 링크가 새어 나감 | 프로젝트 화면의 "읽기 전용 공유 링크" 에서 해당 링크를 **폐기**(즉시 무효). 전부 막으려면 프로젝트 소유자가 모든 링크를 폐기한다. 링크는 만료(최대 30일)되고 프로젝트당 5개까지다 |
 | 신규 가입 막기 | Vercel 환경변수 `ALLOW_REGISTRATION=false` 후 재배포(기존 사용자 로그인·사용은 그대로) |
@@ -122,4 +122,4 @@ BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라�
 - **환경 분리 없음**: Production·Preview·로컬이 하나의 Supabase 프로젝트·Redis 를 공유한다. 실제 팀이 쓰기 시작하면 개발용 Supabase 프로젝트를 분리하는 것이 안전하다(무료 플랜 프로젝트 수 제한 확인).
 - **Hobby 제한**: Cron 하루 1회(±59분), 함수 실행 300초(소켓은 재연결로 흡수), 팀 사용·상업적 이용은 약관상 제한될 수 있으니 확인.
 - **Redis 무료 한도**: 연결 수(여러 서버 인스턴스가 각각 연결)와 명령 수가 한도에 닿을 수 있다. 사용자 10명 규모에서는 문제가 없었지만 사용량을 가끔 확인한다.
-- **공개 가입 운영**: 누구나 가입하고 자기 프로젝트를 만들 수 있다(첫 계정만 admin). 무료 DB 용량은 사용량 상한과 가입 레이트리밋으로 지킨다. 메일(Brevo)을 설정하면 이메일 인증과 비밀번호 재설정이 켜진다. 신고/차단 기능은 없으니, 악용이 보이면 `ALLOW_REGISTRATION=false` 로 가입을 닫거나 Admin 화면에서 해당 계정을 비활성화한다.
+- **공개 가입 운영**: 누구나 가입하고 자기 프로젝트를 만들 수 있다(첫 계정만 admin). 가입에 이메일 인증은 없다. 무료 DB 용량은 사용량 상한과 가입 레이트리밋으로 지킨다. 메일(Brevo)을 설정하면 비밀번호 재설정이 켜진다. 신고/차단 기능은 없으니, 악용이 보이면 `ALLOW_REGISTRATION=false` 로 가입을 닫거나 Admin 화면에서 해당 계정을 비활성화한다.

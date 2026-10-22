@@ -453,8 +453,6 @@ erDiagram
 | POST | `/auth/register` | 회원가입 | 공개 |
 | POST | `/auth/login` | 로그인 | 공개 |
 | POST | `/auth/refresh` | 토큰 재발급 (쿠키) | 공개 |
-| POST | `/auth/verify-email` | 메일 링크의 토큰으로 이메일 인증 `{ token }` (일회용·24시간) | 공개 |
-| POST | `/auth/resend-verification` | 인증 메일 재발송 `{ email }`. 가입 여부와 무관하게 항상 202 | 공개(레이트리밋) |
 | POST | `/auth/forgot-password` | 비밀번호 재설정 메일 요청 `{ email }`. 항상 202 | 공개(레이트리밋) |
 | POST | `/auth/reset-password` | `{ token, password }` 로 새 비밀번호 설정(일회용·1시간). 기존 세션 모두 폐기 | 공개 |
 | GET | `/auth/providers` | 켜져 있는 로그인 수단 `{ github: boolean }` (GitHub OAuth 키가 있으면 true) | 공개 |
@@ -684,7 +682,7 @@ erDiagram
 // + Set-Cookie: refresh_token=…; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth
 ```
 
-> 이메일 인증·재설정(2026-10-15): 메일은 Brevo 무료 플랜(`BREVO_API_KEY`, `MAIL_FROM`)으로 보낸다. **둘 다 설정돼 있을 때만 켜지며**, 켜져 있으면 가입 응답이 `201 { user, needsVerification: true }`(세션·쿠키 없음)이고 인증 전 로그인은 403 `EMAIL_NOT_VERIFIED`(비밀번호가 맞을 때만 알려 줌), refresh 도 거부된다. 꺼져 있으면 기존처럼 가입 즉시 사용하고 재설정 메일은 나가지 않는다. 토큰은 32바이트 난수이고 DB 에는 SHA-256 해시만 저장한다(`email_tokens`, 같은 종류의 새 토큰이 이전 토큰을 무효화, 한 번에 소비). 같은 사용자에게 같은 종류의 메일은 60초에 한 번만 보낸다. 재설정에 성공하면 이메일도 인증된 것으로 보고 모든 refresh 세션을 폐기한다. 링크 주소는 요청 헤더가 아니라 `APP_URL`(없으면 Vercel 운영 도메인)로만 만든다. 예약 도메인(`.test` 등)으로는 보내지 않는다. 마이그레이션 `006_email_tokens` 이전 가입자는 인증된 것으로 취급한다.
+> 비밀번호 재설정(2026-10-15, 이메일 인증은 2026-10-22 에 제거 — M36): 메일은 Brevo 무료 플랜(`BREVO_API_KEY`, `MAIL_FROM`)으로 보내고 **둘 다 설정돼 있을 때만 재설정 메일이 나간다**. **가입에는 이메일 인증이 없다** — 가입 즉시 세션을 받고 로그인·refresh 가 인증 여부를 보지 않는다(메일 설정과 무관). 재설정 토큰은 32바이트 난수이고 DB 에는 SHA-256 해시만 저장한다(`email_tokens`, 같은 종류의 새 토큰이 이전 토큰을 무효화, 한 번에 소비). 같은 사용자에게는 60초에 한 번만 보낸다. 재설정에 성공하면 모든 refresh 세션을 폐기한다. 링크 주소는 요청 헤더가 아니라 `APP_URL`(없으면 Vercel 운영 도메인)로만 만든다. 예약 도메인(`.test` 등)으로는 보내지 않는다. `users.email_verified_at` 컬럼은 더 이상 읽거나 쓰지 않지만(응답의 `emailVerified` 도 없다) 이전 코드와의 호환을 위해 남겨 두며 다음 정리 마이그레이션에서 지운다.
 
 **POST `/auth/login`**
 ```json
@@ -960,6 +958,7 @@ team-pm-app/
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
 | **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
+| **M36** | 이메일 인증 제거 | 가입 후 인증 메일·인증 전 로그인 차단·재발송(`POST /auth/verify-email`, `/auth/resend-verification`, `needsVerification`, 403 `EMAIL_NOT_VERIFIED`)과 화면(`/verify-email`, 인증 메일 다시 받기)을 없앤다. 비밀번호 재설정은 그대로. 마이그레이션 없음(`email_verified_at` 컬럼은 남김) |
 | **M35** | GitHub 이슈 동기화 | 연동 옵션 `syncIssues` 를 켜면 이슈가 열릴 때 작업 카드를 만들고(키 없는 이슈), 이슈를 닫으면 카드를 완료로, 다시 열면 할 일로, 제목을 고치면 카드 제목을 따라 바꾼다. 한 방향(GitHub → 앱), 한 이슈는 한 번만 등록. 마이그레이션 028 |
 | **M34** | PR → 작업 카드 자동 등록 | GitHub 연동 옵션 `createOnPr` 를 켜면 작업 키가 없는 PR 을 열 때(또는 초안이 준비될 때) 작업 카드를 만들고 PR 을 연결한다. PR 하나는 한 번만 등록한다(`github_pr_cards`). 마이그레이션 027 |
 | **M33** | MCP 서버 엔드포인트 | `POST /api/mcp` 에 JSON-RPC 2.0 로 `initialize`·`ping`·`tools/list`·`tools/call` 을 구현한다(상태 없는 요청-응답, SSE 없음 — 서버리스에 맞춘다). 인증은 API 토큰만. 도구 호출은 같은 프로세스에서 `/api/v1` 라우터를 그대로 호출해(light-my-request) 토큰 범위·프로젝트 권한·검증·실시간 이벤트·활동 기록을 REST 와 똑같이 거친다. 도구: `list_projects`·`list_tasks`·`my_tasks`·`get_task`·`search`·`list_comments`·`create_task`·`update_task`·`move_task`·`add_comment`. 읽기 토큰에는 쓰기 도구가 목록에서 빠지고 호출해도 서버가 거절한다(결과의 `isError`). 마이그레이션 없음 |

@@ -64,8 +64,6 @@ const apiRegister = async (k) => {
     body: JSON.stringify({ email: emailOf(k), password: PASSWORD, name: `ui-${k}` }),
   });
   if (res.status !== 201) throw new Error(`register ${k}: ${res.status}`);
-  // 이메일 인증이 켜진 환경(운영)에서는 DB 에서 인증 처리한다.
-  await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [emailOf(k)]);
 };
 
 const apiHeaders = (token) => ({
@@ -145,16 +143,7 @@ try {
     await page.getByLabel('이메일').fill(emailOf('manager'));
     await page.getByLabel(/비밀번호/).fill(PASSWORD);
     await page.getByRole('button', { name: '가입하기' }).click();
-    // 이메일 인증이 켜져 있으면 "메일을 확인해 주세요" 가 먼저 나온다 → DB 에서 인증 처리 후 로그인
-    const pending = page.getByRole('heading', { name: '이메일을 확인해 주세요' });
     const home = page.getByRole('heading', { name: '프로젝트', exact: true });
-    await pending.or(home).waitFor();
-    if (await pending.isVisible()) {
-      await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [
-        emailOf('manager'),
-      ]);
-      await login(page, 'manager');
-    }
     await home.waitFor();
   });
   for (const k of ['admin', 'member', 'outsider']) await apiRegister(k);
@@ -598,17 +587,6 @@ try {
     }
     throw new Error(`입력값이 유지되지 않음: ${value}`);
   };
-  await step('이메일 인증 링크: 인증 완료 화면, 같은 링크를 다시 열면 실패 화면', async () => {
-    await db.query('UPDATE users SET email_verified_at = NULL WHERE email = $1', [
-      emailOf('mailuser'),
-    ]);
-    const token = await putToken('verify');
-    await mailer.goto(`${BASE}/verify-email?token=${token}`);
-    await mailer.getByRole('heading', { name: '이메일 인증이 완료되었습니다' }).waitFor();
-    await mailer.goto(`${BASE}/verify-email?token=${token}`);
-    await mailer.getByRole('heading', { name: '인증하지 못했습니다' }).waitFor();
-    await mailer.getByRole('alert').filter({ hasText: '만료되었거나 이미 사용' }).waitFor();
-  });
   await step('비밀번호 찾기: 이메일을 넣으면 가입 여부와 관계없이 같은 안내', async () => {
     await mailer.goto(`${BASE}/login`);
     await settle(mailer);
@@ -698,43 +676,25 @@ try {
     await fresh.getByRole('heading', { name: '올바르지 않은 링크' }).waitFor();
   });
 
-  // 이메일 인증이 켜진 환경(운영)에서만 의미가 있다: 인증 전에는 로그인이 막히고 재발송 버튼이 나온다.
+  // 가입에는 이메일 인증이 없다(M36): 메일 설정과 무관하게 가입하면 바로 로그인된 상태로 들어간다.
   await step(
-    '이메일 인증 켜짐: 인증 전 로그인은 안내와 재발송 버튼, 인증 후 로그인 성공',
+    '가입하면 이메일 인증 없이 바로 로그인되고, 인증 화면·재발송 버튼은 없음',
     async () => {
-      const res = await fetch(`${BASE}/api/v1/auth/register`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(process.env.VERCEL_BYPASS && {
-            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
-          }),
-        },
-        body: JSON.stringify({
-          email: emailOf('unverified'),
-          password: PASSWORD,
-          name: 'ui-unverified',
-        }),
-      });
-      const body = await res.json();
-      if (!body.needsVerification) {
-        console.log('      (이 환경은 메일이 꺼져 있어 인증을 요구하지 않음 — 건너뜀)');
-        return;
-      }
-      if (body.accessToken) throw new Error('인증 전인데 세션이 발급됨');
       const p = await newPage();
-      await p.goto(`${BASE}/login`);
-      await p.getByLabel('이메일').fill(emailOf('unverified'));
+      await p.goto(`${BASE}/register`);
+      await p.getByLabel('이름').fill('ui-instant');
+      await p.getByLabel('이메일').fill(emailOf('instant'));
       await p.getByLabel('비밀번호').fill(PASSWORD);
-      await p.getByRole('button', { name: '로그인' }).click();
-      await p.getByRole('alert').filter({ hasText: '이메일 인증이 필요합니다' }).waitFor();
-      await p.getByRole('button', { name: '인증 메일 다시 받기' }).click();
-      await p.getByRole('status').filter({ hasText: '다시 보냈습니다' }).waitFor();
-      await db.query('UPDATE users SET email_verified_at = now() WHERE email = $1', [
-        emailOf('unverified'),
-      ]);
-      await p.getByRole('button', { name: '로그인' }).click();
-      await p.getByRole('link', { name: '프로젝트', exact: true }).waitFor();
+      await p.getByRole('button', { name: '가입하기' }).click();
+      await p.getByRole('heading', { name: '프로젝트', exact: true }).waitFor();
+      if ((await p.getByText('이메일을 확인해 주세요').count()) !== 0) {
+        throw new Error('인증 안내가 나옴');
+      }
+      await p.goto(`${BASE}/verify-email?token=${'x'.repeat(43)}`);
+      if ((await p.getByRole('heading', { name: /이메일 인증/ }).count()) !== 0) {
+        throw new Error('인증 화면이 남아 있음');
+      }
+      await p.close();
     },
   );
 

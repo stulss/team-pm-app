@@ -240,6 +240,8 @@ async function readChecks(label, who) {
           !JSON.stringify(tokens.body).includes('tpm_'),
         JSON.stringify(tokens.body)?.slice(0, 200),
       );
+      const gone = await call('POST', '/auth/verify-email', { body: { token: 'x'.repeat(43) } });
+      check('이메일 인증 엔드포인트는 없음 (M36)', gone.status === 404);
       const bogus = await call('GET', '/projects', { token: `tpm_${'x'.repeat(43)}` });
       check('가짜 API 토큰은 401 (M32)', bogus.status === 401);
       const mcpNoToken = await fetch(`${BASE_ORIGIN}/api/mcp`, {

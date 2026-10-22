@@ -2,7 +2,7 @@ import { query, withTransaction } from '../../config/db.js';
 import { withDefaults } from './preferences.js';
 
 const PUBLIC_COLUMNS =
-  'id, email, name, role, is_active, created_at, email_verified_at, preferences, github_login, password_set';
+  'id, email, name, role, is_active, created_at, preferences, github_login, password_set';
 
 export const toUser = (row) =>
   row && {
@@ -12,7 +12,6 @@ export const toUser = (row) =>
     role: row.role,
     isActive: row.is_active,
     createdAt: row.created_at,
-    emailVerified: Boolean(row.email_verified_at),
     preferences: withDefaults(row.preferences),
     githubLogin: row.github_login ?? null,
     emailLogin: row.password_set !== false,
@@ -31,14 +30,14 @@ export async function insertUser(client, { email, passwordHash, name }) {
   return rows[0];
 }
 
-// GitHub 로그인으로 처음 가입하는 사용자. 이메일은 GitHub 가 인증했으므로 인증 완료로 만든다.
+// GitHub 로그인으로 처음 가입하는 사용자.
 export async function insertGithubUser(client, { email, passwordHash, name, githubId, login }) {
   await client.query("SELECT pg_advisory_xact_lock(hashtext('users:first-admin'))");
   const { rows } = await client.query(
-    `INSERT INTO users (email, password_hash, name, role, email_verified_at, github_id, github_login, password_set)
+    `INSERT INTO users (email, password_hash, name, role, github_id, github_login, password_set)
      VALUES ($1, $2, $3,
        CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'member'::user_role ELSE 'admin'::user_role END,
-       now(), $4, $5, false)
+       $4, $5, false)
      RETURNING ${PUBLIC_COLUMNS}`,
     [email, passwordHash, name, githubId, login],
   );
@@ -199,13 +198,6 @@ export async function updateProfile(id, { name, passwordHash }) {
     [id, name ?? null, passwordHash ?? null],
   );
   return rows[0] ?? null;
-}
-
-export async function markEmailVerified(id) {
-  await query(
-    'UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() WHERE id = $1',
-    [id],
-  );
 }
 
 // 받은 키만 덮어쓴다(jsonb 병합). 허용 키 검증은 라우트의 zod 가 한다.
