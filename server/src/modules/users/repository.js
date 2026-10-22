@@ -2,7 +2,7 @@ import { query } from '../../config/db.js';
 import { withDefaults } from './preferences.js';
 
 const PUBLIC_COLUMNS =
-  'id, email, name, role, is_active, created_at, email_verified_at, preferences';
+  'id, email, name, role, is_active, created_at, email_verified_at, preferences, github_login, password_set';
 
 export const toUser = (row) =>
   row && {
@@ -14,6 +14,8 @@ export const toUser = (row) =>
     createdAt: row.created_at,
     emailVerified: Boolean(row.email_verified_at),
     preferences: withDefaults(row.preferences),
+    githubLogin: row.github_login ?? null,
+    emailLogin: row.password_set !== false,
   };
 
 // 첫 가입자는 자동 Admin. 동시 가입으로 Admin 이 둘 생기지 않도록 트랜잭션 + advisory lock 안에서 호출한다.
@@ -33,10 +35,10 @@ export async function insertUser(client, { email, passwordHash, name }) {
 export async function insertGithubUser(client, { email, passwordHash, name, githubId, login }) {
   await client.query("SELECT pg_advisory_xact_lock(hashtext('users:first-admin'))");
   const { rows } = await client.query(
-    `INSERT INTO users (email, password_hash, name, role, email_verified_at, github_id, github_login)
+    `INSERT INTO users (email, password_hash, name, role, email_verified_at, github_id, github_login, password_set)
      VALUES ($1, $2, $3,
        CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'member'::user_role ELSE 'admin'::user_role END,
-       now(), $4, $5)
+       now(), $4, $5, false)
      RETURNING ${PUBLIC_COLUMNS}`,
     [email, passwordHash, name, githubId, login],
   );
@@ -53,6 +55,15 @@ export async function linkGithub(id, githubId, login) {
     'UPDATE users SET github_id = $2, github_login = $3, updated_at = now() WHERE id = $1',
     [id, githubId, login],
   );
+}
+
+// 연결을 끊는다. 바뀐 행이 있으면 true.
+export async function unlinkGithub(id) {
+  const { rowCount } = await query(
+    'UPDATE users SET github_id = NULL, github_login = NULL, updated_at = now() WHERE id = $1 AND github_id IS NOT NULL',
+    [id],
+  );
+  return rowCount === 1;
 }
 
 export async function countUsers() {
@@ -112,6 +123,7 @@ export async function updateProfile(id, { name, passwordHash }) {
     `UPDATE users
        SET name = COALESCE($2, name),
            password_hash = COALESCE($3, password_hash),
+           password_set = CASE WHEN $3::text IS NOT NULL THEN true ELSE password_set END,
            updated_at = now()
      WHERE id = $1
      RETURNING ${PUBLIC_COLUMNS}`,

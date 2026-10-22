@@ -3739,6 +3739,41 @@ try {
       'GitHub 로그인: 기존 계정에 github_id·login 이 연결된다',
       linked.rows[0].id === String(gid + 1) && linked.rows[0].github_login === 'smoke-link',
     );
+
+    // 설정에서 연결·해제 (M28)
+    const me = await call('GET', '/auth/me', { token: t('outsider') });
+    check(
+      'GitHub 계정 연결: 내 정보에 githubLogin·emailLogin 가 있다',
+      me.body.user.githubLogin === 'smoke-link' && me.body.user.emailLogin === true,
+      JSON.stringify(me.body),
+    );
+    check(
+      'GitHub 계정 연결: 로그인하지 않으면 시작·해제 모두 401',
+      (await call('POST', '/auth/github/link')).status === 401 &&
+        (await call('DELETE', '/auth/github')).status === 401,
+    );
+    check(
+      'GitHub 가입 계정은 password_set=false, 비밀번호를 정하면 true',
+      created.password_set === false &&
+        (await (async () => {
+          await usersRepo.updateProfile(created.id, { passwordHash: 'y'.repeat(60) });
+          return (await db.query('SELECT password_set FROM users WHERE id = $1', [created.id]))
+            .rows[0].password_set;
+        })()) === true,
+    );
+    await db.query('UPDATE users SET password_set = false WHERE id = $1', [people.outsider.id]);
+    const blocked = await call('DELETE', '/auth/github', { token: t('outsider') });
+    check(
+      'GitHub 계정 연결: 비밀번호 없는 계정은 해제할 수 없다(409 PASSWORD_REQUIRED)',
+      blocked.status === 409 && blocked.body.error.code === 'PASSWORD_REQUIRED',
+    );
+    await db.query('UPDATE users SET password_set = true WHERE id = $1', [people.outsider.id]);
+    const unlinked = await call('DELETE', '/auth/github', { token: t('outsider') });
+    const after = await db.query('SELECT github_id FROM users WHERE id = $1', [people.outsider.id]);
+    check(
+      'GitHub 계정 연결: 비밀번호가 있으면 해제되고 DB 의 github_id 가 NULL',
+      unlinked.status === 204 && after.rows[0].github_id === null,
+    );
   }
 
   // --- 삭제 + CASCADE

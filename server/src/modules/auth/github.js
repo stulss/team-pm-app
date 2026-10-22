@@ -70,7 +70,8 @@ async function exchangeCode(code) {
 export const pickEmail = (emails) =>
   (Array.isArray(emails) ? emails : []).find((e) => e?.primary && e?.verified && e?.email)?.email;
 
-export async function fetchProfile(code) {
+// requireEmail=false 는 이미 로그인한 사용자의 "연결" 용: 누구의 GitHub 계정인지만 알면 된다.
+export async function fetchProfile(code, { requireEmail = true } = {}) {
   const token = await exchangeCode(code);
   const headers = {
     accept: 'application/vnd.github+json',
@@ -83,12 +84,45 @@ export async function fetchProfile(code) {
   ]);
   const email = pickEmail(emails)?.toLowerCase();
   if (!Number.isSafeInteger(profile?.id) || !profile?.login) throw fail('github_error');
-  if (!email) throw fail('no_verified_email');
+  if (!email && requireEmail) throw fail('no_verified_email');
   const name =
     String(profile.name || profile.login)
       .trim()
       .slice(0, 50) || profile.login;
   return { githubId: profile.id, login: profile.login, email, name };
+}
+
+// ---- 설정에서 연결 (M28) ----
+// 콜백에는 bearer 토큰이 없으므로 "누구의 연결인지"를 state 와 사용자 id 를 묶은 서명 쿠키로 확인한다.
+const linkSig = (state, userId) =>
+  crypto
+    .createHmac('sha256', env.JWT_REFRESH_SECRET)
+    .update(`gh-link:${state}:${userId}`)
+    .digest('base64url');
+
+export function makeLinkCookie(state, userId) {
+  return `${state}.${userId}.${linkSig(state, userId)}`;
+}
+
+// 서명이 맞으면 { state, userId }, 아니면 null.
+export function parseLinkCookie(value) {
+  if (typeof value !== 'string') return null;
+  const [state, userId, sig, ...rest] = value.split('.');
+  if (!state || !userId || !sig || rest.length > 0) return null;
+  return sameState(linkSig(state, userId), sig) ? { state, userId } : null;
+}
+
+export async function linkAccount(userId, { githubId, login }) {
+  const row = await users.findById(userId);
+  if (!row || !row.is_active) throw fail('inactive');
+  const owner = await users.findByGithubId(githubId);
+  if (owner && owner.id !== userId) throw fail('github_taken');
+  try {
+    await users.linkGithub(userId, githubId, login);
+  } catch (err) {
+    if (err.code === '23505') throw fail('github_taken');
+    throw err;
+  }
 }
 
 // 프로필로 계정을 찾아 세션을 만든다: github_id → 같은 이메일(연결) → 새 계정.

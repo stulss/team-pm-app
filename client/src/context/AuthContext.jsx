@@ -83,6 +83,11 @@ export function AuthProvider({ children }) {
           throw err;
         }
       },
+      // 서버에서 바뀐 내 정보(GitHub 연결 등)를 다시 받는다.
+      async refreshUser() {
+        const { data } = await http.get('/auth/me');
+        setUser(data.user);
+      },
       async logout() {
         try {
           await http.post('/auth/logout');

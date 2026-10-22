@@ -10,12 +10,16 @@ import {
   authorizeUrl,
   fetchProfile,
   githubEnabled,
+  linkAccount,
   loginWithProfile,
+  makeLinkCookie,
+  parseLinkCookie,
   newState,
   sameState,
 } from './github.js';
 import { appUrl } from '../../utils/mailTemplates.js';
 import { logger } from '../../utils/logger.js';
+import * as users from '../users/repository.js';
 
 export const COOKIE_NAME = 'refresh_token';
 
@@ -115,6 +119,7 @@ authRouter.post('/reset-password', validate(resetSchema), async (req, res) => {
 
 // ---- GitHub 로그인 (M27) ----
 const STATE_COOKIE = 'gh_oauth_state';
+const LINK_COOKIE = 'gh_oauth_link';
 // 콜백은 github.com 에서 넘어오는 요청이므로 state 쿠키는 Lax 여야 한다. 이 경로로만 전송된다.
 const stateCookieOptions = {
   httpOnly: true,
@@ -138,7 +143,54 @@ authRouter.get('/github/start', loginLimiter, (req, res) => {
   res.redirect(302, authorizeUrl(state));
 });
 
+// 설정에서 GitHub 계정을 연결: 로그인한 사용자만. 승인 주소를 돌려주면 화면이 그 주소로 이동한다.
+authRouter.post('/github/link', authenticate, loginLimiter, (req, res) => {
+  if (!githubEnabled()) {
+    return res
+      .status(404)
+      .json({ error: { code: 'NOT_FOUND', message: 'GitHub 로그인이 꺼져 있습니다.' } });
+  }
+  const state = newState();
+  res.cookie(LINK_COOKIE, makeLinkCookie(state, req.user.id), {
+    ...stateCookieOptions,
+    maxAge: 10 * 60 * 1000,
+  });
+  res.json({ url: authorizeUrl(state) });
+});
+
+// 로그인 수단이 하나도 남지 않게 하지 않는다: GitHub 로 가입해 비밀번호가 없으면 먼저 비밀번호를 정해야 한다.
+authRouter.delete('/github', authenticate, async (req, res) => {
+  if (req.user.emailLogin === false) {
+    return res.status(409).json({
+      error: {
+        code: 'PASSWORD_REQUIRED',
+        message:
+          '비밀번호가 없는 계정입니다. 로그인 화면의 "비밀번호 찾기"로 비밀번호를 먼저 설정해 주세요.',
+      },
+    });
+  }
+  await users.unlinkGithub(req.user.id);
+  res.status(204).end();
+});
+
 authRouter.get('/github/callback', loginLimiter, async (req, res) => {
+  const link = parseLinkCookie(req.cookies?.[LINK_COOKIE]);
+  res.clearCookie(LINK_COOKIE, stateCookieOptions);
+  if (link && sameState(link.state, req.query.state)) {
+    // 설정에서 시작한 연결
+    const done = (reason) => res.redirect(302, `${appUrl()}/settings?github=${reason}#security`);
+    if (!githubEnabled()) return done('disabled');
+    if (req.query.error) return done('denied');
+    if (typeof req.query.code !== 'string') return done('bad_state');
+    try {
+      await linkAccount(link.userId, await fetchProfile(req.query.code, { requireEmail: false }));
+      return done('linked');
+    } catch (err) {
+      if (err.code !== 'GITHUB_LOGIN_FAILED')
+        logger.error({ err: err.message }, 'github link failed');
+      return done(err.code === 'GITHUB_LOGIN_FAILED' ? err.message : 'error');
+    }
+  }
   const back = (reason) => res.redirect(302, `${appUrl()}/login?github=${reason}`);
   const expected = req.cookies?.[STATE_COOKIE];
   res.clearCookie(STATE_COOKIE, stateCookieOptions);

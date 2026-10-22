@@ -70,6 +70,8 @@ const pub = (u) => ({
   created_at: u.created_at,
   email_verified_at: u.email_verified_at ?? null,
   preferences: u.preferences ?? {},
+  github_login: u.github_login ?? null,
+  password_set: u.password_set,
 });
 
 let reactionSeq = 0;
@@ -117,14 +119,25 @@ export const usersRepo = {
       email_verified_at: new Date(),
       github_id: githubId,
       github_login: login,
+      password_set: false,
     };
     store.users.push(user);
     return pub(user);
+  },
+  async unlinkGithub(id) {
+    const u = store.users.find((x) => x.id === id);
+    if (!u?.github_id) return false;
+    u.github_id = null;
+    u.github_login = null;
+    return true;
   },
   async findByGithubId(githubId) {
     return store.users.find((u) => String(u.github_id) === String(githubId)) ?? null;
   },
   async linkGithub(id, githubId, login) {
+    if (store.users.some((x) => x.id !== id && String(x.github_id) === String(githubId))) {
+      throw Object.assign(new Error('duplicate key'), { code: '23505' });
+    }
     const u = store.users.find((x) => x.id === id);
     if (u) Object.assign(u, { github_id: githubId, github_login: login });
   },
@@ -176,7 +189,10 @@ export const usersRepo = {
     const u = store.users.find((x) => x.id === id);
     if (!u) return null;
     if (name) u.name = name;
-    if (passwordHash) u.password_hash = passwordHash;
+    if (passwordHash) {
+      u.password_hash = passwordHash;
+      u.password_set = true;
+    }
     return pub(u);
   },
 };

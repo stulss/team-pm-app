@@ -11,6 +11,8 @@ const MESSAGES = {
   email_taken: '이미 사용 중인 이메일입니다. 이메일과 비밀번호로 로그인해 주세요.',
   registration_closed: '현재 신규 가입을 받지 않습니다.',
   inactive: '비활성화된 계정입니다. 관리자에게 문의해 주세요.',
+  linked: 'GitHub 계정을 연결했습니다.',
+  github_taken: '이 GitHub 계정은 이미 다른 사용자에게 연결돼 있습니다.',
   disabled: 'GitHub 로그인이 꺼져 있습니다.',
   error: 'GitHub 로그인에 실패했습니다. 잠시 뒤 다시 시도해 주세요.',
 };

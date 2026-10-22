@@ -2372,6 +2372,34 @@ try {
       await panel.getByLabel('GitHub 저장소').waitFor();
     },
   );
+  await step('설정: GitHub 계정 연결 상태가 보이고, 해제하면 연결 버튼으로 돌아감', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    // 개발 서버에는 GitHub 키가 없으므로 공개 엔드포인트 응답만 켜진 것으로 바꾼다
+    await setPage.route('**/api/v1/auth/providers', (route) =>
+      route.fulfill({ json: { github: true } }),
+    );
+    await setPage.goto(`${BASE}/settings`);
+    const card = setPage.getByRole('region', { name: 'GitHub 계정' });
+    await card.getByRole('button', { name: 'GitHub 계정 연결' }).waitFor();
+
+    // GitHub 승인 왕복은 서버가 하는 일이라 연결된 상태를 DB 에 만들고 돌아온 화면을 확인한다
+    await db.query("UPDATE users SET github_id = $2, github_login = 'octo-ui' WHERE email = $1", [
+      emailOf('settings'),
+      800000000 + Math.floor(Math.random() * 1000000),
+    ]);
+    await setPage.goto(`${BASE}/settings?github=linked`);
+    await card.getByText('GitHub 계정을 연결했습니다.').waitFor();
+    await card.getByText('@octo-ui').waitFor();
+
+    setPage.once('dialog', (d) => d.accept());
+    await card.getByRole('button', { name: '연결 해제' }).click();
+    await card.getByRole('button', { name: 'GitHub 계정 연결' }).waitFor();
+    const row = await db.query('SELECT github_id FROM users WHERE email = $1', [
+      emailOf('settings'),
+    ]);
+    if (row.rows[0].github_id !== null) throw new Error('DB 에 연결이 남음');
+    await setPage.unroute('**/api/v1/auth/providers');
+  });
   await step(
     '설정: 비밀번호 변경은 현재 비밀번호 검증·확인 일치가 필요하고, 바꾼 뒤 새 비밀번호로만 로그인됨',
     async () => {

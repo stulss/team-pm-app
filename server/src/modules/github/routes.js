@@ -93,11 +93,9 @@ webhooksRouter.post('/github/:connectionId', async (req, res, next) => {
     const event = req.get('x-github-event') ?? '';
     const delivery = req.get('x-github-delivery');
     if (!delivery) {
-      return res
-        .status(400)
-        .json({
-          error: { code: 'MISSING_DELIVERY', message: 'X-GitHub-Delivery 헤더가 없습니다.' },
-        });
+      return res.status(400).json({
+        error: { code: 'MISSING_DELIVERY', message: 'X-GitHub-Delivery 헤더가 없습니다.' },
+      });
     }
     // 같은 전달을 다시 받으면(재전송) 두 번 처리하지 않는다.
     if (!(await repo.claimDelivery(delivery.slice(0, 80), connection.id))) {
