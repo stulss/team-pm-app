@@ -3384,7 +3384,10 @@ try {
     );
 
     // 지워도 번호를 재사용하지 않는다
-    await call('DELETE', `/tasks/${made[7].body.id}`, { token: t('manager') });
+    // 번호 8 인 작업을 지운다(동시 생성이라 made[7] 의 번호는 매번 다르고, 1번을 지우면 아래 유일 제약 검사가 성립하지 않는다)
+    await call('DELETE', `/tasks/${made.find((r) => r.body.number === 8).body.id}`, {
+      token: t('manager'),
+    });
     const next = await call('POST', `/projects/${kpid}/tasks`, {
       token: t('member'),
       body: { title: 'smoke-key 다음' },
@@ -4012,6 +4015,148 @@ try {
       '표시 설정: 기본값은 일요일 시작·12시간 표기(저장 전 사용자도 같다)',
       before.weekStart === 'sun' && before.timeFormat === '12h',
       JSON.stringify(before),
+    );
+  }
+
+  // --- 개인 API 토큰 + MCP (M32·M33): 해시 저장, 범위, 만료·폐기, 활동 기록의 토큰 이름을 실DB 로 확인
+  {
+    const MCP = BASE.replace('/api/v1', '/api/mcp');
+    const issue = (scope, extra = {}) =>
+      call('POST', '/users/me/api-tokens', {
+        token: t('member'),
+        body: { name: `smoke-${scope}`, scope, ...extra },
+      });
+    const asToken = (token, method, path, body) => call(method, path, { token, body });
+    const rpc = async (token, method, params) => {
+      const res = await fetch(MCP, {
+        method: 'POST',
+        headers: headers(token),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : null };
+    };
+
+    const w = (await issue('write')).body;
+    const r = (await issue('read')).body;
+    const row = (await db.query('SELECT * FROM api_tokens WHERE id = $1', [w.id])).rows[0];
+    check(
+      'API 토큰: 값은 발급 응답에만 있고 DB 에는 SHA-256 해시만 저장된다',
+      /^tpm_[A-Za-z0-9_-]{43}$/.test(w.token) &&
+        row.token_hash === crypto.createHash('sha256').update(w.token).digest('hex') &&
+        !JSON.stringify(row).includes(w.token),
+    );
+    const listed = await call('GET', '/users/me/api-tokens', { token: t('member') });
+    check(
+      'API 토큰: 목록에는 값이 없고 앞부분(prefix)만 보인다',
+      listed.body.data.length >= 2 && !JSON.stringify(listed.body).includes(w.token),
+    );
+
+    // 쓰기 토큰으로 작업 만들기 → 활동 기록에 토큰 이름
+    const made = await asToken(w.token, 'POST', `/projects/${pid}/tasks`, {
+      title: 'smoke-token-task',
+    });
+    const act = await db.query(
+      `SELECT meta FROM activity_logs WHERE task_id = $1 AND action = 'task.created'`,
+      [made.body.id],
+    );
+    check(
+      'API 토큰: 쓰기 토큰으로 작업을 만들 수 있고 활동 기록 meta.token 에 토큰 이름이 남는다',
+      made.status === 201 && act.rows[0]?.meta?.token === 'smoke-write',
+      JSON.stringify([made.status, act.rows[0]]),
+    );
+    const seen = await asToken(r.token, 'GET', `/tasks/key/${made.body.key}`);
+    check(
+      'API 토큰: 읽기 토큰으로 조회할 수 있다',
+      seen.status === 200 && seen.body.id === made.body.id,
+    );
+    const roWrite = await asToken(r.token, 'PATCH', `/tasks/${made.body.id}`, { title: '바꿈' });
+    const afterRo = await asToken(w.token, 'GET', `/tasks/${made.body.id}`);
+    check(
+      'API 토큰: 읽기 토큰의 쓰기는 403 이고 데이터는 그대로다',
+      roWrite.status === 403 && afterRo.body.title === 'smoke-token-task',
+    );
+    const denied = await Promise.all([
+      asToken(w.token, 'GET', '/users/me/api-tokens'),
+      asToken(w.token, 'GET', '/auth/sessions'),
+      asToken(w.token, 'DELETE', '/users/me', { confirmEmail: 'x' }),
+      asToken(w.token, 'DELETE', `/projects/${pid}`),
+    ]);
+    check(
+      'API 토큰: 토큰 관리·세션·계정 삭제·프로젝트 삭제는 403',
+      denied.every((d) => d.status === 403),
+      JSON.stringify(denied.map((d) => d.status)),
+    );
+    const used = (await db.query('SELECT last_used_at FROM api_tokens WHERE id = $1', [w.id]))
+      .rows[0];
+    check('API 토큰: 마지막 사용 시각이 기록된다', used.last_used_at !== null);
+
+    // MCP: 같은 권한 검사를 거쳐 도구가 동작한다
+    const init = await rpc(w.token, 'initialize', { protocolVersion: '2025-06-18' });
+    const tools = await rpc(w.token, 'tools/list');
+    const roTools = await rpc(r.token, 'tools/list');
+    check(
+      'MCP: initialize·tools/list 가 동작하고 읽기 토큰에는 쓰기 도구가 없다',
+      init.body.result?.serverInfo?.name === 'team-pm-app' &&
+        tools.body.result.tools.some((x) => x.name === 'create_task') &&
+        !roTools.body.result.tools.some((x) => x.name === 'create_task'),
+    );
+    check(
+      'MCP: 토큰이 없으면 401',
+      (await rpc(undefined, 'tools/list')).status === 401 &&
+        (await rpc(t('member'), 'tools/list')).status === 401,
+    );
+    const mcpMade = await rpc(w.token, 'tools/call', {
+      name: 'create_task',
+      arguments: { project: pid, title: 'smoke-mcp-task', priority: 'high' },
+    });
+    const mcpTask = JSON.parse(mcpMade.body.result.content[0].text);
+    await rpc(w.token, 'tools/call', {
+      name: 'move_task',
+      arguments: { task: mcpTask.key, status: 'in_progress' },
+    });
+    const moved = (await db.query('SELECT status FROM tasks WHERE id = $1', [mcpTask.id])).rows[0];
+    const mcpAct = await db.query(
+      `SELECT action, meta FROM activity_logs WHERE task_id = $1 ORDER BY seq`,
+      [mcpTask.id],
+    );
+    check(
+      'MCP: 도구로 만든 작업이 DB 에 반영되고 작업 키로 이동할 수 있으며 활동 기록에 토큰 이름이 남는다',
+      mcpMade.body.result.isError === false &&
+        moved.status === 'in_progress' &&
+        mcpAct.rows.length >= 2 &&
+        mcpAct.rows.every((a) => a.meta.token === 'smoke-write'),
+      JSON.stringify(mcpAct.rows),
+    );
+    const roCall = await rpc(r.token, 'tools/call', {
+      name: 'create_task',
+      arguments: { project: pid, title: 'smoke-mcp-readonly' },
+    });
+    const leaked = await db.query(`SELECT 1 FROM tasks WHERE title = 'smoke-mcp-readonly'`);
+    check(
+      'MCP: 읽기 토큰의 쓰기 도구 호출은 거절되고 작업이 생기지 않는다',
+      roCall.body.result.isError === true && leaked.rowCount === 0,
+    );
+
+    // 만료·폐기
+    await db.query(`UPDATE api_tokens SET expires_at = now() - interval '1 minute' WHERE id = $1`, [
+      r.id,
+    ]);
+    check(
+      'API 토큰: 만료된 토큰은 401',
+      (await asToken(r.token, 'GET', '/projects')).status === 401,
+    );
+    const rev = await call('DELETE', `/users/me/api-tokens/${w.id}`, { token: t('member') });
+    check(
+      'API 토큰: 폐기하면 바로 401 이고 MCP 도 끊긴다',
+      rev.status === 204 &&
+        (await asToken(w.token, 'GET', '/projects')).status === 401 &&
+        (await rpc(w.token, 'tools/list')).status === 401,
+    );
+    check(
+      'API 토큰: 남이 내 토큰을 폐기할 수 없다(404)',
+      (await call('DELETE', `/users/me/api-tokens/${r.id}`, { token: t('manager') })).status ===
+        404,
     );
   }
 

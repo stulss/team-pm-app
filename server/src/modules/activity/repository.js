@@ -1,4 +1,5 @@
 import { query } from '../../config/db.js';
+import { tokenContext } from '../apiTokens/guard.js';
 
 export const RETENTION_DAYS = 180;
 
@@ -14,10 +15,12 @@ export const toActivity = (row) =>
   };
 
 export async function insert({ projectId, taskId = null, actorId = null, action, meta = {} }) {
+  // API 토큰으로 한 일이면 토큰 이름을 남긴다(사람이 한 일과 구분하기 위해). 값은 절대 남기지 않는다.
+  const token = tokenContext.getStore()?.name;
   await query(
     `INSERT INTO activity_logs (project_id, task_id, actor_id, action, meta)
      VALUES ($1, $2, $3, $4, $5::jsonb)`,
-    [projectId, taskId, actorId, action, JSON.stringify(meta)],
+    [projectId, taskId, actorId, action, JSON.stringify(token ? { ...meta, token } : meta)],
   );
 }
 

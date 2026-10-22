@@ -6,7 +6,10 @@ import { env } from './config/env.js';
 import { query } from './config/db.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
-import { apiLimiter } from './middleware/rateLimit.js';
+import { apiLimiter, tokenLimiter } from './middleware/rateLimit.js';
+import { resolveApiToken } from './modules/apiTokens/guard.js';
+import { apiTokensRouter } from './modules/apiTokens/routes.js';
+import { mcpRouter } from './modules/mcp/routes.js';
 import { logger } from './utils/logger.js';
 import { authRouter } from './modules/auth/routes.js';
 import { usersRouter } from './modules/users/routes.js';
@@ -44,6 +47,8 @@ app.use('/api/webhooks', webhooksRouter);
 // 요청 본문은 100KB 까지. (설명 1만자·댓글 5천자는 한글로도 충분히 들어간다)
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
+// MCP 서버(AI 클라이언트용): API 토큰으로만 인증하고, 도구는 아래 /api/v1 라우터를 호출한다.
+app.use('/api/mcp', mcpRouter);
 
 const api = express.Router();
 
@@ -53,6 +58,9 @@ api.use((req, res, next) => {
   next();
 });
 api.use(apiLimiter);
+// API 토큰(tpm_…)은 라우터보다 앞에서 확인하고 경로·읽기/쓰기 범위를 검사한다.
+api.use(resolveApiToken);
+api.use(tokenLimiter);
 
 api.get('/health', async (req, res) => {
   try {
@@ -65,6 +73,7 @@ api.get('/health', async (req, res) => {
 });
 
 api.use('/auth', authRouter);
+api.use('/users/me/api-tokens', apiTokensRouter);
 api.use('/users', usersRouter);
 api.use('/projects', projectsRouter);
 api.use('/projects/:id/tasks', projectTasksRouter);

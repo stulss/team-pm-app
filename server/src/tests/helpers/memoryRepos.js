@@ -30,6 +30,7 @@ export const store = {
   githubDeliveries: [],
   commentReactions: [],
   chatReactions: [],
+  apiTokens: [],
 };
 
 export function reset() {
@@ -57,6 +58,7 @@ export function reset() {
   store.githubDeliveries = [];
   store.commentReactions = [];
   store.chatReactions = [];
+  store.apiTokens = [];
   activitySeq = 0;
   chatSeq = 0;
 }
@@ -1601,5 +1603,60 @@ export const dashboardRepo = {
         };
       }),
     };
+  },
+};
+
+export const apiTokensRepo = {
+  toToken: (row) =>
+    row && {
+      id: row.id,
+      name: row.name,
+      scope: row.scope,
+      prefix: row.prefix,
+      expiresAt: row.expires_at,
+      lastUsedAt: row.last_used_at,
+      createdAt: row.created_at,
+    },
+  async insert({ userId, name, scope, tokenHash, prefix, expiresAt }) {
+    const row = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      name,
+      scope,
+      token_hash: tokenHash,
+      prefix,
+      expires_at: expiresAt,
+      last_used_at: null,
+      revoked_at: null,
+      created_at: new Date(),
+    };
+    store.apiTokens.push(row);
+    return row;
+  },
+  async listForUser(userId) {
+    return store.apiTokens.filter((t) => t.user_id === userId && !t.revoked_at).reverse();
+  },
+  async countActive(userId) {
+    return store.apiTokens.filter(
+      (t) => t.user_id === userId && !t.revoked_at && (!t.expires_at || t.expires_at > new Date()),
+    ).length;
+  },
+  async revoke(userId, id) {
+    const t = store.apiTokens.find((x) => x.id === id && x.user_id === userId && !x.revoked_at);
+    if (!t) return false;
+    t.revoked_at = new Date();
+    return true;
+  },
+  async findByHash(hash) {
+    const t = store.apiTokens.find((x) => x.token_hash === hash);
+    if (!t) return null;
+    return { ...t, is_active: store.users.find((u) => u.id === t.user_id)?.is_active ?? false };
+  },
+  async touch(id) {
+    const t = store.apiTokens.find((x) => x.id === id);
+    if (t) t.last_used_at = new Date();
+  },
+  async deleteForUser(userId) {
+    store.apiTokens = store.apiTokens.filter((t) => t.user_id !== userId);
   },
 };

@@ -478,6 +478,10 @@ erDiagram
 | PATCH | `/users/me/preferences` | 내 설정 일부 수정(M22) `{ theme?, accent?, density?, defaultView?, notifications?: { assigned?, due?, comment?, mention? } }` — 빈 객체·허용되지 않은 키·값은 400. 응답 `{ user }` 의 `preferences` 는 기본값이 채워진 전체 설정 | 본인 |
 | GET | `/users/me/export` | 내 데이터를 JSON 파일로 내려받는다(프로필·소속 프로젝트·내가 맡았거나 만든 작업·내 댓글, 각 최대 5000건). `Content-Disposition: attachment` | 로그인 |
 | DELETE | `/users/me` | 계정 삭제(탈퇴). `{ confirmEmail, currentPassword? }` — 이메일을 똑같이 입력해야 하고, 비밀번호가 있는 계정은 현재 비밀번호도 필요(401 `INVALID_CREDENTIALS`). 소유한 프로젝트가 있으면 409 `OWNS_PROJECTS`, 마지막 관리자면 409 `LAST_ADMIN`. 성공하면 계정을 **익명화**하고 모든 세션을 끊는다 → 204 | 로그인 |
+| GET | `/users/me/api-tokens` | 내 API 토큰 목록(`{ id, name, scope, prefix, expiresAt, lastUsedAt, createdAt }`, 폐기한 것 제외). 토큰 값은 담기지 않는다 | 로그인(JWT 만) |
+| POST | `/users/me/api-tokens` | 발급. `{ name, scope: 'read'\|'write', expiresInDays: 30\|90\|null }` → 201 `{ ...토큰, token: 'tpm_…' }` — **토큰 값은 이 응답에서 한 번만** 보인다. 사용자당 활성 토큰 10개까지(초과 409 `TOKEN_LIMIT`) | 로그인(JWT 만) |
+| DELETE | `/users/me/api-tokens/:id` | 폐기(바로 효력 상실) → 204. 남의 토큰은 404 | 로그인(JWT 만) |
+| POST | `/api/mcp` | MCP(Model Context Protocol) 서버. JSON-RPC 2.0 over HTTP(상태 없음). `Authorization: Bearer tpm_…` 필수. 도구는 기존 REST API 를 같은 권한 검사로 호출한다 | API 토큰 |
 
 #### Projects
 | 메서드 | 경로 | 설명 | 권한 |
@@ -556,6 +560,8 @@ erDiagram
 > 구현 규칙(M27): 승인 범위는 `read:user user:email`. 콜백 주소는 `APP_URL`(없으면 운영 도메인) 기준 `/api/v1/auth/github/callback` 으로 고정해 Host 헤더 조작을 막는다. GitHub 응답에서 `verified && primary` 이메일이 없으면 거절한다. 액세스 토큰은 저장·로그하지 않고 이 요청 안에서만 쓰며, GitHub 호출은 8초 제한을 둔다. 이메일이 같아도 이미 *다른* `github_id` 가 연결된 계정에는 연결하지 않는다.
 >
 > 구현 규칙(M28, 설정에서 연결·해제): 연결은 로그인한 사용자의 요청(`POST /auth/github/link`)으로만 시작하고, state 와 사용자 id 를 묶어 HMAC 서명한 10분짜리 쿠키로 콜백이 "누구의 연결인지"를 확인한다(콜백에는 bearer 토큰이 없다). 연결에는 GitHub 이메일이 인증돼 있을 필요도, 앱 이메일과 같을 필요도 없다. 이미 다른 사용자에게 연결된 GitHub 계정은 거절(`github_taken`)한다. `users.password_set`(마이그레이션 024)은 GitHub 로 가입해 비밀번호를 모르는 계정이 false 이고 비밀번호를 설정하면 true 가 된다 — 해제로 로그인 수단이 사라지는 것을 막는다. 사용자 응답에 `githubLogin`·`emailLogin`(비밀번호로 로그인할 수 있는가) 가 붙는다.
+> 구현 규칙(M32 API 토큰): 토큰은 `tpm_` + 난수 43자이고 DB 에는 SHA-256 해시(`token_hash`, 유일)와 목록 표시용 앞 12자(`prefix`)만 둔다 — 값이 높은 엔트로피의 난수라 솔트 없는 해시로 충분하다. 토큰 요청은 라우터보다 앞의 미들웨어가 해시로 조회해 폐기·만료·비활성 사용자를 걸러 401 로 답하고, 통과하면 `req.apiToken` 을 붙인 뒤 기존 `authenticate` 가 발급자를 `req.user` 로 올린다(권한은 발급자와 똑같고 그 이상이 아니다). **허용 경로**는 `/projects`, `/tasks`, `/comments`, `/search`, `/dashboard`, `/feed`, `/auth/me` 뿐이고, 그 안에서도 `/projects/:id/members`, `/projects/:id/github`, `/projects/:id/share-links` 와 `DELETE /projects/:id` 는 거절(403 `TOKEN_FORBIDDEN`)한다. 읽기 토큰의 GET 이외 요청은 403 `TOKEN_READ_ONLY`. 계정·세션·토큰 관리는 JWT 로만 된다. 토큰은 로그·활동 기록·응답 어디에도 값을 남기지 않는다. 토큰별 분당 120회 한도(운영에서만 동작). 활동 기록은 `meta.token` 에 토큰 이름을 남겨(AsyncLocalStorage 로 요청 문맥에서 읽는다) 화면에 "(API 토큰: 이름)"으로 보인다. 계정 삭제(익명화) 때 토큰은 모두 지운다. `last_used_at` 은 1분보다 오래된 경우에만 갱신해 쓰기를 줄인다.
+> 구현 규칙(M33 MCP): 요청 하나가 응답 하나인 상태 없는 방식만 지원한다(`GET` 은 405). 단건 JSON-RPC 요청을 받고 배치(배열)는 거절한다. 알림(`id` 없음)은 202 로 본문 없이 답한다. 도구 결과는 `{ content: [{ type: 'text', text: <JSON> }], isError }` 이고 REST 가 4xx/5xx 면 `isError: true` 와 서버의 오류 메시지를 담는다. 도구 인자는 JSON 스키마(zod)로 검증하고 작업은 UUID 대신 **작업 키(`TPM-12`)** 로 지정할 수 있다. 응답 텍스트는 어떤 경우에도 토큰 값을 담지 않는다.
 
 #### GitHub (M26)
 | 메서드 | 경로 | 설명 | 권한 |
@@ -952,6 +958,8 @@ team-pm-app/
 | **M23** | 알림 설정 | 알림 종류별(배정·마감·댓글·멘션) 받기/끄기. 모든 알림 생성이 거치는 `insertMany` 가 받는 사람의 설정을 SQL 로 확인해 꺼 둔 종류는 만들지 않는다(앱 안 알림만 해당, 마이그레이션 없음) |
 | **M25** | 작업 키 | 작업을 `TPM-12` 형식의 키로 부르고 조회한다(`projects.key`·`tasks.number`, 마이그레이션 021). GitHub 연동(M26)이 커밋·PR 에 적은 키로 작업을 찾는 토대 |
 | **M26** | GitHub 연동 | 프로젝트에 저장소를 연결하면 웹훅(`pull_request`·`push`)으로 받은 PR·커밋을 **작업 키**(`TPM-12`)로 찾아 작업에 연결하고(카드 배지·작업 상세 목록), PR 열림/머지에 따라 작업 상태를 자동으로 옮길 수 있다(옵션). 서명 검증·중복 전달 방지·비밀 재발급(`github_connections`·`github_task_links`·`github_deliveries`, 마이그레이션 022, §1.2·§2.2) |
+| **M33** | MCP 서버 엔드포인트 | `POST /api/mcp` 에 JSON-RPC 2.0 로 `initialize`·`ping`·`tools/list`·`tools/call` 을 구현한다(상태 없는 요청-응답, SSE 없음 — 서버리스에 맞춘다). 인증은 API 토큰만. 도구 호출은 같은 프로세스에서 `/api/v1` 라우터를 그대로 호출해(light-my-request) 토큰 범위·프로젝트 권한·검증·실시간 이벤트·활동 기록을 REST 와 똑같이 거친다. 도구: `list_projects`·`list_tasks`·`my_tasks`·`get_task`·`search`·`list_comments`·`create_task`·`update_task`·`move_task`·`add_comment`. 읽기 토큰에는 쓰기 도구가 목록에서 빠지고 호출해도 서버가 거절한다(결과의 `isError`). 마이그레이션 없음 |
+| **M32** | 개인 API 토큰(설정) | 설정 → "API 토큰"에서 이름·권한(읽기/읽기+쓰기)·만료(30일/90일/없음)를 골라 발급한다. 토큰은 `tpm_` + 32바이트 난수(base64url)이고 **SHA-256 해시만 저장**하며 값은 발급 응답에서 한 번만 보인다. `Authorization: Bearer tpm_…` 로 기존 `/api/v1` 을 발급자 권한으로 호출한다. 읽기 토큰은 GET 만, 계정·인증·사용자 관리·GitHub 연동·공유 링크·프로젝트 삭제·멤버 관리는 토큰으로 호출할 수 없다. 토큰별 분당 호출 한도, 마지막 사용 시각(1분 단위 갱신), 활동 기록에 "API 토큰: 이름" 표시. 마이그레이션 026(`api_tokens`, RLS) |
 | **M31** | 날짜·시간 표시 설정 | 사용자 설정(`users.preferences`)에 `weekStart`(`sun`·`mon`, 기본 `sun`)와 `timeFormat`(`12h`·`24h`, 기본 `12h` — 지금 표기 그대로)을 추가한다. 캘린더의 한 주 시작 요일과 활동·댓글·알림의 시각 표기에 적용한다. 허용 목록 검증과 기본값 채우기는 기존 설정과 같다. 마이그레이션 없음 |
 | **M30** | 내 데이터 내보내기·계정 삭제(설정) | 설정 → "내 데이터"에서 JSON 으로 내보내고, 계정을 삭제한다. 작업·댓글·활동 기록이 사용자를 `RESTRICT` 로 참조하므로 행을 지우지 않고 **익명화**한다(이메일 `deleted-<id>@deleted.invalid`, 이름 "탈퇴한 사용자", 비활성, 비밀번호 무효화, GitHub 연결·설정 제거, 프로젝트 멤버십·알림·저장된 필터·세션 삭제, 맡은 작업의 담당자 해제). 작성한 작업·댓글은 "탈퇴한 사용자" 이름으로 남는다. 마이그레이션 없음 |
 | **M29** | 로그인한 기기 관리(설정) | 설정 → 보안에서 로그인한 기기(브라우저·OS·IP·마지막 사용)를 보고 하나씩 또는 "다른 모든 기기"를 로그아웃한다. `refresh_tokens.session_id·user_agent·ip`(마이그레이션 025), 회전해도 같은 `session_id` 를 이어받는다. 이미 발급된 access 토큰은 최대 15분 더 유효하다(새로 받을 수 없을 뿐) |

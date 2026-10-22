@@ -232,6 +232,22 @@ async function readChecks(label, who) {
         ['sun', 'mon'].includes(me.body?.user?.preferences?.weekStart) &&
           ['12h', '24h'].includes(me.body?.user?.preferences?.timeFormat),
       );
+      const tokens = await call('GET', '/users/me/api-tokens', { token: t });
+      check(
+        'API 토큰 목록이 열리고 값(token)은 담기지 않음 (M32)',
+        tokens.status === 200 &&
+          Array.isArray(tokens.body?.data) &&
+          !JSON.stringify(tokens.body).includes('tpm_'),
+        JSON.stringify(tokens.body)?.slice(0, 200),
+      );
+      const bogus = await call('GET', '/projects', { token: `tpm_${'x'.repeat(43)}` });
+      check('가짜 API 토큰은 401 (M32)', bogus.status === 401);
+      const mcpNoToken = await fetch(`${BASE_ORIGIN}/api/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      });
+      check('MCP 엔드포인트는 토큰 없이 401 (M33)', mcpNoToken.status === 401);
       check(
         '내 정보에 githubLogin·emailLogin 이 있음 (M28)',
         me.status === 200 &&

@@ -2449,6 +2449,43 @@ try {
     },
   );
   await step(
+    '설정: API 토큰을 만들면 값이 한 번만 보이고, 그 토큰으로 API 를 쓰다가 폐기하면 바로 끊김',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      await setPage.goto(`${BASE}/settings`);
+      const card = setPage.getByRole('region', { name: 'API 토큰' });
+      await card.getByLabel('토큰 이름').fill('e2e-claude');
+      await card.getByLabel('권한').selectOption('write');
+      await card.getByRole('button', { name: '토큰 만들기' }).click();
+      const shown = card.getByTestId('new-api-token');
+      await shown.waitFor();
+      const token = (await shown.textContent()).trim();
+      if (!/^tpm_[A-Za-z0-9_-]{43}$/.test(token)) throw new Error(`토큰 형식이 이상함: ${token}`);
+
+      const me = await apiCall('GET', '/auth/me', token);
+      if (me.status !== 200) throw new Error(`토큰으로 /auth/me ${me.status}`);
+      const blocked = await apiCall('GET', '/users/me/api-tokens', token);
+      if (blocked.status !== 403) throw new Error(`토큰 관리가 토큰으로 열림: ${blocked.status}`);
+
+      // 새로고침하면 값은 다시 볼 수 없고 목록에는 앞부분만 남는다
+      await setPage.reload();
+      const again = setPage.getByRole('region', { name: 'API 토큰' });
+      const row = again.getByRole('listitem').filter({ hasText: 'e2e-claude' });
+      await row.waitFor();
+      if ((await again.getByTestId('new-api-token').count()) !== 0)
+        throw new Error('값이 다시 보임');
+      if ((await again.textContent()).includes(token)) throw new Error('화면에 토큰 값이 남음');
+      if (!(await row.textContent()).includes(token.slice(0, 12)))
+        throw new Error('prefix 가 없음');
+
+      setPage.once('dialog', (d) => d.accept());
+      await again.getByRole('button', { name: 'e2e-claude 토큰 폐기' }).click();
+      await row.waitFor({ state: 'detached' });
+      const dead = await apiCall('GET', '/auth/me', token);
+      if (dead.status !== 401) throw new Error(`폐기한 토큰이 아직 쓰임: ${dead.status}`);
+    },
+  );
+  await step(
     '설정: 내 데이터를 JSON 으로 내려받고, 이메일을 입력해야 계정을 삭제할 수 있음',
     async () => {
       await apiRegister('leaver');

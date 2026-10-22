@@ -123,7 +123,13 @@ export async function anonymize(userId, passwordHash) {
       [userId, passwordHash],
     );
     await client.query('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = $1', [userId]);
-    for (const table of ['project_members', 'notifications', 'saved_filters', 'email_tokens']) {
+    for (const table of [
+      'project_members',
+      'notifications',
+      'saved_filters',
+      'email_tokens',
+      'api_tokens',
+    ]) {
       await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
     }
   });

@@ -23,7 +23,11 @@ export function describeChanges(changes = {}) {
 }
 
 // 작업 이력 화면(이미 어떤 작업인지 알고 있을 때)에서는 제목을 생략한다.
-export function describeActivity(a, { showTask = true } = {}) {
+// API 토큰(AI 연동 등)으로 한 일은 사람이 한 일과 구분되도록 토큰 이름을 덧붙인다.
+export const describeActivity = (a, options) =>
+  describeBase(a, options) + (a.meta?.token ? ` (API 토큰: ${a.meta.token})` : '');
+
+function describeBase(a, { showTask = true } = {}) {
   const m = a.meta ?? {};
   const task = (title) => (showTask && title ? `작업 ${q(title)}` : '작업');
   switch (a.action) {

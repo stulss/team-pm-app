@@ -1731,3 +1731,33 @@ dialog.palette::backdrop {
   padding-top: 1rem;
   border-top: 1px solid var(--border);
 }
+
+/* API 토큰 (M32) */
+.token-reveal {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.token-value {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.token-help {
+  margin-top: 1rem;
+}
+.token-snippet {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 0.85rem;
+}

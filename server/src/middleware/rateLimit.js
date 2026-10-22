@@ -123,6 +123,15 @@ export function createLimiters({ skip = defaultSkip, useRedis = true } = {}) {
       store: store('rl:search:'),
       keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip),
     }),
+    // API 토큰: 토큰별 분당 120회(AI 클라이언트가 반복 호출해도 서버를 압도하지 못하게). 토큰 요청에만 적용한다.
+    token: rateLimit({
+      ...common,
+      windowMs: 60 * 1000,
+      limit: 120,
+      skip: (req, res) => skip(req, res) || !req.apiToken,
+      store: store('rl:token:'),
+      keyGenerator: (req) => req.apiToken?.id ?? ipKeyGenerator(req.ip),
+    }),
     // 일반 API: IP 기준. 같은 사무실(NAT)의 여러 사용자가 함께 쓸 수 있도록 넉넉하게 둔다.
     api: rateLimit({
       ...common,
@@ -142,5 +151,6 @@ export const {
   shared: sharedLimiter,
   chat: chatSendLimiter,
   search: searchLimiter,
+  token: tokenLimiter,
   api: apiLimiter,
 } = createLimiters();
