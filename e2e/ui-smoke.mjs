@@ -2484,12 +2484,41 @@ try {
       leaver.once('dialog', (d) => d.accept());
       await del.click();
       // "로그인한 기기" 제목과 겹치지 않게 정확히 일치시킨다
-    await leaver.getByRole('heading', { name: '로그인', exact: true }).waitFor();
+      await leaver.getByRole('heading', { name: '로그인', exact: true }).waitFor();
 
       const row = await db.query('SELECT name, is_active FROM users WHERE id = $1', [leaverId]);
       if (row.rows[0]?.name !== '탈퇴한 사용자' || row.rows[0].is_active) {
         throw new Error(`계정이 익명화되지 않음: ${JSON.stringify(row.rows)}`);
       }
+    },
+  );
+  await step(
+    '설정: 한 주의 시작을 월요일로 바꾸면 캘린더 머리글이 월요일부터이고, 시각 표기도 저장됨',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      await setPage.goto(`${BASE}/settings`);
+      const card = setPage.getByRole('region', { name: '화면' });
+      await card.getByLabel('월요일').click();
+      await card.getByLabel(/^24시간/).click();
+      await card.getByRole('status').filter({ hasText: '저장했습니다' }).waitFor();
+      const token = await apiLogin('settings');
+      await pollUntil(async () => {
+        const prefs = (await apiCall('GET', '/auth/me', token)).body.user.preferences;
+        return prefs.weekStart === 'mon' && prefs.timeFormat === '24h';
+      }, '표시 설정 저장');
+
+      await setPage.goto(`${BASE}/projects/${settingsProjectId}`);
+      await setPage.getByRole('tab', { name: '캘린더' }).click();
+      const heads = setPage.getByRole('columnheader');
+      await heads.first().waitFor();
+      const names = await heads.allTextContents();
+      if (names.join('') !== '월화수목금토일') throw new Error(`머리글 순서: ${names.join('')}`);
+
+      // 되돌린다
+      await setPage.goto(`${BASE}/settings`);
+      await card.getByLabel('일요일').click();
+      await card.getByLabel(/^12시간/).click();
+      await card.getByRole('status').filter({ hasText: '저장했습니다' }).waitFor();
     },
   );
   await step(

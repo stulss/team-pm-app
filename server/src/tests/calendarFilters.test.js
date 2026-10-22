@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 // 클라이언트의 순수 함수를 서버 테스트 러너로 검증한다.
-import { dateKey, groupByDueDate, monthCells } from '../../../client/src/utils/calendar.js';
+import {
+  dateKey,
+  groupByDueDate,
+  monthCells,
+  weekdayHeads,
+} from '../../../client/src/utils/calendar.js';
 import { applySaved, currentFilters } from '../../../client/src/utils/savedFilters.js';
 
 describe('monthCells', () => {
@@ -18,6 +23,24 @@ describe('monthCells', () => {
     expect(monthCells(2026, 1)[0]).toBe(1);
     expect(monthCells(2026, 1).filter(Boolean)).toHaveLength(28);
     expect(monthCells(2028, 1).filter(Boolean)).toHaveLength(29);
+  });
+});
+
+describe('한 주의 시작 요일', () => {
+  it('월요일 시작이면 앞쪽 빈 칸이 하루씩 줄어들고, 일요일 1일은 6칸이 비는다', () => {
+    // 2026-10-01 은 목요일: 월요일 시작이면 월·화·수가 비어 3칸
+    expect(monthCells(2026, 9, 'mon').slice(0, 4)).toEqual([null, null, null, 1]);
+    // 2026-02-01 은 일요일: 월요일 시작이면 6칸이 비어 일요일이 맨 끝 칸
+    const feb = monthCells(2026, 1, 'mon');
+    expect(feb.slice(0, 7)).toEqual([null, null, null, null, null, null, 1]);
+    // 월요일 1일은 빈 칸 없음 (2026-06-01)
+    expect(monthCells(2026, 5, 'mon')[0]).toBe(1);
+  });
+
+  it('기본값은 일요일 시작이고 머리글이 같은 순서를 따른다', () => {
+    expect(monthCells(2026, 9)).toEqual(monthCells(2026, 9, 'sun'));
+    expect(weekdayHeads()[0]).toBe('일');
+    expect(weekdayHeads('mon')).toEqual(['월', '화', '수', '목', '금', '토', '일']);
   });
 });
 

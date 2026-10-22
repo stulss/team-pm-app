@@ -5,6 +5,8 @@ export const THEMES = ['system', 'light', 'dark'];
 export const ACCENTS = ['indigo', 'blue', 'teal', 'green', 'rose', 'orange'];
 export const DENSITIES = ['comfortable', 'compact'];
 export const VIEWS = ['board', 'list', 'calendar', 'timeline'];
+export const WEEK_STARTS = ['sun', 'mon'];
+export const TIME_FORMATS = ['12h', '24h'];
 
 // 알림 종류별 받기 여부. due 는 마감 임박·지연 알림 둘 다.
 export const NOTIFICATION_KEYS = ['assigned', 'due', 'comment', 'mention'];
@@ -14,6 +16,8 @@ export const DEFAULT_PREFERENCES = {
   accent: 'indigo',
   density: 'comfortable',
   defaultView: 'board',
+  weekStart: 'sun',
+  timeFormat: '12h',
   notifications: { assigned: true, due: true, comment: true, mention: true },
 };
 
@@ -22,6 +26,8 @@ const ALLOWED = {
   accent: ACCENTS,
   density: DENSITIES,
   defaultView: VIEWS,
+  weekStart: WEEK_STARTS,
+  timeFormat: TIME_FORMATS,
 };
 
 // 일부만 바꾸는 요청. 알 수 없는 키·값은 거부한다(임의 JSON 저장 방지).
@@ -31,6 +37,8 @@ export const preferencesPatch = z
     accent: z.enum(ACCENTS).optional(),
     density: z.enum(DENSITIES).optional(),
     defaultView: z.enum(VIEWS).optional(),
+    weekStart: z.enum(WEEK_STARTS).optional(),
+    timeFormat: z.enum(TIME_FORMATS).optional(),
     notifications: z
       .strictObject({
         assigned: z.boolean().optional(),

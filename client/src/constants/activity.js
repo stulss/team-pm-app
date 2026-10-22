@@ -1,5 +1,6 @@
 import { PRIORITY_LABELS, STATUS_LABELS } from './task.js';
 import { PR_STATE_LABELS } from './github.js';
+import { hourCycle } from '../utils/displayFormat.js';
 
 const label = (map, key) => map[key] ?? key;
 const q = (text) => `“${text}”`;
@@ -77,4 +78,5 @@ export const formatWhen = (iso) =>
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    ...hourCycle(),
   });

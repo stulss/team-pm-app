@@ -8,8 +8,10 @@ import {
   markNotificationRead,
 } from '../../api/notifications.js';
 
+import { hourCycle } from '../../utils/displayFormat.js';
+
 const formatTime = (iso) =>
-  new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+  new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short', ...hourCycle() });
 
 // 상단바의 알림 벨: 안 읽은 개수 배지 + 최근 알림 목록. 새 알림은 실시간(notification:new)으로
 // ['notifications'] 쿼리를 갱신해 반영된다(useUserRealtime).

@@ -3986,6 +3986,35 @@ try {
     );
   }
 
+  // --- 날짜·시간 표시 설정 (M31): jsonb 병합으로 저장되고 다른 설정을 지우지 않는다
+  {
+    const before = (await call('GET', '/auth/me', { token: t('member') })).body.user.preferences;
+    const set = await call('PATCH', '/users/me/preferences', {
+      token: t('member'),
+      body: { weekStart: 'mon', timeFormat: '24h' },
+    });
+    const bad = await call('PATCH', '/users/me/preferences', {
+      token: t('member'),
+      body: { weekStart: 'fri' },
+    });
+    const after = (await call('GET', '/auth/me', { token: t('member') })).body.user.preferences;
+    check(
+      '표시 설정: 한 주의 시작·시각 표기가 저장되고 다른 설정은 그대로, 잘못된 값은 400',
+      set.status === 200 &&
+        after.weekStart === 'mon' &&
+        after.timeFormat === '24h' &&
+        after.theme === before.theme &&
+        JSON.stringify(after.notifications) === JSON.stringify(before.notifications) &&
+        bad.status === 400,
+      JSON.stringify(after),
+    );
+    check(
+      '표시 설정: 기본값은 일요일 시작·12시간 표기(저장 전 사용자도 같다)',
+      before.weekStart === 'sun' && before.timeFormat === '12h',
+      JSON.stringify(before),
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

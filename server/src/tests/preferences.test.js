@@ -9,6 +9,8 @@ import {
   DENSITIES,
   THEMES,
   VIEWS,
+  TIME_FORMATS,
+  WEEK_STARTS,
   withDefaults,
 } from '../modules/users/preferences.js';
 import {
@@ -17,6 +19,8 @@ import {
   NOTIFICATIONS as CLIENT_NOTIFICATIONS,
   THEMES as CLIENT_THEMES,
   VIEWS as CLIENT_VIEWS,
+  TIME_FORMATS as CLIENT_TIME_FORMATS,
+  WEEK_STARTS as CLIENT_WEEK_STARTS,
 } from '../../../client/src/constants/preferences.js';
 
 vi.mock('../config/db.js', () => ({
@@ -69,11 +73,10 @@ describe('설정 저장', () => {
     });
     const next = await patch({ density: 'compact' });
     expect(next.body.user.preferences).toEqual({
+      ...DEFAULT_PREFERENCES,
       theme: 'dark',
       accent: 'teal',
       density: 'compact',
-      defaultView: 'board',
-      notifications: DEFAULT_PREFERENCES.notifications,
     });
     expect((await me()).preferences).toEqual(next.body.user.preferences);
   });
@@ -84,6 +87,8 @@ describe('설정 저장', () => {
       ['accent', ACCENTS],
       ['density', DENSITIES],
       ['defaultView', VIEWS],
+      ['weekStart', WEEK_STARTS],
+      ['timeFormat', TIME_FORMATS],
     ]) {
       for (const value of values) {
         const res = await patch({ [key]: value });
@@ -100,6 +105,8 @@ describe('설정 저장', () => {
       { accent: 'magenta' },
       { density: 'huge' },
       { defaultView: 'gantt' },
+      { weekStart: 'fri' },
+      { timeFormat: '36h' },
       { admin: true },
       { theme: 'dark', extra: 1 },
       { theme: 123 },
@@ -183,6 +190,8 @@ describe('withDefaults / 클라이언트 목록', () => {
     expect(CLIENT_ACCENTS.map((t) => t.value)).toEqual(ACCENTS);
     expect(CLIENT_DENSITIES.map((t) => t.value)).toEqual(DENSITIES);
     expect(CLIENT_VIEWS.map((t) => t.value)).toEqual(VIEWS);
+    expect(CLIENT_WEEK_STARTS.map((t) => t.value)).toEqual(WEEK_STARTS);
+    expect(CLIENT_TIME_FORMATS.map((t) => t.value)).toEqual(TIME_FORMATS);
     expect(CLIENT_NOTIFICATIONS.map((t) => t.value)).toEqual(NOTIFICATION_KEYS);
   });
 });

@@ -228,6 +228,11 @@ async function readChecks(label, who) {
       );
       const me = await call('GET', '/auth/me', { token: t });
       check(
+        '표시 설정(weekStart·timeFormat)이 내 정보에 있음 (M31)',
+        ['sun', 'mon'].includes(me.body?.user?.preferences?.weekStart) &&
+          ['12h', '24h'].includes(me.body?.user?.preferences?.timeFormat),
+      );
+      check(
         '내 정보에 githubLogin·emailLogin 이 있음 (M28)',
         me.status === 200 &&
           'githubLogin' in me.body.user &&

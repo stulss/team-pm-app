@@ -8,7 +8,15 @@ import { errorMessage, http } from '../api/http.js';
 import { githubErrorMessage } from '../constants/githubLogin.js';
 import { describeDevice } from '../constants/device.js';
 import { formatWhen } from '../constants/activity.js';
-import { ACCENTS, DENSITIES, NOTIFICATIONS, THEMES, VIEWS } from '../constants/preferences.js';
+import {
+  ACCENTS,
+  DENSITIES,
+  NOTIFICATIONS,
+  THEMES,
+  TIME_FORMATS,
+  VIEWS,
+  WEEK_STARTS,
+} from '../constants/preferences.js';
 
 // 선택지 하나가 라디오 버튼인 그룹. 고르면 바로 적용·저장된다.
 function ChoiceGroup({ label, name, options, value, onChange, render }) {
@@ -652,6 +660,29 @@ function AppearanceCard() {
           options={DENSITIES}
           value={prefs.density}
           onChange={(density) => save({ density })}
+          render={(o) => (
+            <>
+              {o.label} <small>{o.hint}</small>
+            </>
+          )}
+        />
+      </Row>
+      <Row title="한 주의 시작" hint="캘린더에서 한 주가 시작되는 요일입니다.">
+        <ChoiceGroup
+          label="한 주의 시작"
+          name="weekStart"
+          options={WEEK_STARTS}
+          value={prefs.weekStart}
+          onChange={(weekStart) => save({ weekStart })}
+        />
+      </Row>
+      <Row title="시각 표기" hint="활동·댓글·알림에 보이는 시각의 표기 방식입니다.">
+        <ChoiceGroup
+          label="시각 표기"
+          name="timeFormat"
+          options={TIME_FORMATS}
+          value={prefs.timeFormat}
+          onChange={(timeFormat) => save({ timeFormat })}
           render={(o) => (
             <>
               {o.label} <small>{o.hint}</small>

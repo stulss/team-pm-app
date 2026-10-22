@@ -15,8 +15,10 @@ import MentionTextarea from './MentionTextarea.jsx';
 import ReactionBar from '../common/ReactionBar.jsx';
 import Avatar from '../common/Avatar.jsx';
 
+import { hourCycle } from '../../utils/displayFormat.js';
+
 const formatTime = (iso) =>
-  new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+  new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short', ...hourCycle() });
 
 // 작업 모달의 댓글 영역. 본문은 항상 텍스트로 렌더링한다(HTML 로 해석하지 않음).
 // 댓글에는 한 단계 답글을 달 수 있다(스레드). 서버는 작성순 평면 배열을 주고, 묶는 것은 여기서 한다.

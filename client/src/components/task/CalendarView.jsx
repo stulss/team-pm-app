@@ -1,11 +1,11 @@
 import { useState } from 'react';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { useQuery } from '@tanstack/react-query';
 import { listProjectTasks } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { isOverdue, todayString } from '../../constants/task.js';
-import { dateKey, groupByDueDate, monthCells } from '../../utils/calendar.js';
+import { dateKey, groupByDueDate, monthCells, weekdayHeads } from '../../utils/calendar.js';
 
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const MAX_PER_DAY = 3;
 
 // 마감일 기준 월간 캘린더. 마감일이 없는 작업은 아래에 따로 모아 보여 준다.
@@ -32,7 +32,9 @@ export default function CalendarView({ project, params, onOpenTask }) {
       const d = new Date(year, month + delta, 1);
       return { year: d.getFullYear(), month: d.getMonth() };
     });
-  const cells = monthCells(cursor.year, cursor.month);
+  const { user } = useAuth();
+  const weekStart = user?.preferences?.weekStart ?? 'sun';
+  const cells = monthCells(cursor.year, cursor.month, weekStart);
   const toggle = (key) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -92,7 +94,7 @@ export default function CalendarView({ project, params, onOpenTask }) {
 
       <div className="calendar-scroll">
         <div className="calendar-grid" role="grid">
-          {WEEKDAYS.map((w) => (
+          {weekdayHeads(weekStart).map((w) => (
             <div key={w} className="cal-head" role="columnheader">
               {w}
             </div>

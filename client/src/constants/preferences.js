@@ -1,3 +1,5 @@
+import { setTimeFormat } from '../utils/displayFormat.js';
+
 // 설정 선택지. 서버가 허용하는 값(server/src/modules/users/preferences.js)과 같은 목록이다(테스트가 일치를 확인한다).
 export const THEMES = [
   { value: 'system', label: '시스템 설정 따르기' },
@@ -27,6 +29,16 @@ export const VIEWS = [
   { value: 'timeline', label: '타임라인' },
 ];
 
+export const WEEK_STARTS = [
+  { value: 'sun', label: '일요일' },
+  { value: 'mon', label: '월요일' },
+];
+
+export const TIME_FORMATS = [
+  { value: '12h', label: '12시간', hint: '오후 3:05' },
+  { value: '24h', label: '24시간', hint: '15:05' },
+];
+
 // 알림 종류별 받기 여부(앱 안 알림). key 는 서버의 NOTIFICATION_KEYS 와 같다.
 export const NOTIFICATIONS = [
   { value: 'assigned', label: '작업 배정', hint: '나에게 작업이 배정되면 알립니다.' },
@@ -48,6 +60,8 @@ export const DEFAULT_PREFERENCES = {
   accent: 'indigo',
   density: 'comfortable',
   defaultView: 'board',
+  weekStart: 'sun',
+  timeFormat: '12h',
   notifications: { assigned: true, due: true, comment: true, mention: true },
 };
 
@@ -60,6 +74,7 @@ export function applyPreferences(prefs, root = document.documentElement) {
   root.dataset.theme = p.theme;
   root.dataset.accent = p.accent;
   root.dataset.density = p.density;
+  setTimeFormat(p.timeFormat);
   return p;
 }
 
