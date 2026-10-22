@@ -4396,6 +4396,20 @@ try {
         (await asToken(w.token, 'GET', '/projects')).status === 401 &&
         (await rpc(w.token, 'tools/list')).status === 401,
     );
+    // 일일 정리: 폐기·만료된 지 30일이 지난 행만 지운다(방금 만료된 r 은 남는다)
+    const apiTokensRepo = await import('../src/modules/apiTokens/repository.js');
+    await db.query("UPDATE api_tokens SET revoked_at = now() - interval '40 days' WHERE id = $1", [
+      w.id,
+    ]);
+    await apiTokensRepo.deleteStale(30);
+    const kept = await db.query('SELECT id FROM api_tokens WHERE id = ANY($1::uuid[])', [
+      [w.id, r.id],
+    ]);
+    check(
+      'API 토큰: 일일 정리는 폐기·만료 30일이 지난 행만 지운다',
+      kept.rows.length === 1 && kept.rows[0].id === r.id,
+      JSON.stringify(kept.rows),
+    );
     check(
       'API 토큰: 남이 내 토큰을 폐기할 수 없다(404)',
       (await call('DELETE', `/users/me/api-tokens/${r.id}`, { token: t('manager') })).status ===

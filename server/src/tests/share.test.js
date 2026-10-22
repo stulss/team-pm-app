@@ -222,6 +222,23 @@ describe('GET /shared/:token (공개)', () => {
     expect(dump).not.toContain(people.outsider.id);
   });
 
+  it('API 토큰으로 한 일의 토큰 이름은 공개 페이지에 보이지 않고 멤버에게는 보인다', async () => {
+    const { activityRepo } = await import('./helpers/memoryRepos.js');
+    await activityRepo.insert({
+      projectId: pid,
+      actorId: people.owner.id,
+      action: 'task.created',
+      meta: { title: 'AI 가 만든 작업', token: 'Claude 데스크톱' },
+    });
+    const { token } = (await createLink()).body;
+    const publicView = await view(token);
+    expect(publicView.body.data[0].meta.title).toBe('AI 가 만든 작업');
+    expect(JSON.stringify(publicView.body)).not.toContain('Claude 데스크톱');
+
+    const feed = (await api('get', `/projects/${pid}/activities`, 'member')).body.data;
+    expect(feed.find((a) => a.action === 'task.created').meta.token).toBe('Claude 데스크톱');
+  });
+
   it('멤버에게는 공유 링크 생성·폐기가 활동 기록에 보인다', async () => {
     const link = (await createLink()).body;
     await api('delete', `/projects/${pid}/share-links/${link.id}`, 'owner');

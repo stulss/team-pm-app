@@ -1713,4 +1713,16 @@ export const apiTokensRepo = {
   async deleteForUser(userId) {
     store.apiTokens = store.apiTokens.filter((t) => t.user_id !== userId);
   },
+  async deleteStale(days) {
+    const cutoff = Date.now() - days * 86_400_000;
+    const before = store.apiTokens.length;
+    store.apiTokens = store.apiTokens.filter(
+      (t) =>
+        !(
+          (t.revoked_at && new Date(t.revoked_at).getTime() < cutoff) ||
+          (t.expires_at && new Date(t.expires_at).getTime() < cutoff)
+        ),
+    );
+    return before - store.apiTokens.length;
+  },
 };

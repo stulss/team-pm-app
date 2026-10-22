@@ -7,6 +7,7 @@ import * as activityRepo from '../activity/repository.js';
 import * as shareRepo from '../share/repository.js';
 import * as chatRepo from '../chat/repository.js';
 import * as githubRepo from '../github/repository.js';
+import * as apiTokensRepo from '../apiTokens/repository.js';
 import * as repo from './repository.js';
 import { logger } from '../../utils/logger.js';
 
@@ -179,6 +180,12 @@ export async function runDailyJobs({ today = todayIn() } = {}) {
   } catch (err) {
     logger.warn({ err: err.message }, 'github deliveries cleanup failed');
     result.githubDeliveriesDeleted = 0;
+  }
+  try {
+    result.apiTokensDeleted = await apiTokensRepo.deleteStale(30);
+  } catch (err) {
+    logger.warn({ err: err.message }, 'api tokens cleanup failed');
+    result.apiTokensDeleted = 0;
   }
   return result;
 }

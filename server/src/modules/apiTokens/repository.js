@@ -66,6 +66,17 @@ export async function touch(id) {
   );
 }
 
+// 폐기되거나 만료된 지 오래된 토큰 행을 지운다(일일 정리). 막 폐기한 것은 목록·감사에 잠시 남겨 둔다.
+export async function deleteStale(days) {
+  const { rowCount } = await query(
+    `DELETE FROM api_tokens
+     WHERE revoked_at < now() - ($1 || ' days')::interval
+        OR expires_at < now() - ($1 || ' days')::interval`,
+    [String(days)],
+  );
+  return rowCount;
+}
+
 // 계정 삭제(익명화) 때 쓴다.
 export async function deleteForUser(userId) {
   await query('DELETE FROM api_tokens WHERE user_id = $1', [userId]);

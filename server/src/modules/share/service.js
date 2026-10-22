@@ -48,6 +48,8 @@ export async function revoke(project, user, linkId) {
   });
 }
 
+const withoutToken = ({ token: _token, ...meta } = {}) => meta;
+
 // 로그인 없이 호출된다. 없는·만료된·폐기된 토큰은 구분할 수 없게 같은 404 를 준다.
 export async function view(token, { before, limit }) {
   const link = await repo.findActiveByHash(sha256(token));
@@ -62,5 +64,7 @@ export async function view(token, { before, limit }) {
     project: { name: link.project_name, status: link.project_status },
     expiresAt: link.expires_at,
     ...page,
+    // API 토큰 이름은 멤버에게만 보인다(공개 페이지에는 누가 어떤 연동을 쓰는지 알리지 않는다).
+    data: page.data.map((a) => ({ ...a, meta: withoutToken(a.meta) })),
   };
 }

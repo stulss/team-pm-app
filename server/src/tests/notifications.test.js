@@ -32,6 +32,10 @@ vi.mock('../modules/activity/repository.js', async () => ({
   ...(await vi.importActual('../modules/activity/repository.js')),
   ...(await import('./helpers/memoryRepos.js')).activityRepo,
 }));
+vi.mock(
+  '../modules/apiTokens/repository.js',
+  async () => (await import('./helpers/memoryRepos.js')).apiTokensRepo,
+);
 vi.mock('../modules/chat/repository.js', async () => ({
   ...(await vi.importActual('../modules/chat/repository.js')),
   ...(await import('./helpers/memoryRepos.js')).chatRepo,
@@ -238,6 +242,37 @@ describe('알림 API', () => {
 });
 
 describe('GET /api/cron/daily', () => {
+  it('폐기·만료된 지 30일이 지난 API 토큰만 지운다', async () => {
+    const day = 86_400_000;
+    const row = (name, over) => ({
+      id: name,
+      user_id: people.member.id,
+      name,
+      scope: 'read',
+      token_hash: name,
+      prefix: name,
+      expires_at: null,
+      last_used_at: null,
+      revoked_at: null,
+      created_at: new Date(),
+      ...over,
+    });
+    store.apiTokens.push(
+      row('active', {}),
+      row('revoked-long-ago', { revoked_at: new Date(Date.now() - 40 * day) }),
+      row('revoked-just-now', { revoked_at: new Date(Date.now() - 2 * day) }),
+      row('expired-long-ago', { expires_at: new Date(Date.now() - 40 * day) }),
+      row('expired-recently', { expires_at: new Date(Date.now() - 2 * day) }),
+    );
+    const res = await runCron();
+    expect(res.body.apiTokensDeleted).toBe(2);
+    expect(store.apiTokens.map((t) => t.name).sort()).toEqual([
+      'active',
+      'expired-recently',
+      'revoked-just-now',
+    ]);
+  });
+
   it('인증 없이/잘못된 비밀로는 401', async () => {
     expect((await request(app).get('/api/cron/daily')).status).toBe(401);
     const bad = await request(app).get('/api/cron/daily').set('Authorization', 'Bearer wrong');
