@@ -3776,6 +3776,107 @@ try {
     );
   }
 
+  // --- 로그인한 기기 (M29): 세션 묶음 SQL(GROUP BY/HAVING)·회전 시 세션 유지·폐기를 실제 DB 로 확인
+  {
+    const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36';
+    const PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1';
+    const cookieFrom = (res) => (res.headers.get('set-cookie') ?? '').split(';')[0];
+    const rawCall = async (method, path, { token, cookie, agent } = {}) => {
+      const res = await fetch(BASE + path, {
+        method,
+        headers: {
+          ...headers(token),
+          ...(cookie && { cookie }),
+          ...(agent && { 'user-agent': agent }),
+        },
+      });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : null, cookie: cookieFrom(res) };
+    };
+    const loginAs = async (agent) => {
+      const res = await fetch(`${BASE}/auth/login`, {
+        method: 'POST',
+        headers: { ...headers(), 'user-agent': agent },
+        body: JSON.stringify({ email: emailOf('outsider'), password: 'S3cure!pass' }),
+      });
+      return { token: (await res.json()).accessToken, cookie: cookieFrom(res) };
+    };
+
+    const pc = await loginAs(CHROME);
+    const phone = await loginAs(PHONE);
+    const list1 = await rawCall('GET', '/auth/sessions', { token: pc.token, cookie: pc.cookie });
+    const mine = list1.body.data.find((x) => x.current);
+    check(
+      '기기 목록: 기기마다 한 줄이고 브라우저 문자열·지금 기기가 맞다',
+      list1.status === 200 &&
+        list1.body.data.some((x) => x.device === PHONE && !x.current) &&
+        mine?.device === CHROME,
+      JSON.stringify(list1.body),
+    );
+
+    // 회전해도 같은 기기 한 줄
+    const rotated = await rawCall('POST', '/auth/refresh', { cookie: pc.cookie, agent: CHROME });
+    const list2 = await rawCall('GET', '/auth/sessions', {
+      token: rotated.body.accessToken,
+      cookie: rotated.cookie,
+    });
+    check(
+      '기기 목록: 토큰을 회전해도 기기 수가 늘지 않고 같은 기기가 지금 기기로 남는다',
+      list2.body.data.length === list1.body.data.length &&
+        list2.body.data.find((x) => x.current)?.id === mine.id,
+    );
+
+    // 지금 기기는 이 화면에서 끊지 못한다
+    const self = await rawCall('DELETE', `/auth/sessions/${mine.id}`, {
+      token: rotated.body.accessToken,
+      cookie: rotated.cookie,
+    });
+    check(
+      '기기 로그아웃: 지금 기기는 400 CURRENT_SESSION',
+      self.status === 400 && self.body.error.code === 'CURRENT_SESSION',
+    );
+
+    const phoneId = list2.body.data.find((x) => x.device === PHONE).id;
+    const end = await rawCall('DELETE', `/auth/sessions/${phoneId}`, {
+      token: rotated.body.accessToken,
+      cookie: rotated.cookie,
+    });
+    const phoneRefresh = await rawCall('POST', '/auth/refresh', { cookie: phone.cookie });
+    check(
+      '기기 로그아웃: 다른 기기를 끝내면 그 기기는 더 갱신할 수 없다',
+      end.status === 204 && phoneRefresh.status === 401,
+    );
+    check(
+      '기기 로그아웃: 없는 기기 id 는 404',
+      (
+        await rawCall('DELETE', '/auth/sessions/11111111-1111-4111-8111-111111111111', {
+          token: rotated.body.accessToken,
+          cookie: rotated.cookie,
+        })
+      ).status === 404,
+    );
+
+    // 다른 모든 기기
+    await loginAs(PHONE);
+    await loginAs(PHONE);
+    const others = await rawCall('DELETE', '/auth/sessions', {
+      token: rotated.body.accessToken,
+      cookie: rotated.cookie,
+    });
+    const left = await rawCall('GET', '/auth/sessions', {
+      token: rotated.body.accessToken,
+      cookie: rotated.cookie,
+    });
+    check(
+      '기기 로그아웃: 다른 모든 기기를 끊으면 지금 기기만 남는다',
+      others.status === 200 &&
+        others.body.revoked >= 2 &&
+        left.body.data.length === 1 &&
+        left.body.data[0].current === true,
+      JSON.stringify(others.body),
+    );
+  }
+
   // --- 삭제 + CASCADE
   check(
     '소유자가 아닌 멤버/다른 manager 는 삭제 불가 (403)',

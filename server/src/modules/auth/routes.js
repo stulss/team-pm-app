@@ -6,6 +6,7 @@ import { authenticate } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { loginLimiter, mailLimiter, registerLimiter } from '../../middleware/rateLimit.js';
 import * as service from './service.js';
+import { AppError } from '../../utils/errors.js';
 import {
   authorizeUrl,
   fetchProfile,
@@ -49,13 +50,19 @@ const loginSchema = z.object({ email, password: z.string().min(1, '비밀번호�
 
 export const authRouter = Router();
 
+// 로그인한 기기 목록에 보여 줄 정보(브라우저 문자열·접속 IP). 신뢰 프록시 한 단계를 기준으로 req.ip 를 쓴다.
+export const clientMeta = (req) => ({
+  userAgent: req.get('user-agent')?.slice(0, 300),
+  ip: req.ip?.slice(0, 64),
+});
+
 const sendSession = (res, status, { user, accessToken, refreshToken }) => {
   setRefreshCookie(res, refreshToken);
   res.status(status).json({ user, accessToken });
 };
 
 authRouter.post('/register', registerLimiter, validate(registerSchema), async (req, res) => {
-  const result = await service.register(req.body);
+  const result = await service.register(req.body, clientMeta(req));
   // 이메일 인증이 켜져 있으면 세션 없이 "메일을 확인하세요" 만 알린다.
   if (result.needsVerification) {
     return res.status(201).json({ user: result.user, needsVerification: true });
@@ -64,12 +71,12 @@ authRouter.post('/register', registerLimiter, validate(registerSchema), async (r
 });
 
 authRouter.post('/login', loginLimiter, validate(loginSchema), async (req, res) => {
-  sendSession(res, 200, await service.login(req.body));
+  sendSession(res, 200, await service.login(req.body, clientMeta(req)));
 });
 
 authRouter.post('/refresh', async (req, res) => {
   try {
-    sendSession(res, 200, await service.refresh(req.cookies?.[COOKIE_NAME]));
+    sendSession(res, 200, await service.refresh(req.cookies?.[COOKIE_NAME], clientMeta(req)));
   } catch (err) {
     // 실패한 refresh 후에는 브라우저의 쿠키도 정리한다.
     res.clearCookie(COOKIE_NAME, refreshCookieOptions);
@@ -86,6 +93,23 @@ authRouter.post('/logout', async (req, res) => {
 
 authRouter.get('/me', authenticate, (req, res) => {
   res.json({ user: req.user });
+});
+
+// ---- 로그인한 기기 (M29) ----
+authRouter.get('/sessions', authenticate, async (req, res) => {
+  res.json({ data: await service.listSessions(req.user.id, req.cookies?.[COOKIE_NAME]) });
+});
+
+authRouter.delete('/sessions', authenticate, async (req, res) => {
+  const revoked = await service.revokeOtherSessions(req.user.id, req.cookies?.[COOKIE_NAME]);
+  res.json({ revoked });
+});
+
+authRouter.delete('/sessions/:id', authenticate, async (req, res) => {
+  const id = z.uuid().safeParse(req.params.id);
+  if (!id.success) throw new AppError(400, 'VALIDATION_ERROR', '올바르지 않은 ID 입니다.');
+  await service.revokeSession(req.user.id, id.data, req.cookies?.[COOKIE_NAME]);
+  res.status(204).end();
 });
 
 const accepted = (res) => res.status(202).json({ ok: true });
@@ -200,7 +224,7 @@ authRouter.get('/github/callback', loginLimiter, async (req, res) => {
     return back('bad_state');
   }
   try {
-    const session = await loginWithProfile(await fetchProfile(req.query.code));
+    const session = await loginWithProfile(await fetchProfile(req.query.code), clientMeta(req));
     setRefreshCookie(res, session.refreshToken);
     res.redirect(302, `${appUrl()}/`);
   } catch (err) {

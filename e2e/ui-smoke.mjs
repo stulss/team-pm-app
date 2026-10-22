@@ -2401,6 +2401,48 @@ try {
     await setPage.unroute('**/api/v1/auth/providers');
   });
   await step(
+    '설정: 로그인한 기기 목록에서 다른 기기를 로그아웃하고, 다른 모든 기기를 한 번에 로그아웃함',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1';
+      const phoneLogin = async () => {
+        const res = await fetch(`${BASE}/api/v1/auth/login`, {
+          method: 'POST',
+          headers: { ...apiHeaders(), 'user-agent': PHONE },
+          body: JSON.stringify({ email: emailOf('settings'), password: PASSWORD }),
+        });
+        if (res.status !== 200) throw new Error(`휴대폰 로그인 ${res.status}`);
+        return (res.headers.get('set-cookie') ?? '').split(';')[0];
+      };
+      const phoneCookie = await phoneLogin();
+
+      await setPage.goto(`${BASE}/settings`);
+      const card = setPage.getByRole('region', { name: '로그인한 기기' });
+      await card.getByText('지금 기기').waitFor();
+      await card.getByRole('button', { name: 'Safari · iPhone 로그아웃' }).first().click();
+      await card
+        .getByRole('button', { name: 'Safari · iPhone 로그아웃' })
+        .waitFor({ state: 'detached' });
+      const dead = await fetch(`${BASE}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { ...apiHeaders(), cookie: phoneCookie },
+      });
+      if (dead.status !== 401) throw new Error(`끊은 기기가 아직 갱신됨: ${dead.status}`);
+
+      await phoneLogin();
+      await phoneLogin();
+      await setPage.reload();
+      await card.getByText('지금 기기').waitFor();
+      await card.getByRole('button', { name: '다른 모든 기기에서 로그아웃' }).click();
+      await card.getByRole('status').filter({ hasText: '기기에서 로그아웃했습니다' }).waitFor();
+      await card
+        .getByRole('button', { name: '다른 모든 기기에서 로그아웃' })
+        .waitFor({ state: 'detached' });
+      if ((await card.getByRole('listitem').count()) !== 1)
+        throw new Error('지금 기기만 남아야 함');
+    },
+  );
+  await step(
     '설정: 비밀번호 변경은 현재 비밀번호 검증·확인 일치가 필요하고, 바꾼 뒤 새 비밀번호로만 로그인됨',
     async () => {
       if (!setPage) throw new Error('준비 단계 실패');

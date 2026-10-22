@@ -1,6 +1,6 @@
 import { withTransaction } from '../../config/db.js';
 import { env } from '../../config/env.js';
-import { AppError, conflict, unauthorized } from '../../utils/errors.js';
+import { AppError, conflict, notFound, unauthorized } from '../../utils/errors.js';
 import crypto from 'node:crypto';
 import { DUMMY_HASH, hashPassword, sha256, verifyPassword } from '../../utils/crypto.js';
 import { logger } from '../../utils/logger.js';
@@ -57,17 +57,21 @@ async function issueAndSend(row, kind) {
 
 const invalidRefresh = () => unauthorized(SESSION_EXPIRED, 'INVALID_REFRESH_TOKEN');
 
-export async function createSession(userId) {
+// meta: { sessionId(회전이면 이전 세션), userAgent, ip } — 로그인한 기기 목록(M29)에 쓴다.
+export async function createSession(userId, meta = {}) {
   const refreshToken = signRefreshToken(userId);
   await tokens.insertRefreshToken({
     userId,
     tokenHash: sha256(refreshToken),
     expiresAt: new Date(Date.now() + REFRESH_TTL_SECONDS * 1000),
+    sessionId: meta.sessionId,
+    userAgent: meta.userAgent,
+    ip: meta.ip,
   });
   return { accessToken: signAccessToken(userId), refreshToken };
 }
 
-export async function register({ email, password, name }) {
+export async function register({ email, password, name }, meta) {
   // 팀 구성이 끝난 뒤 ALLOW_REGISTRATION=false 로 신규 가입을 닫는다. 첫 계정(관리자)은 항상 만들 수 있다.
   if (!env.ALLOW_REGISTRATION && (await users.countUsers()) > 0) {
     throw new AppError(403, 'REGISTRATION_CLOSED', '현재 신규 가입을 받지 않습니다.');
@@ -87,11 +91,11 @@ export async function register({ email, password, name }) {
     await issueAndSend({ ...row, name }, 'verify');
     return { user: users.toUser(row), needsVerification: true };
   }
-  const session = await createSession(row.id);
+  const session = await createSession(row.id, meta);
   return { user: users.toUser(row), ...session };
 }
 
-export async function login({ email, password }) {
+export async function login({ email, password }, meta) {
   const row = await users.findByEmail(email);
   const ok = await verifyPassword(password, row?.password_hash ?? DUMMY_HASH);
   if (!row || !ok || !row.is_active) {
@@ -99,11 +103,11 @@ export async function login({ email, password }) {
   }
   // 비밀번호가 맞은 사람에게만 인증 필요 여부를 알려 준다(계정 존재 여부 노출 최소화).
   if (mailEnabled() && !row.email_verified_at) throw emailNotVerified();
-  const session = await createSession(row.id);
+  const session = await createSession(row.id, meta);
   return { user: users.toUser(row), ...session };
 }
 
-export async function refresh(rawToken) {
+export async function refresh(rawToken, meta = {}) {
   const payload = rawToken && verifyRefreshToken(rawToken);
   if (!payload) throw invalidRefresh();
 
@@ -127,7 +131,10 @@ export async function refresh(rawToken) {
   const revoked = await tokens.revokeRefreshToken(record.id);
   if (!revoked) throw invalidRefresh();
 
-  const session = await createSession(row.id);
+  const session = await createSession(row.id, {
+    ...meta,
+    sessionId: record.session_id ?? record.id,
+  });
   return { user: users.toUser(row), ...session };
 }
 
@@ -138,6 +145,49 @@ export async function logout(rawToken) {
 }
 
 export const revokeAllSessions = (userId) => tokens.revokeAllForUser(userId);
+
+// ---- 로그인한 기기 (M29) ----
+// refresh 쿠키가 가리키는 세션 id. 쿠키가 없거나 다른 사람의 것이면 null.
+async function currentSessionId(userId, rawToken) {
+  const payload = rawToken && verifyRefreshToken(rawToken);
+  if (!payload) return null;
+  const record = await tokens.findRefreshToken(sha256(rawToken));
+  if (!record || record.user_id !== userId || record.revoked_at) return null;
+  return record.session_id ?? record.id;
+}
+
+export async function listSessions(userId, rawToken) {
+  const current = await currentSessionId(userId, rawToken);
+  const rows = await tokens.listSessions(userId);
+  return rows.map((r) => ({
+    id: r.id,
+    device: r.user_agent,
+    ip: r.ip,
+    startedAt: r.started_at,
+    lastUsedAt: r.last_used_at,
+    current: r.id === current,
+  }));
+}
+
+export async function revokeSession(userId, sessionId, rawToken) {
+  if (sessionId === (await currentSessionId(userId, rawToken))) {
+    throw new AppError(
+      400,
+      'CURRENT_SESSION',
+      '지금 사용 중인 기기는 로그아웃 버튼으로 끝내 주세요.',
+    );
+  }
+  if (!(await tokens.revokeSession(userId, sessionId))) {
+    throw notFound('로그인한 기기를 찾을 수 없습니다.');
+  }
+}
+
+export async function revokeOtherSessions(userId, rawToken) {
+  const current = await currentSessionId(userId, rawToken);
+  // 지금 세션을 모르면(쿠키 없음) 아무것도 끊지 않는다 — 자기 자신을 로그아웃시키지 않기 위해.
+  if (!current) return 0;
+  return tokens.revokeOtherSessions(userId, current);
+}
 
 export async function verifyEmail(token) {
   const userId = await tokens.consumeEmailToken(sha256(token), 'verify');

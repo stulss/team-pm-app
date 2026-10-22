@@ -1,11 +1,60 @@
 import { query } from '../../config/db.js';
 
-export async function insertRefreshToken({ userId, tokenHash, expiresAt }) {
-  await query('INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)', [
-    userId,
-    tokenHash,
-    expiresAt,
-  ]);
+// sessionId 가 없으면 새 로그인(새 세션)이고, 회전이면 이전 토큰의 세션을 이어받는다.
+export async function insertRefreshToken({
+  userId,
+  tokenHash,
+  expiresAt,
+  sessionId,
+  userAgent,
+  ip,
+}) {
+  await query(
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, session_id, user_agent, ip)
+     VALUES ($1, $2, $3, COALESCE($4, gen_random_uuid()), $5, $6)`,
+    [userId, tokenHash, expiresAt, sessionId ?? null, userAgent ?? null, ip ?? null],
+  );
+}
+
+// 살아 있는 세션(폐기·만료되지 않은 토큰이 있는 것)을 최근 사용순으로. 시작 시각은 회전 전 토큰까지 포함해 센다.
+export async function listSessions(userId) {
+  const { rows } = await query(
+    `SELECT COALESCE(session_id, id) AS id,
+            (array_agg(user_agent ORDER BY created_at DESC))[1] AS user_agent,
+            (array_agg(ip ORDER BY created_at DESC))[1] AS ip,
+            min(created_at) AS started_at,
+            max(created_at) AS last_used_at
+     FROM refresh_tokens
+     WHERE user_id = $1
+     GROUP BY COALESCE(session_id, id)
+     HAVING bool_or(revoked_at IS NULL AND expires_at > now())
+     ORDER BY max(created_at) DESC`,
+    [userId],
+  );
+  return rows;
+}
+
+export async function revokeSession(userId, sessionId) {
+  const { rowCount } = await query(
+    `UPDATE refresh_tokens SET revoked_at = now()
+     WHERE user_id = $1 AND COALESCE(session_id, id) = $2 AND revoked_at IS NULL`,
+    [userId, sessionId],
+  );
+  return rowCount > 0;
+}
+
+// exceptSessionId 의 세션만 남기고 나머지를 폐기한다. 폐기한 세션 수를 돌려준다.
+export async function revokeOtherSessions(userId, exceptSessionId) {
+  const { rows } = await query(
+    `WITH gone AS (
+       UPDATE refresh_tokens SET revoked_at = now()
+       WHERE user_id = $1 AND revoked_at IS NULL AND COALESCE(session_id, id) <> $2
+       RETURNING COALESCE(session_id, id) AS sid
+     )
+     SELECT count(DISTINCT sid)::int AS n FROM gone`,
+    [userId, exceptSessionId],
+  );
+  return rows[0].n;
 }
 
 export async function findRefreshToken(tokenHash) {

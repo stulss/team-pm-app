@@ -207,6 +207,14 @@ async function readChecks(label, who) {
         'GitHub 로그인: /auth/providers 가 공개로 응답 (M27)',
         prov.status === 200 && typeof prov.body?.github === 'boolean',
       );
+      const sessions = await call('GET', '/auth/sessions', { token: t, cookie: who.cookie });
+      check(
+        '로그인한 기기 목록이 열리고 지금 기기가 하나 있음 (M29)',
+        sessions.status === 200 &&
+          Array.isArray(sessions.body?.data) &&
+          sessions.body.data.filter((x) => x.current).length === 1,
+        JSON.stringify(sessions.body)?.slice(0, 200),
+      );
       const me = await call('GET', '/auth/me', { token: t });
       check(
         '내 정보에 githubLogin·emailLogin 이 있음 (M28)',

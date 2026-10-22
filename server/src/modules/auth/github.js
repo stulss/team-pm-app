@@ -126,7 +126,7 @@ export async function linkAccount(userId, { githubId, login }) {
 }
 
 // 프로필로 계정을 찾아 세션을 만든다: github_id → 같은 이메일(연결) → 새 계정.
-export async function loginWithProfile({ githubId, login, email, name }) {
+export async function loginWithProfile({ githubId, login, email, name }, meta) {
   let row = await users.findByGithubId(githubId);
   if (!row) {
     const existing = await users.findByEmail(email);
@@ -155,5 +155,5 @@ export async function loginWithProfile({ githubId, login, email, name }) {
   if (!row.is_active) throw fail('inactive');
   // GitHub 가 이메일 소유를 확인했으므로 인증된 것으로 본다.
   if (!row.email_verified_at) await users.markEmailVerified(row.id);
-  return createSession(row.id);
+  return createSession(row.id, meta);
 }

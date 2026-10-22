@@ -198,14 +198,59 @@ export const usersRepo = {
 };
 
 export const authRepo = {
-  async insertRefreshToken({ userId, tokenHash, expiresAt }) {
+  async insertRefreshToken({ userId, tokenHash, expiresAt, sessionId, userAgent, ip }) {
     store.tokens.push({
       id: crypto.randomUUID(),
       user_id: userId,
       token_hash: tokenHash,
       expires_at: expiresAt,
       revoked_at: null,
+      session_id: sessionId ?? crypto.randomUUID(),
+      user_agent: userAgent ?? null,
+      ip: ip ?? null,
+      created_at: new Date(),
     });
+  },
+  async listSessions(userId) {
+    const groups = new Map();
+    for (const t of store.tokens.filter((x) => x.user_id === userId)) {
+      const sid = t.session_id ?? t.id;
+      if (!groups.has(sid)) groups.set(sid, []);
+      groups.get(sid).push(t);
+    }
+    return [...groups]
+      .filter(([, ts]) => ts.some((t) => !t.revoked_at && t.expires_at > new Date()))
+      .map(([id, ts]) => {
+        const latest = ts.reduce((a, b) => (b.created_at >= a.created_at ? b : a));
+        return {
+          id,
+          user_agent: latest.user_agent,
+          ip: latest.ip,
+          started_at: ts.reduce((a, b) => (b.created_at < a ? b.created_at : a), ts[0].created_at),
+          last_used_at: latest.created_at,
+        };
+      });
+  },
+  async revokeSession(userId, sessionId) {
+    let n = 0;
+    for (const t of store.tokens) {
+      if (t.user_id === userId && (t.session_id ?? t.id) === sessionId && !t.revoked_at) {
+        t.revoked_at = new Date();
+        n += 1;
+      }
+    }
+    return n > 0;
+  },
+  async revokeOtherSessions(userId, exceptSessionId) {
+    const gone = new Set();
+    for (const t of store.tokens) {
+      const sid = t.session_id ?? t.id;
+      if (t.user_id === userId && !t.revoked_at && sid !== exceptSessionId) {
+        t.revoked_at = new Date();
+        gone.add(sid);
+      }
+    }
+    return gone.size;
   },
   async findRefreshToken(tokenHash) {
     const t = store.tokens.find((x) => x.token_hash === tokenHash);

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
-import { setRefreshCookie } from '../auth/routes.js';
+import { clientMeta, setRefreshCookie } from '../auth/routes.js';
 import { disconnectUser } from '../../sockets/emitter.js';
 import { preferencesPatch } from './preferences.js';
 import * as service from './service.js';
@@ -38,7 +38,11 @@ usersRouter.get(
 
 // '/me' 는 '/:id' 보다 먼저 선언해야 한다.
 usersRouter.patch('/me', validate(meBody), async (req, res) => {
-  const { user, accessToken, refreshToken } = await service.updateMe(req.user.id, req.body);
+  const { user, accessToken, refreshToken } = await service.updateMe(
+    req.user.id,
+    req.body,
+    clientMeta(req),
+  );
   if (!accessToken) return res.json({ user });
   setRefreshCookie(res, refreshToken);
   res.json({ user, accessToken });
