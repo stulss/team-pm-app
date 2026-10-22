@@ -207,6 +207,13 @@ async function readChecks(label, who) {
         'GitHub 로그인: /auth/providers 가 공개로 응답 (M27)',
         prov.status === 200 && typeof prov.body?.github === 'boolean',
       );
+      const me = await call('GET', '/auth/me', { token: t });
+      check(
+        '내 정보에 githubLogin·emailLogin 이 있음 (M28)',
+        me.status === 200 &&
+          'githubLogin' in me.body.user &&
+          typeof me.body.user.emailLogin === 'boolean',
+      );
     }
     // 웹훅은 로그인 없이 서명으로만 통과한다 — 없는 연결은 존재 여부를 알리지 않고 401
     if (label === 'A') {
