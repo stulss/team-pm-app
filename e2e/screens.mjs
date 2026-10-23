@@ -97,6 +97,19 @@ async function seed() {
 
   const label = async (name, color) =>
     await call('POST', `/projects/${project.id}/labels`, tokens.pm, { name, color });
+  // 반복 작업(M41) 화면용
+  await call('POST', `/projects/${project.id}/recurrences`, tokens.pm, {
+    title: '주간 회의록 정리',
+    frequency: 'weekly',
+    weekday: 1,
+    dueAfterDays: 3,
+  });
+  await call('POST', `/projects/${project.id}/recurrences`, tokens.pm, {
+    title: '월말 정산 확인',
+    frequency: 'monthly',
+    monthDay: 31,
+    priority: 'high',
+  });
   const L = {
     feature: await label('기능', 'blue'),
     bug: await label('버그', 'red'),

@@ -49,6 +49,13 @@ vi.mock('../modules/notifications/repository.js', async () => ({
   ...(await import('./helpers/memoryRepos.js')).notificationsRepo,
 }));
 
+// 반복 작업·실행 기록은 실DB 스모크에서 확인하고, 여기서는 cron 이 부르는 지점만 비워 둔다.
+vi.mock('../modules/recurrences/repository.js', async () => ({
+  ...(await vi.importActual('../modules/recurrences/repository.js')),
+  listDue: async () => [],
+}));
+vi.mock('../modules/cron/repository.js', () => ({ recordJobRun: async () => {} }));
+
 const { app } = await import('../app.js');
 const { todayIn } = await import('../modules/notifications/service.js');
 

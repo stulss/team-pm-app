@@ -1788,3 +1788,35 @@ tr.selected td {
 .bulk-field {
   margin: 0;
 }
+
+/* 반복 작업 (M41) */
+.recurrence-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+.recurrence-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+.recurrence-list li.off .recurrence-info {
+  opacity: 0.6;
+}
+.recurrence-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.recurrence-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.recurrence-form input[type='number'] {
+  width: 11rem;
+}

@@ -52,13 +52,14 @@ export function taskChanges(before, after) {
   return changes;
 }
 
-export const recordTaskCreated = ({ project, task, actor }) =>
+export const recordTaskCreated = ({ project, task, actor, meta }) =>
   record({
     projectId: project.id,
     taskId: task.id,
     actorId: actor.id,
     action: 'task.created',
     meta: {
+      ...meta,
       title: task.title,
       status: task.status,
       ...(task.assignee && { assignee: { id: task.assignee.id, name: task.assignee.name } }),

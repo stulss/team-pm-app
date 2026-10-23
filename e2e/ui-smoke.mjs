@@ -2541,6 +2541,41 @@ try {
     await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
   });
   await step(
+    '반복 작업: 소유자가 규칙을 추가·끄기·삭제할 수 있고 목록에 주기와 다음 실행일이 보임',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const token = await apiLogin('settings');
+      const proj = (await apiCall('POST', '/projects', token, { name: `ui-${run}-반복` })).body;
+      await setPage.goto(`${BASE}/projects/${proj.id}`);
+      const panel = setPage.getByRole('region', { name: '반복 작업' });
+      await panel.waitFor();
+      const title = `주간 정리 ${run}`;
+      await panel.getByLabel('반복 작업 제목').fill(title);
+      await panel.getByLabel('반복 주기').selectOption('weekly');
+      await panel.getByLabel('반복 요일').selectOption('1');
+      await panel.getByLabel('마감까지 일수').fill('3');
+      await panel.getByRole('button', { name: '규칙 추가' }).click();
+      const item = panel.getByRole('listitem').filter({ hasText: title });
+      await item.getByText(/매주 월요일/).waitFor();
+      await item.getByText(/마감 3일 뒤/).waitFor();
+      await item.getByText(/다음 \d{4}-\d{2}-\d{2}/).waitFor();
+
+      await item.getByRole('button', { name: '끄기' }).click();
+      await item.getByText(/꺼짐/).waitFor();
+      await item.getByRole('button', { name: '켜기' }).click();
+      await item.getByText(/다음 \d{4}-\d{2}-\d{2}/).waitFor();
+
+      setPage.once('dialog', (d) => d.accept());
+      await item.getByRole('button', { name: `${title} 삭제` }).click();
+      await item.waitFor({ state: 'detached' });
+      const left = (await apiCall('GET', `/projects/${proj.id}/recurrences`, token)).body.data;
+      if (left.length !== 0) throw new Error('규칙이 남아 있음');
+      // 다음 단계가 곧바로 다시 이동하므로 설정 화면이 뜰 때까지 기다린다
+      await setPage.goto(`${BASE}/settings`);
+      await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    },
+  );
+  await step(
     '설정: API 토큰을 만들면 값이 한 번만 보이고, 그 토큰으로 API 를 쓰다가 폐기하면 바로 끊김',
     async () => {
       if (!setPage) throw new Error('준비 단계 실패');

@@ -3399,7 +3399,7 @@ try {
     let dupNumber = false;
     try {
       await db.query('UPDATE tasks SET number = 1 WHERE id = $1', [
-        made.find((r) => r.body.number !== 1).body.id,
+        made.find((r) => r.body.number !== 1 && r.body.number !== 8).body.id,
       ]);
     } catch {
       dupNumber = true;
@@ -4080,6 +4080,183 @@ try {
       ).status === 400,
     );
     await call('DELETE', `/projects/${bpid}`, { token: t('manager') });
+  }
+
+  // --- 반복 작업 (M41): 규칙 권한, cron 이 카드를 만들고 날짜를 넘기며 두 번 돌려도 한 번만 만드는지 실DB 로 확인
+  if (process.env.CRON_SECRET) {
+    const today = (await db.query("SELECT (now() AT TIME ZONE 'Asia/Seoul')::date::text AS d"))
+      .rows[0].d;
+    const rp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-recur', key: 'RCRS', memberIds: [people.member.id] },
+    });
+    const rpid = rp.body.id;
+    const rec = (who, body) =>
+      call('POST', `/projects/${rpid}/recurrences`, { token: t(who), body });
+    const runCron = async () =>
+      (
+        await fetch(BASE.replace('/api/v1', '') + '/api/cron/daily', {
+          headers: {
+            authorization: `Bearer ${process.env.CRON_SECRET}`,
+            ...(process.env.VERCEL_BYPASS && {
+              'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+            }),
+          },
+        })
+      ).json();
+    const tasksOf = async () =>
+      (
+        await db.query(
+          'SELECT title, due_date::text AS due, priority, assignee_id, created_by FROM tasks WHERE project_id = $1 ORDER BY title',
+          [rpid],
+        )
+      ).rows;
+
+    const daily = await rec('manager', {
+      title: '매일 점검',
+      frequency: 'daily',
+      priority: 'high',
+      dueAfterDays: 2,
+      assigneeId: people.member.id,
+    });
+    check(
+      '반복 작업: 관리 권한자가 만들면 오늘이 첫 실행일이다',
+      daily.status === 201 && daily.body.nextRunDate === today && daily.body.active === true,
+      JSON.stringify(daily.body).slice(0, 200),
+    );
+    check(
+      '반복 작업: 일반 멤버는 만들 수 없다(403)',
+      (await rec('member', { title: 'x', frequency: 'daily' })).status === 403,
+    );
+    check(
+      '반복 작업: 비멤버는 조회도 403',
+      (await call('GET', `/projects/${rpid}/recurrences`, { token: t('outsider') })).status === 403,
+    );
+    const listed = await call('GET', `/projects/${rpid}/recurrences`, { token: t('member') });
+    check(
+      '반복 작업: 멤버는 조회할 수 있다',
+      listed.status === 200 && listed.body.data.length === 1,
+    );
+    check(
+      '반복 작업: 주기에 맞지 않는 값은 400(weekly 인데 요일 없음)',
+      (await rec('manager', { title: 'x', frequency: 'weekly' })).status === 400,
+    );
+    check(
+      '반복 작업: 담당자가 멤버가 아니면 400',
+      (await rec('manager', { title: 'x', frequency: 'daily', assigneeId: people.outsider.id }))
+        .status === 400,
+    );
+
+    const first = await runCron();
+    let made = await tasksOf();
+    check(
+      '반복 작업: cron 이 카드를 만들고(마감일·우선순위·담당자·작성자) 다음 날로 넘긴다',
+      first.recurringCreated >= 1 &&
+        made.length === 1 &&
+        made[0].title === '매일 점검' &&
+        made[0].priority === 'high' &&
+        made[0].assignee_id === people.member.id &&
+        made[0].created_by === people.manager.id &&
+        made[0].due === (await db.query('SELECT ($1::date + 2)::text AS d', [today])).rows[0].d,
+      JSON.stringify({ first: first.recurringCreated, made }),
+    );
+    const afterRow = (
+      await db.query('SELECT next_run_date::text AS d FROM task_recurrences WHERE id = $1', [
+        daily.body.id,
+      ])
+    ).rows[0];
+    check(
+      '반복 작업: 다음 실행일은 내일이다',
+      afterRow.d === (await db.query('SELECT ($1::date + 1)::text AS d', [today])).rows[0].d,
+      afterRow.d,
+    );
+    await runCron();
+    made = await tasksOf();
+    check(
+      '반복 작업: 같은 날 cron 을 다시 돌려도 카드가 늘지 않는다',
+      made.length === 1,
+      String(made.length),
+    );
+    const act = (
+      await db.query(
+        `SELECT meta FROM activity_logs WHERE project_id = $1 AND action = 'task.created'`,
+        [rpid],
+      )
+    ).rows;
+    check(
+      '반복 작업: 활동 기록에 recurrenceId 가 남는다',
+      act.length === 1 && act[0].meta.recurrenceId === daily.body.id,
+      JSON.stringify(act),
+    );
+
+    // 며칠 밀린 규칙은 따라잡지 않고 1개만 만든다. 꺼 둔 규칙은 건너뛴다.
+    await db.query(
+      `UPDATE task_recurrences SET next_run_date = $2::date - 5, title = '밀린 점검' WHERE id = $1`,
+      [daily.body.id, today],
+    );
+    const weekly = await rec('manager', {
+      title: '꺼 둔 규칙',
+      frequency: 'weekly',
+      weekday: 1,
+      active: false,
+    });
+    await db.query(`UPDATE task_recurrences SET next_run_date = $2::date - 1 WHERE id = $1`, [
+      weekly.body.id,
+      today,
+    ]);
+    await runCron();
+    made = await tasksOf();
+    check(
+      '반복 작업: 밀린 규칙은 1개만 만들고, 꺼 둔 규칙은 만들지 않는다',
+      made.length === 2 &&
+        made.some((x) => x.title === '밀린 점검') &&
+        !made.some((x) => x.title === '꺼 둔 규칙'),
+      JSON.stringify(made.map((x) => x.title)),
+    );
+    const turnedOn = await call('PATCH', `/projects/${rpid}/recurrences/${weekly.body.id}`, {
+      token: t('manager'),
+      body: { active: true },
+    });
+    check(
+      '반복 작업: 다시 켜면 밀린 날짜를 따라잡지 않고 오늘 이후로 맞춘다',
+      turnedOn.status === 200 && turnedOn.body.nextRunDate >= today,
+      JSON.stringify(turnedOn.body),
+    );
+    check(
+      '반복 작업: 일반 멤버는 고칠 수 없다(403)',
+      (
+        await call('PATCH', `/projects/${rpid}/recurrences/${weekly.body.id}`, {
+          token: t('member'),
+          body: { active: false },
+        })
+      ).status === 403,
+    );
+
+    // 담당자가 프로젝트에서 빠져도 카드는 담당자 없이 만들어진다
+    const orphan = await rec('manager', {
+      title: '담당자 이탈',
+      frequency: 'daily',
+      assigneeId: people.member.id,
+    });
+    await call('DELETE', `/projects/${rpid}/members/${people.member.id}`, { token: t('manager') });
+    await runCron();
+    made = await tasksOf();
+    check(
+      '반복 작업: 담당자가 멤버에서 빠졌으면 담당자 없이 만든다',
+      made.some((x) => x.title === '담당자 이탈' && x.assignee_id === null),
+      JSON.stringify(made),
+    );
+    const del = await call('DELETE', `/projects/${rpid}/recurrences/${orphan.body.id}`, {
+      token: t('manager'),
+    });
+    check(
+      '반복 작업: 지우면 목록에서 사라진다',
+      del.status === 204 &&
+        (
+          await call('GET', `/projects/${rpid}/recurrences`, { token: t('manager') })
+        ).body.data.every((x) => x.id !== orphan.body.id),
+    );
+    await call('DELETE', `/projects/${rpid}`, { token: t('manager') });
   }
 
   // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인

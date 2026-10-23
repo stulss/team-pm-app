@@ -25,7 +25,7 @@ function assertDateRange(startDate, dueDate) {
 }
 
 // 담당자는 활성 상태인 프로젝트 멤버여야 한다.
-async function assertAssignable(projectId, assigneeId) {
+export async function assertAssignable(projectId, assigneeId) {
   if (!assigneeId) return;
   const user = await usersRepo.findById(assigneeId);
   const ok = user && user.is_active && (await projectsRepo.isMember(projectId, assigneeId));

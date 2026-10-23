@@ -24,6 +24,7 @@ import ActivityFeed from '../components/activity/ActivityFeed.jsx';
 import ExportCsvButton from '../components/activity/ExportCsvButton.jsx';
 import ShareLinks from '../components/activity/ShareLinks.jsx';
 import GithubConnect from '../components/project/GithubConnect.jsx';
+import RecurrencePanel from '../components/project/RecurrencePanel.jsx';
 import Avatar from '../components/common/Avatar.jsx';
 import Icon from '../components/common/Icon.jsx';
 
@@ -210,6 +211,8 @@ export default function ProjectDetailPage() {
           <ProjectDashboard projectId={project.id} />
 
           <TaskSection project={project} archived={archived} />
+
+          <RecurrencePanel project={project} canManage={canManage} archived={archived} />
 
           <div className="card">
             <PollPanel project={project} archived={archived} />

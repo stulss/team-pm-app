@@ -11,7 +11,7 @@ const forbiddenToken = (code, message) => new AppError(403, code, message);
 // 토큰이 호출할 수 있는 경로. 계정·세션·토큰 관리, 사용자 관리, 알림은 JWT 로그인만 된다.
 const ALLOWED = /^\/(projects|tasks|comments|search|dashboard|feed)(\/|$)/;
 const DENIED = [
-  /^\/projects\/[^/]+\/(github|share-links)(\/|$)/, // 연동 설정·공개 링크는 토큰으로 건드리지 않는다
+  /^\/projects\/[^/]+\/(github|share-links|recurrences)(\/|$)/, // 연동 설정·공개 링크·반복 규칙은 토큰으로 건드리지 않는다
 ];
 const MEMBERS = /^\/projects\/[^/]+\/members(\/|$)/; // 조회는 되지만 추가·제거는 안 된다
 const PROJECT_ITSELF = /^\/projects\/[^/]+\/?$/; // 프로젝트 삭제는 안 된다
