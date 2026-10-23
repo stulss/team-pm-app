@@ -130,6 +130,40 @@ export function assertBulkDeletable(project, user, rows) {
   }
 }
 
+// ---- CSV 가져오기 (M42): 전부 검증한 뒤에만 만든다 ----
+
+// 문제가 있는 행을 모아 한 번에 400 으로 알린다(행 번호는 데이터 첫 줄이 1).
+export async function assertImportable(project, rows) {
+  assertWritable(project);
+  if ((await repo.countByProject(project.id)) + rows.length > env.MAX_TASKS_PER_PROJECT) {
+    throw conflict(
+      'LIMIT_REACHED',
+      `작업은 프로젝트당 최대 ${env.MAX_TASKS_PER_PROJECT}개까지 만들 수 있어 가져올 수 없습니다.`,
+    );
+  }
+  const problems = [];
+  const assignable = new Map();
+  for (const [index, row] of rows.entries()) {
+    if (row.startDate && row.dueDate && row.startDate > row.dueDate) {
+      problems.push({ row: index + 1, field: 'startDate', issue: 'after_due_date' });
+    }
+    if (!row.assigneeId) continue;
+    if (!assignable.has(row.assigneeId)) {
+      const user = await usersRepo.findById(row.assigneeId);
+      assignable.set(
+        row.assigneeId,
+        Boolean(user?.is_active && (await projectsRepo.isMember(project.id, row.assigneeId))),
+      );
+    }
+    if (!assignable.get(row.assigneeId)) {
+      problems.push({ row: index + 1, field: 'assigneeId', issue: 'not_a_project_member' });
+    }
+  }
+  if (problems.length > 0) {
+    throw badRequest('가져올 수 없는 행이 있어 아무것도 만들지 않았습니다.', problems);
+  }
+}
+
 export async function remove(task, project, user) {
   assertWritable(project);
   if (!canDelete(user, task, project)) throw forbidden('이 작업을 삭제할 권한이 없습니다.');

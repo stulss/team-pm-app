@@ -97,6 +97,23 @@ const bulkUpdateBody = z.object({
     .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' }),
 });
 const bulkDeleteBody = z.object({ taskIds: bulkIds });
+// CSV 가져오기: 한 번에 200행까지. 알 수 없는 키는 거부한다.
+const importBody = z.object({
+  rows: z
+    .array(
+      z.strictObject({
+        title,
+        description: description.nullish(),
+        status: status.default('todo'),
+        priority: priority.default('medium'),
+        assigneeId: z.uuid('올바르지 않은 담당자 ID 입니다.').nullish(),
+        startDate: date.nullish(),
+        dueDate: date.nullish(),
+      }),
+    )
+    .min(1, '가져올 작업이 없습니다.')
+    .max(200, '한 번에 최대 200개까지 가져올 수 있습니다.'),
+});
 
 // /projects/:id/tasks
 export const projectTasksRouter = Router({ mergeParams: true });
@@ -118,6 +135,33 @@ projectTasksRouter.post('/', requireProjectMember(), validate(createBody), async
   await recordTaskCreated({ project: req.project, task, actor: req.user });
   res.status(201).json(task);
 });
+
+projectTasksRouter.post(
+  '/import',
+  requireProjectMember(),
+  validate(importBody),
+  async (req, res) => {
+    const { rows } = req.body;
+    await service.assertImportable(req.project, rows);
+    const tasks = [];
+    for (const row of rows) {
+      const task = await service.create(req.project, req.user, row);
+      await emitToProject(req, req.project.id, 'task:created', {
+        projectId: req.project.id,
+        task,
+      });
+      await notifyTaskAssigned({ task, actor: req.user });
+      await recordTaskCreated({
+        project: req.project,
+        task,
+        actor: req.user,
+        meta: { imported: true },
+      });
+      tasks.push(task);
+    }
+    res.status(201).json({ created: tasks.length, tasks });
+  },
+);
 
 projectTasksRouter.patch(
   '/bulk',

@@ -14,6 +14,42 @@ export function buildCsv(rows) {
   return `${BOM}${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
 }
 
+// csvCell 이 수식 방지로 붙인 작은따옴표를 되돌린다('=1+1 → =1+1).
+export const unescapeCell = (text) => (/^'[=+\-@\t\r]/.test(text) ? text.slice(1) : text);
+
+// CSV 본문을 값 배열의 배열로 읽는다. 따옴표("" 이스케이프·줄바꿈 포함)·CRLF·BOM 을 처리하고 완전히 빈 줄은 건너뛴다.
+export function parseCsv(text) {
+  const input = text.startsWith(BOM) ? text.slice(1) : text;
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  const endCell = () => {
+    row.push(cell);
+    cell = '';
+  };
+  const endRow = () => {
+    endCell();
+    if (row.some((value) => value !== '')) rows.push(row);
+    row = [];
+  };
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (quoted) {
+      if (ch !== '"') cell += ch;
+      else if (input[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else quoted = false;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === ',') endCell();
+    else if (ch === '\n') endRow();
+    else if (ch !== '\r') cell += ch;
+  }
+  if (cell !== '' || row.length > 0) endRow();
+  return rows;
+}
+
 export function downloadCsv(filename, content) {
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');

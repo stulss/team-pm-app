@@ -2576,6 +2576,86 @@ try {
     },
   );
   await step(
+    'CSV: 작업을 내보내고, 문제 있는 파일은 막고, 고친 파일은 한꺼번에 가져옴',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const token = await apiLogin('settings');
+      const proj = (await apiCall('POST', '/projects', token, { name: `ui-${run}-CSV` })).body;
+      const own = `기존 작업 ${run}`;
+      await apiCall('POST', `/projects/${proj.id}/tasks`, token, {
+        title: own,
+        priority: 'urgent',
+      });
+      await setPage.goto(`${BASE}/projects/${proj.id}`);
+      await setPage.getByRole('button', { name: '작업 내보내기' }).waitFor();
+
+      // 내보내기: 머리글과 기존 작업이 담긴 CSV 가 내려온다
+      const [download] = await Promise.all([
+        setPage.waitForEvent('download'),
+        setPage.getByRole('button', { name: '작업 내보내기' }).click(),
+      ]);
+      const exported = readFileSync(await download.path(), 'utf-8');
+      if (
+        !exported.includes('제목,설명,상태,우선순위') ||
+        !exported.includes(own) ||
+        !exported.includes('긴급')
+      ) {
+        throw new Error('내보낸 파일 내용이 다름');
+      }
+
+      await setPage.getByRole('button', { name: '작업 가져오기' }).click();
+      const dialog = setPage.getByRole('dialog', { name: 'CSV 에서 작업 가져오기' });
+      const pick = (name, text) =>
+        dialog
+          .getByLabel('CSV 파일 선택')
+          .setInputFiles({ name, mimeType: 'text/csv', buffer: Buffer.from(text, 'utf-8') });
+      const email = emailOf('settings');
+
+      // 문제 있는 파일: 줄 번호와 이유를 보여 주고 가져오기는 막힌다
+      await pick(
+        'bad.csv',
+        `제목,상태,담당자\n정상 작업,할 일,\n이상한 상태,없는상태,\n외부 담당,,nobody@example.test\n`,
+      );
+      await dialog.getByText(/3번째 줄: 알 수 없는 상태/).waitFor();
+      await dialog.getByText(/4번째 줄: 담당자를 찾을 수 없습니다/).waitFor();
+      if (!(await dialog.getByRole('button', { name: '가져오기', exact: true }).isDisabled())) {
+        throw new Error('문제가 있는데 가져오기가 활성화됨');
+      }
+      let total = (await apiCall('GET', `/projects/${proj.id}/tasks?limit=50`, token)).body.data
+        .length;
+      if (total !== 1) throw new Error('문제 파일인데 작업이 만들어짐');
+
+      // 고친 파일(수식 방지 접두어·따옴표·쉼표 포함)을 가져온다
+      await pick(
+        'good.csv',
+        `\uFEFF제목,설명,상태,우선순위,담당자,마감일\n"가져온, 첫째","줄1\n줄2",진행 중,높음,${email},2031-03-04\n'=수식처럼 보이는 제목,,,,,\n`,
+      );
+      await dialog.getByText('2개').waitFor();
+      await dialog.getByRole('button', { name: '가져오기', exact: true }).click();
+      await setPage.getByRole('status').filter({ hasText: '2개 작업을 가져왔습니다' }).waitFor();
+      await dialog.waitFor({ state: 'detached' });
+
+      const list = (await apiCall('GET', `/projects/${proj.id}/tasks?limit=50`, token)).body.data;
+      const first = list.find((t) => t.title === '가져온, 첫째');
+      const second = list.find((t) => t.title === '=수식처럼 보이는 제목');
+      if (list.length !== 3 || !first || !second)
+        throw new Error(`가져온 결과가 다름: ${list.map((t) => t.title)}`);
+      if (
+        first.status !== 'in_progress' ||
+        first.priority !== 'high' ||
+        first.dueDate !== '2031-03-04' ||
+        first.description !== '줄1\n줄2' ||
+        !first.assignee
+      ) {
+        throw new Error(`필드가 다름: ${JSON.stringify(first)}`);
+      }
+      await setPage.getByRole('tab', { name: '목록' }).click();
+      await setPage.getByRole('table').getByText('가져온, 첫째').waitFor();
+      await setPage.goto(`${BASE}/settings`);
+      await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    },
+  );
+  await step(
     '설정: API 토큰을 만들면 값이 한 번만 보이고, 그 토큰으로 API 를 쓰다가 폐기하면 바로 끊김',
     async () => {
       if (!setPage) throw new Error('준비 단계 실패');

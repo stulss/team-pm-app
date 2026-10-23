@@ -18,3 +18,6 @@ export const moveTask = (id, body) => http.patch(`/tasks/${id}/move`, body).then
 // 작업 키(TPM-12)로 조회한다.
 export const getTaskByKey = (key) => http.get(`/tasks/key/${encodeURIComponent(key)}`).then(data);
 export const getTask = (id) => http.get(`/tasks/${id}`).then(data);
+// CSV 가져오기(최대 200행). rows 는 { title, description?, status?, priority?, assigneeId?, startDate?, dueDate? }.
+export const importTasks = (projectId, rows) =>
+  http.post(`/projects/${projectId}/tasks/import`, { rows }).then(data);

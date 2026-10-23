@@ -4259,6 +4259,101 @@ try {
     await call('DELETE', `/projects/${rpid}`, { token: t('manager') });
   }
 
+  // --- 작업 CSV 가져오기 (M42): 전부 검증한 뒤에만 만들고(전부 아니면 전무), 번호·활동 기록·권한을 실DB 로 확인
+  {
+    const ip = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-import', key: 'IMPS', memberIds: [people.member.id] },
+    });
+    const ipid = ip.body.id;
+    const importRows = (who, rows) =>
+      call('POST', `/projects/${ipid}/tasks/import`, { token: t(who), body: { rows } });
+    const taskCount = async () =>
+      (await db.query('SELECT count(*)::int AS n FROM tasks WHERE project_id = $1', [ipid])).rows[0]
+        .n;
+
+    const ok = await importRows('member', [
+      { title: '가져온 1' },
+      {
+        title: '가져온 2',
+        description: '설명',
+        status: 'in_progress',
+        priority: 'high',
+        assigneeId: people.manager.id,
+        startDate: '2031-01-01',
+        dueDate: '2031-01-09',
+      },
+      { title: '가져온 3', status: 'done' },
+    ]);
+    const made = (
+      await db.query(
+        'SELECT number, title, status, priority, assignee_id, start_date::text AS s, due_date::text AS d, created_by, completed_at FROM tasks WHERE project_id = $1 ORDER BY number',
+        [ipid],
+      )
+    ).rows;
+    check(
+      'CSV 가져오기: 행마다 작업이 만들어지고 번호가 순서대로 매겨진다',
+      ok.status === 201 &&
+        ok.body.created === 3 &&
+        made.map((r) => r.number).join() === '1,2,3' &&
+        made[0].status === 'todo' &&
+        made[0].priority === 'medium' &&
+        made[1].status === 'in_progress' &&
+        made[1].priority === 'high' &&
+        made[1].assignee_id === people.manager.id &&
+        made[1].s === '2031-01-01' &&
+        made[1].d === '2031-01-09' &&
+        made.every((r) => r.created_by === people.member.id) &&
+        made[2].completed_at !== null,
+      JSON.stringify({ status: ok.status, made }),
+    );
+    const acts = (
+      await db.query(
+        `SELECT meta FROM activity_logs WHERE project_id = $1 AND action = 'task.created'`,
+        [ipid],
+      )
+    ).rows;
+    check(
+      'CSV 가져오기: 활동 기록에 imported 표시가 남는다',
+      acts.length === 3 && acts.every((a) => a.meta.imported === true),
+      JSON.stringify(acts),
+    );
+
+    const bad = await importRows('member', [
+      { title: '정상' },
+      { title: '외부인 담당', assigneeId: people.outsider.id },
+      { title: '날짜 거꾸로', startDate: '2031-02-02', dueDate: '2031-02-01' },
+    ]);
+    check(
+      'CSV 가져오기: 문제 행이 있으면 행 번호와 함께 400 이고 아무것도 만들지 않는다',
+      bad.status === 400 &&
+        JSON.stringify(bad.body.error.details) ===
+          JSON.stringify([
+            { row: 2, field: 'assigneeId', issue: 'not_a_project_member' },
+            { row: 3, field: 'startDate', issue: 'after_due_date' },
+          ]) &&
+        (await taskCount()) === 3,
+      JSON.stringify(bad.body).slice(0, 240),
+    );
+    check(
+      'CSV 가져오기: 201행은 400, 비멤버는 403',
+      (
+        await importRows(
+          'member',
+          Array.from({ length: 201 }, (_, i) => ({ title: `t${i}` })),
+        )
+      ).status === 400 &&
+        (await importRows('outsider', [{ title: 'x' }])).status === 403 &&
+        (await taskCount()) === 3,
+    );
+    await call('PATCH', `/projects/${ipid}`, { token: t('manager'), body: { status: 'archived' } });
+    check(
+      'CSV 가져오기: 보관된 프로젝트는 409',
+      (await importRows('member', [{ title: 'x' }])).status === 409,
+    );
+    await call('DELETE', `/projects/${ipid}`, { token: t('manager') });
+  }
+
   // --- GitHub 로그인 (M27): 실제 DB 의 컬럼·유일 인덱스·가입 SQL 과 공개 엔드포인트를 확인
   {
     const usersRepo = await import('../src/modules/users/repository.js');

@@ -28,6 +28,7 @@ import { openBlockers } from '../../utils/timeline.js';
 import SavedFilters from './SavedFilters.jsx';
 import TaskBoard from './TaskBoard.jsx';
 import BulkBar from './BulkBar.jsx';
+import TaskCsv from './TaskCsv.jsx';
 import TaskModal from './TaskModal.jsx';
 
 const VIEWS = ['board', 'list', 'calendar', 'timeline'];
@@ -124,11 +125,14 @@ export default function TaskSection({ project, archived }) {
             ))}
           </div>
         </div>
-        {!archived && (
-          <button type="button" onClick={() => setModal({})}>
-            작업 추가
-          </button>
-        )}
+        <div className="row">
+          <TaskCsv project={project} archived={archived} />
+          {!archived && (
+            <button type="button" onClick={() => setModal({})}>
+              작업 추가
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="filters">
