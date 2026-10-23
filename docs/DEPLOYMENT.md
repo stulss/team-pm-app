@@ -105,6 +105,7 @@ BASE_URL=https://team-pm-app-sand.vercel.app npm run e2e               # 브라�
 | 사용자 비활성화·역할 변경 | 앱의 `사용자 관리`(Admin). 비활성화하면 세션·소켓이 즉시 끊긴다 |
 | JWT 키 교체 | 환경변수 교체 후 재배포 → 모든 세션이 만료되어 재로그인 필요 |
 | DB 접속 실패(인증서) | 먼저 `SUPABASE_CA` 만료/교체 여부 확인. 급하면 `DB_SSL_VERIFY=false` 로 임시 복구 후 원인 해결 |
+| Cron 이 도는지 확인 | `SELECT source, ran_at, result FROM job_runs WHERE name='daily'` 에서 `source='vercel'` 행의 `ran_at` 이 24시간 안이면 정상(M40 배포 후 첫 실행부터 기록됨). 행이 없거나 오래됐으면 Vercel 대시보드의 Cron 로그와 `CRON_SECRET` 확인 |
 | 마감 알림이 안 옴 | Vercel Cron 로그, `CRON_SECRET` 일치 여부, `GET /api/cron/daily`(Bearer) 수동 호출 결과(`dueSoon`/`overdue` 수) 확인 |
 | 문의 추적 | 응답 헤더 `x-request-id` 로 Vercel 런타임 로그 검색 |
 

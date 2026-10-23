@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Router } from 'express';
 import { env } from '../../config/env.js';
 import { runDailyJobs } from '../notifications/service.js';
+import { recordJobRun } from './repository.js';
 
 // Vercel Cron 전용 엔드포인트(/api/cron/*). Vercel 은 CRON_SECRET 이 설정돼 있으면
 // `Authorization: Bearer <CRON_SECRET>` 헤더를 붙여 GET 으로 호출한다.
@@ -29,5 +30,7 @@ cronRouter.use((req, res, next) => {
 
 // 하루 1회: 마감 임박/지연 알림 생성 + 90일 지난 알림·만료 refresh 토큰 정리
 cronRouter.get('/daily', async (req, res) => {
-  res.json(await runDailyJobs());
+  const result = await runDailyJobs();
+  await recordJobRun('daily', result);
+  res.json(result);
 });

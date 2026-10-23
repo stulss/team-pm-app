@@ -888,6 +888,19 @@ try {
       ran.status === 200 && ran.body.dueSoon >= 2 && ran.body.overdue >= 1,
       JSON.stringify(ran.body),
     );
+    const jobRow = (
+      await db.query(`SELECT source, ran_at, result FROM job_runs WHERE name = 'daily'`)
+    ).rows;
+    check(
+      'cron 실행: 마지막 실행 시각과 결과가 job_runs 에 남는다(로컬 호출은 manual)',
+      jobRow.some(
+        (r) =>
+          r.source === 'manual' &&
+          Date.now() - new Date(r.ran_at).getTime() < 60_000 &&
+          r.result.dueSoon === ran.body.dueSoon,
+      ),
+      JSON.stringify(jobRow),
+    );
     const dueList = (await nlist('member')).body.data;
     check(
       '오늘/내일 마감 작업의 담당자에게 due_soon 알림 (모레는 없음)',
