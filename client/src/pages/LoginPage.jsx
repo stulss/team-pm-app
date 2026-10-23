@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '../context/AuthContext.jsx';
 import { errorMessage } from '../api/http.js';
+import { returnPath } from '../routes/guards.jsx';
 import GithubLoginButton from '../components/auth/GithubLoginButton.jsx';
 import { githubErrorMessage } from '../constants/githubLogin.js';
 
@@ -21,7 +22,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await login(email, password);
-      navigate(location.state?.from?.pathname ?? '/', { replace: true });
+      navigate(returnPath(location.state?.from), { replace: true });
     } catch (err) {
       setError(errorMessage(err, '로그인에 실패했습니다.'));
     } finally {

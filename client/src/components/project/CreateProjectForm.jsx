@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { canSearchUsers, createProject } from '../../api/projects.js';
 import { errorMessage } from '../../api/http.js';
@@ -20,13 +20,20 @@ export default function CreateProjectForm({ onDone, onCancel }) {
     },
   });
 
+  // 더블클릭·연타로 같은 프로젝트가 두 번 만들어지지 않게, 응답이 올 때까지 두 번째 제출을 막는다.
+  const sending = useRef(false);
   const onSubmit = (e) => {
     e.preventDefault();
-    mutation.mutate({
-      name,
-      description: description || undefined,
-      memberIds: members.map((m) => m.id),
-    });
+    if (sending.current) return;
+    sending.current = true;
+    mutation.mutate(
+      {
+        name,
+        description: description || undefined,
+        memberIds: members.map((m) => m.id),
+      },
+      { onError: () => (sending.current = false) },
+    );
   };
 
   return (

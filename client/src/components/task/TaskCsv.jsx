@@ -18,17 +18,23 @@ export default function TaskCsv({ project, archived }) {
   const [importing, setImporting] = useState(false);
   const [parsed, setParsed] = useState(null); // { name, tasks, errors }
   const [done, setDone] = useState('');
+  const [sure, setSure] = useState(false); // 같은 제목이 이미 있어도 가져오겠다는 확인
+
+  const fetchAll = async () => {
+    const all = [];
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const res = await listProjectTasks(project.id, { page, limit: PAGE });
+      all.push(...res.data);
+      if (all.length >= res.meta.total) break;
+    }
+    return all;
+  };
 
   const exportAll = async () => {
     setExporting(true);
     setExportError('');
     try {
-      const all = [];
-      for (let page = 1; page <= MAX_PAGES; page += 1) {
-        const res = await listProjectTasks(project.id, { page, limit: PAGE });
-        all.push(...res.data);
-        if (all.length >= res.meta.total) break;
-      }
+      const all = await fetchAll();
       const today = new Date().toISOString().slice(0, 10);
       downloadCsv(`작업-${project.name}-${today}.csv`, buildCsv(taskRows(all, project.members)));
     } catch (err) {
@@ -51,6 +57,7 @@ export default function TaskCsv({ project, archived }) {
   const close = () => {
     setImporting(false);
     setParsed(null);
+    setSure(false);
     save.reset();
   };
 
@@ -61,7 +68,18 @@ export default function TaskCsv({ project, archived }) {
     save.reset();
     try {
       const { tasks, errors } = readTasks(parseCsv(await file.text()), project.members);
-      setParsed({ name: file.name, tasks, errors });
+      setSure(false);
+      // 내보낸 파일을 그대로 다시 가져오면 같은 작업이 또 생기므로, 이미 있는 제목은 미리 알려 준다.
+      let duplicates = 0;
+      if (errors.length === 0) {
+        try {
+          const existing = new Set((await fetchAll()).map((t) => t.title.trim().toLowerCase()));
+          duplicates = tasks.filter((t) => existing.has(t.title.trim().toLowerCase())).length;
+        } catch {
+          /* 확인하지 못해도 가져오기는 막지 않는다 */
+        }
+      }
+      setParsed({ name: file.name, tasks, errors, duplicates });
     } catch {
       setParsed({
         name: file.name,
@@ -121,8 +139,9 @@ export default function TaskCsv({ project, archived }) {
           <p className="muted small">
             첫 줄은 머리글(<code>제목</code> 필수, 설명·상태·우선순위·담당자(멤버 이메일)·시작일·
             마감일)이어야 합니다. 상태는 할 일/진행 중/검토/완료, 우선순위는 낮음/보통/높음/긴급. 한
-            번에 최대 {MAX_IMPORT_ROWS}개까지, 하나라도 문제가 있으면 아무것도 만들지 않습니다. 이
-            화면의 "작업 내보내기" 파일도 그대로 가져올 수 있습니다.
+            번에 최대 {MAX_IMPORT_ROWS}개까지, 하나라도 문제가 있으면 아무것도 만들지 않습니다.
+            "작업 내보내기" 파일도 가져올 수 있지만 번호·라벨·댓글 수 열은 무시하고 새 작업으로
+            만듭니다(같은 작업이 중복될 수 있습니다).
           </p>
           <div className="row">
             <input
@@ -168,6 +187,19 @@ export default function TaskCsv({ project, archived }) {
               </ul>
             </>
           )}
+          {parsed && parsed.errors.length === 0 && parsed.duplicates > 0 && (
+            <div role="alert" className="notice">
+              <p>
+                이 프로젝트에 같은 제목의 작업이 이미 있는 줄이{' '}
+                <strong>{parsed.duplicates}개</strong> 있습니다. 가져오면 같은 작업이 한 번 더
+                만들어집니다.
+              </p>
+              <label className="inline">
+                <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
+                중복이어도 가져옵니다
+              </label>
+            </div>
+          )}
           {save.isError && (
             <p role="alert" className="error">
               {errorMessage(save.error, '가져오지 못했습니다.')}
@@ -176,7 +208,12 @@ export default function TaskCsv({ project, archived }) {
           <div className="row">
             <button
               type="button"
-              disabled={!parsed || parsed.errors.length > 0 || save.isPending}
+              disabled={
+                !parsed ||
+                parsed.errors.length > 0 ||
+                (parsed.duplicates > 0 && !sure) ||
+                save.isPending
+              }
               onClick={() => save.mutate()}
             >
               {save.isPending ? '가져오는 중…' : '가져오기'}

@@ -47,11 +47,11 @@ const readView = (fallback) => {
 export default function TaskSection({ project, archived }) {
   // 처음 보이는 보기는 내 설정(기본 작업 보기)이고, 탭을 누르면 이 탭에서는 그 선택이 유지된다.
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [savedView, setView] = useState(() => readView(user.preferences.defaultView));
   const [filters, setFilters] = useState({ status: '', priority: '', assignee: '', label: '' });
   const [managingLabels, setManagingLabels] = useState(false);
   const [q, setQ] = useState('');
-  const [modal, setModal] = useState(null); // null | { task? }
   const debouncedQ = useDebounced(q.trim());
   const labels = useQuery({
     queryKey: ['labels', project.id],
@@ -76,7 +76,27 @@ export default function TaskSection({ project, archived }) {
     enabled: Boolean(linkedId),
     retry: false,
   });
-  const closeLinked = () => setSearchParams({}, { replace: true });
+  const closeLinked = () => dropParams('task');
+  // 작업 모달 상태는 주소(?task=<id>, ?new=task)에 둔다: 새로고침·뒤로가기·링크 공유가 되고, 뒤로가기로 닫힌다.
+  // 목록에서 이미 가진 작업은 캐시에 넣어 두어 바로 열리고, 상세는 뒤에서 다시 받는다.
+  const openTask = (task) => {
+    queryClient.setQueryData(['task', task.id], task);
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    next.set('task', task.id);
+    setSearchParams(next);
+  };
+  const openNew = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('task');
+    next.set('new', 'task');
+    setSearchParams(next);
+  };
+  // 없거나 볼 수 없는 작업 링크는 조용히 주소에서 걷어 낸다.
+  useEffect(() => {
+    if (linked.isError) dropParams('task');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linked.isError]);
 
   const changeView = (next) => {
     setView(next);
@@ -128,7 +148,7 @@ export default function TaskSection({ project, archived }) {
         <div className="row">
           <TaskCsv project={project} archived={archived} />
           {!archived && (
-            <button type="button" onClick={() => setModal({})}>
+            <button type="button" onClick={openNew}>
               작업 추가
             </button>
           )}
@@ -213,23 +233,18 @@ export default function TaskSection({ project, archived }) {
       />
 
       {view === 'board' ? (
-        <TaskBoard
-          project={project}
-          archived={archived}
-          filters={common}
-          onOpenTask={(task) => setModal({ task })}
-        />
+        <TaskBoard project={project} archived={archived} filters={common} onOpenTask={openTask} />
       ) : view === 'timeline' ? (
         <TimelineView
           project={project}
           params={{ ...common, status: filters.status || undefined }}
-          onOpenTask={(task) => setModal({ task })}
+          onOpenTask={openTask}
         />
       ) : view === 'calendar' ? (
         <CalendarView
           project={project}
           params={{ ...common, status: filters.status || undefined }}
-          onOpenTask={(task) => setModal({ task })}
+          onOpenTask={openTask}
         />
       ) : (
         <TaskList
@@ -238,7 +253,7 @@ export default function TaskSection({ project, archived }) {
           members={activeMembers}
           params={{ ...common, status: filters.status || undefined, limit: 200 }}
           filtered={filtered}
-          onOpenTask={(task) => setModal({ task })}
+          onOpenTask={openTask}
         />
       )}
 
@@ -249,8 +264,9 @@ export default function TaskSection({ project, archived }) {
           onClose={() => setManagingLabels(false)}
         />
       )}
-      {linked.data && !modal && !creating && (
+      {!creating && linked.data && (
         <TaskModal
+          key={linked.data.id}
           projectId={project.id}
           ownerId={project.ownerId}
           members={project.members}
@@ -259,17 +275,13 @@ export default function TaskSection({ project, archived }) {
           onClose={closeLinked}
         />
       )}
-      {(modal || creating) && (
+      {creating && (
         <TaskModal
           projectId={project.id}
           ownerId={project.ownerId}
           members={project.members}
-          task={modal?.task}
           readOnly={archived}
-          onClose={() => {
-            setModal(null);
-            if (creating) dropParams('new');
-          }}
+          onClose={() => dropParams('new')}
         />
       )}
     </div>

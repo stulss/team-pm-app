@@ -208,9 +208,10 @@ export default function ProjectDetailPage() {
             </p>
           )}
 
-          <ProjectDashboard projectId={project.id} />
-
+          {/* 가장 자주 쓰는 작업을 요약보다 위에 둔다(첫 화면에서 바로 보이게) */}
           <TaskSection project={project} archived={archived} />
+
+          <ProjectDashboard projectId={project.id} />
 
           <RecurrencePanel project={project} canManage={canManage} archived={archived} />
 

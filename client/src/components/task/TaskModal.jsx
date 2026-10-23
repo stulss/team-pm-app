@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createTask, deleteTask, updateTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
@@ -46,6 +46,15 @@ export default function TaskModal({
     dueDate: task?.dueDate ?? '',
   });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  // 처음 값에서 바뀌었는지: 바뀐 채로 닫으면(Esc·배경·취소) 확인을 받는다.
+  const [initial] = useState(form);
+  const dirty = !readOnly && JSON.stringify(form) !== JSON.stringify(initial);
+  const requestClose = () => {
+    if (dirty && !window.confirm('저장하지 않은 변경이 있습니다. 그래도 닫을까요?')) return;
+    onClose();
+  };
+  // 더블클릭·연타로 같은 작업이 두 번 만들어지지 않게, 응답이 올 때까지 두 번째 제출을 막는다.
+  const sending = useRef(false);
 
   const done = () => {
     queryClient.invalidateQueries({ queryKey: ['tasks'] });
@@ -85,14 +94,16 @@ export default function TaskModal({
   const options = members.filter((m) => m.isActive || m.id === task?.assignee?.id);
 
   return (
-    <Modal title={editing ? '작업 수정' : '새 작업'} onClose={onClose} wide>
+    <Modal title={editing ? '작업 수정' : '새 작업'} onClose={requestClose} wide>
       <div className="task-layout">
         <form
           id={FORM_ID}
           className="task-top stack"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!readOnly) save.mutate();
+            if (readOnly || sending.current) return;
+            sending.current = true;
+            save.mutate(undefined, { onError: () => (sending.current = false) });
           }}
         >
           {editing && task.key && (
@@ -160,7 +171,7 @@ export default function TaskModal({
               )}
             </div>
             <div className="row">
-              <button type="button" className="secondary" onClick={onClose}>
+              <button type="button" className="secondary" onClick={requestClose}>
                 {readOnly ? '닫기' : '취소'}
               </button>
               {!readOnly && (

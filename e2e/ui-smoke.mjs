@@ -2651,8 +2651,94 @@ try {
       }
       await setPage.getByRole('tab', { name: '목록' }).click();
       await setPage.getByRole('table').getByText('가져온, 첫째').waitFor();
+
+      // 내보낸 파일을 그대로 다시 가져오면 같은 제목이 있다고 알리고, 확인해야만 가져온다
+      await setPage.getByRole('button', { name: '작업 가져오기' }).click();
+      const again = setPage.getByRole('dialog', { name: 'CSV 에서 작업 가져오기' });
+      await again
+        .getByLabel('CSV 파일 선택')
+        .setInputFiles({ name: 'again.csv', mimeType: 'text/csv', buffer: Buffer.from(exported) });
+      await again.getByText('같은 제목의 작업이 이미 있는 줄이').waitFor();
+      const importBtn = again.getByRole('button', { name: '가져오기', exact: true });
+      if (!(await importBtn.isDisabled()))
+        throw new Error('중복인데 확인 없이 가져오기가 활성화됨');
+      await again.getByLabel('중복이어도 가져옵니다').click();
+      if (await importBtn.isDisabled()) throw new Error('확인했는데 가져오기가 비활성화됨');
+      await again.getByRole('button', { name: '닫기' }).last().click();
+      await again.waitFor({ state: 'detached' });
+
       await setPage.goto(`${BASE}/settings`);
       await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    },
+  );
+  await step(
+    '사용 편의: 로그인 뒤 원래 주소로 복귀, 더블클릭 중복 방지, 모달 포커스·Esc 확인·주소 반영',
+    async () => {
+      if (!setPage) throw new Error('준비 단계 실패');
+      const token = await apiLogin('settings');
+      const proj = (await apiCall('POST', '/projects', token, { name: `ui-${run}-UX` })).body;
+      const titles = async () =>
+        (await apiCall('GET', `/projects/${proj.id}/tasks?limit=50`, token)).body.data.map(
+          (t) => t.title,
+        );
+
+      // 로그아웃 상태에서 프로젝트 주소를 열면 로그인 화면으로 가고, 로그인하면 그 주소로 돌아온다
+      const anon = await newPage();
+      await anon.goto(`${BASE}/projects/${proj.id}?view=list`);
+      await anon.getByRole('heading', { name: '로그인' }).waitFor();
+      await anon.getByLabel('이메일').fill(emailOf('settings'));
+      await anon.getByLabel('비밀번호').fill(PASSWORD);
+      await anon.getByRole('button', { name: '로그인' }).click();
+      await anon.getByRole('heading', { name: `ui-${run}-UX`, exact: true }).waitFor();
+      if (!anon.url().includes(`/projects/${proj.id}`) || !anon.url().includes('view=list')) {
+        throw new Error(`원래 주소로 돌아오지 않음: ${anon.url()}`);
+      }
+      await anon.context().close();
+
+      await setPage.goto(`${BASE}/projects/${proj.id}`);
+      const opener = setPage.getByRole('button', { name: '작업 추가' });
+      await opener.click();
+      const dialog = setPage.getByRole('dialog', { name: '새 작업' });
+      // 처음 포커스는 닫기 버튼이 아니라 제목 입력칸
+      await dialog.waitFor();
+      const focused = () =>
+        setPage.evaluate(() => {
+          /* eslint-disable no-undef */
+          const el = document.activeElement;
+          return { cls: String(el?.className ?? ''), text: el?.textContent ?? '' };
+        });
+      if (!(await focused()).cls.includes('task-title-input')) {
+        throw new Error('첫 포커스가 제목이 아님');
+      }
+      // 입력한 채 Esc: 취소하면 남고, 확인하면 닫히며 포커스는 연 버튼으로 돌아온다
+      await dialog.getByLabel('제목').fill('연타 확인');
+      setPage.once('dialog', (d) => d.dismiss());
+      await setPage.keyboard.press('Escape');
+      await setPage.waitForTimeout(300);
+      if (!(await dialog.isVisible())) throw new Error('확인에서 취소했는데 모달이 닫힘');
+      setPage.once('dialog', (d) => d.accept());
+      await setPage.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'detached' });
+      if ((await focused()).text !== '작업 추가') {
+        throw new Error('닫은 뒤 포커스가 연 버튼으로 돌아오지 않음');
+      }
+
+      // 더블클릭해도 한 번만 만들어진다
+      await opener.click();
+      await dialog.getByLabel('제목').fill('연타 확인');
+      await dialog.getByRole('button', { name: '만들기' }).dblclick();
+      await dialog.waitFor({ state: 'detached' });
+      const created = (await titles()).filter((t) => t === '연타 확인').length;
+      if (created !== 1) throw new Error(`더블클릭으로 ${created}개가 만들어짐`);
+
+      // 열린 작업은 주소에 반영되어 새로고침해도 다시 열리고, 뒤로가기로 닫힌다
+      await setPage.getByRole('tab', { name: '목록' }).click();
+      await setPage.getByRole('table').getByRole('button', { name: '연타 확인' }).click();
+      await setPage.waitForURL(/[?&]task=/);
+      await setPage.reload();
+      await setPage.getByRole('dialog', { name: '작업 수정' }).waitFor();
+      await setPage.goBack();
+      await setPage.getByRole('dialog').waitFor({ state: 'detached' });
     },
   );
   await step(

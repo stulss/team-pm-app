@@ -15,11 +15,22 @@ export function ProtectedRoute() {
 }
 
 // 로그인한 사용자가 /login, /register 에 들어오면 홈으로 보낸다.
+// ProtectedRoute 가 남긴 원래 위치(state.from)가 있으면 그곳으로 보낸다. 로그인 직후 상태가 바뀌면
+// 이 가드가 먼저 다시 그려지므로, 복귀는 여기서 처리해야 한다.
 export function PublicOnlyRoute() {
   const { status } = useAuth();
+  const location = useLocation();
   if (status === 'loading') return <Loading />;
-  if (status === 'authed') return <Navigate to="/" replace />;
+  if (status === 'authed') return <Navigate to={returnPath(location.state?.from)} replace />;
   return <Outlet />;
+}
+
+// 앱 안의 경로(/ 로 시작, // 아님)만 허용한다. 라우터 state 는 앱이 만든 값이지만 한 번 더 막는다.
+export function returnPath(from) {
+  const path = `${from?.pathname ?? ''}${from?.search ?? ''}${from?.hash ?? ''}`;
+  return path.startsWith('/') && !path.startsWith('//') && !/^\/(login|register)/.test(path)
+    ? path
+    : '/';
 }
 
 // 역할 제한. ProtectedRoute 안쪽에서 사용한다. (서버가 최종 권한 검사를 하며, 이건 화면 차단용이다.)

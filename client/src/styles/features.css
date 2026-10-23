@@ -18,6 +18,7 @@
 
 .project-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--s-4);
 }
@@ -41,6 +42,7 @@
 
 .project-actions {
   display: flex;
+  flex-basis: 100%; /* 버튼이 많아 제목을 좁히지 않도록 제목 아래 한 줄로 둔다 */
   flex-wrap: wrap;
   gap: var(--s-2);
 }
@@ -263,7 +265,7 @@
 /* 보드 */
 .board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(176px, 1fr));
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
   gap: var(--s-2);
   padding-bottom: var(--s-2);
   overflow-x: auto;
@@ -874,6 +876,23 @@
 .share input[readonly] {
   flex: 1;
   min-width: 0;
+}
+
+/* 좁은 사이드 패널에서도 "폐기" 가 글자 단위로 꺾이지 않게 버튼은 줄이지 않고 설명이 줄어든다 */
+.share .members li > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.share .members li > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.share .notice {
+  font-size: 0.85rem;
 }
 
 /* ---- 통합검색·모아보기 ---- */
