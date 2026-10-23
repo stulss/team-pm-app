@@ -1,7 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
-import { getTask, listProjectTasks, updateTask } from '../../api/tasks.js';
+import {
+  bulkDeleteTasks,
+  bulkUpdateTasks,
+  getTask,
+  listProjectTasks,
+  updateTask,
+} from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
 import { useDebounced } from '../../hooks/useDebounced.js';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -21,6 +27,7 @@ import TimelineView from './TimelineView.jsx';
 import { openBlockers } from '../../utils/timeline.js';
 import SavedFilters from './SavedFilters.jsx';
 import TaskBoard from './TaskBoard.jsx';
+import BulkBar from './BulkBar.jsx';
 import TaskModal from './TaskModal.jsx';
 
 const VIEWS = ['board', 'list', 'calendar', 'timeline'];
@@ -224,6 +231,7 @@ export default function TaskSection({ project, archived }) {
         <TaskList
           project={project}
           archived={archived}
+          members={activeMembers}
           params={{ ...common, status: filters.status || undefined, limit: 200 }}
           filtered={filtered}
           onOpenTask={(task) => setModal({ task })}
@@ -264,7 +272,7 @@ export default function TaskSection({ project, archived }) {
   );
 }
 
-function TaskList({ project, archived, params, filtered, onOpenTask }) {
+function TaskList({ project, archived, members, params, filtered, onOpenTask }) {
   const queryClient = useQueryClient();
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['tasks', project.id, 'list', params],
@@ -275,6 +283,60 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
     mutationFn: ({ id, status }) => updateTask(id, { status }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
   });
+
+  // 일괄 선택(M39): 보이지 않게 된 작업(필터·삭제·다른 사용자의 변경)은 선택에서 뺀다.
+  const [selected, setSelected] = useState(() => new Set());
+  const [notice, setNotice] = useState('');
+  const rows = data?.data ?? [];
+  const selectedIds = rows.filter((t) => selected.has(t.id)).map((t) => t.id);
+  const allSelected = rows.length > 0 && selectedIds.length === rows.length;
+  const headerBox = useRef(null);
+  useEffect(() => {
+    if (headerBox.current) {
+      headerBox.current.indeterminate = selectedIds.length > 0 && !allSelected;
+    }
+  });
+  const toggle = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((t) => t.id)));
+  const done = (message) => {
+    setSelected(new Set());
+    setNotice(message);
+    queryClient.invalidateQueries({ queryKey: ['tasks'] });
+  };
+  const bulkUpdate = useMutation({
+    mutationFn: (patch) => bulkUpdateTasks(project.id, selectedIds, patch),
+    onSuccess: (res) => done(`${res.updated}개 작업을 바꿨습니다.`),
+  });
+  const bulkDelete = useMutation({
+    mutationFn: () => bulkDeleteTasks(project.id, selectedIds),
+    onSuccess: (res) => done(`${res.deleted}개 작업을 삭제했습니다.`),
+  });
+  const bulkBusy = bulkUpdate.isPending || bulkDelete.isPending;
+  const bulkError = [bulkUpdate, bulkDelete].find((m) => m.isError)?.error;
+  const applyBulk = async (patch) => {
+    setNotice('');
+    bulkDelete.reset();
+    try {
+      await bulkUpdate.mutateAsync(patch);
+      return true;
+    } catch {
+      return false; // 오류는 아래에 표시한다
+    }
+  };
+  const removeBulk = () => {
+    if (!window.confirm(`선택한 ${selectedIds.length}개 작업을 삭제할까요? 되돌릴 수 없습니다.`)) {
+      return;
+    }
+    setNotice('');
+    bulkUpdate.reset();
+    bulkDelete.mutate();
+  };
 
   return (
     <>
@@ -303,11 +365,43 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
         </div>
       )}
 
+      {notice && (
+        <p role="status" className="save-state">
+          {notice}
+        </p>
+      )}
+      {bulkError && (
+        <p role="alert" className="error">
+          {errorMessage(bulkError, '일괄 처리하지 못했습니다.')}
+        </p>
+      )}
+      {!archived && selectedIds.length > 0 && (
+        <BulkBar
+          count={selectedIds.length}
+          members={members}
+          busy={bulkBusy}
+          onApply={applyBulk}
+          onDelete={removeBulk}
+          onClear={() => setSelected(new Set())}
+        />
+      )}
+
       {data && data.data.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
+                {!archived && (
+                  <th className="select-col">
+                    <input
+                      ref={headerBox}
+                      type="checkbox"
+                      aria-label="보이는 작업 모두 선택"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                    />
+                  </th>
+                )}
                 <th>제목</th>
                 <th>상태</th>
                 <th>우선순위</th>
@@ -317,7 +411,17 @@ function TaskList({ project, archived, params, filtered, onOpenTask }) {
             </thead>
             <tbody>
               {data.data.map((t) => (
-                <tr key={t.id}>
+                <tr key={t.id} className={selected.has(t.id) ? 'selected' : undefined}>
+                  {!archived && (
+                    <td className="select-col">
+                      <input
+                        type="checkbox"
+                        aria-label={`${t.title} 선택`}
+                        checked={selected.has(t.id)}
+                        onChange={() => toggle(t.id)}
+                      />
+                    </td>
+                  )}
                   <td className="wrap">
                     {t.key && <span className="task-key inline">{t.key} </span>}
                     <button type="button" className="linklike title" onClick={() => onOpenTask(t)}>

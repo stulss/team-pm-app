@@ -2490,6 +2490,56 @@ try {
         throw new Error('지금 기기만 남아야 함');
     },
   );
+  await step('일괄 선택: 목록에서 여러 작업을 골라 한꺼번에 바꾸고 지울 수 있음', async () => {
+    if (!setPage) throw new Error('준비 단계 실패');
+    const token = await apiLogin('settings');
+    const proj = (await apiCall('POST', '/projects', token, { name: `ui-${run}-일괄` })).body;
+    const titles = ['일괄 A', '일괄 B', '일괄 C'].map((x) => `${x} ${run}`);
+    const made = [];
+    for (const title of titles) {
+      made.push((await apiCall('POST', `/projects/${proj.id}/tasks`, token, { title })).body);
+    }
+    await setPage.goto(`${BASE}/projects/${proj.id}`);
+    await setPage.getByRole('tab', { name: '목록' }).click();
+    await setPage.getByRole('table').getByText(titles[0]).waitFor();
+
+    // 머리글 체크박스는 보이는 작업 전체를 고른다
+    await setPage.getByRole('checkbox', { name: titles[0] + ' 선택' }).click();
+    const bar = setPage.getByRole('form', { name: '일괄 작업' });
+    await bar.getByText('1개 선택').waitFor();
+    await setPage.getByRole('checkbox', { name: '보이는 작업 모두 선택' }).click();
+    await bar.getByText('3개 선택').waitFor();
+
+    await bar.getByLabel('상태 일괄 변경').selectOption('done');
+    await bar.getByLabel('우선순위 일괄 변경').selectOption('urgent');
+    await bar.getByRole('button', { name: '적용' }).click();
+    await setPage.getByRole('status').filter({ hasText: '3개 작업을 바꿨습니다' }).waitFor();
+    await bar.waitFor({ state: 'detached' });
+    await pollUntil(async () => {
+      const list = (await apiCall('GET', `/projects/${proj.id}/tasks?limit=50`, token)).body.data;
+      return list.length === 3 && list.every((t) => t.status === 'done' && t.priority === 'urgent');
+    }, '일괄 수정 반영');
+
+    // 일부만 골라 삭제(확인 대화상자)
+    await setPage.getByRole('checkbox', { name: titles[1] + ' 선택' }).click();
+    await setPage.getByRole('checkbox', { name: titles[2] + ' 선택' }).click();
+    await bar.getByText('2개 선택').waitFor();
+    setPage.once('dialog', (d) => d.accept());
+    await bar.getByRole('button', { name: '선택 삭제' }).click();
+    await setPage.getByRole('status').filter({ hasText: '2개 작업을 삭제했습니다' }).waitFor();
+    await setPage.getByRole('table').getByText(titles[1]).waitFor({ state: 'detached' });
+    const left = (await apiCall('GET', `/projects/${proj.id}/tasks?limit=50`, token)).body.data;
+    if (left.length !== 1 || left[0].id !== made[0].id) throw new Error('남은 작업이 다름');
+
+    // 선택을 풀면 일괄 작업 줄이 사라진다
+    await setPage.getByRole('checkbox', { name: titles[0] + ' 선택' }).click();
+    await bar.getByText('1개 선택').waitFor();
+    await bar.getByRole('button', { name: '선택 해제' }).click();
+    await bar.waitFor({ state: 'detached' });
+    // 다음 단계가 곧바로 다시 이동하므로, 새로고침 중 토큰 갱신이 끝나도록 화면이 뜰 때까지 기다린다
+    await setPage.goto(`${BASE}/settings`);
+    await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
+  });
   await step(
     '설정: API 토큰을 만들면 값이 한 번만 보이고, 그 토큰으로 API 를 쓰다가 폐기하면 바로 끊김',
     async () => {

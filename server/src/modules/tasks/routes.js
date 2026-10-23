@@ -79,6 +79,25 @@ const moveBody = z
     message: 'beforeTaskId 와 afterTaskId 는 달라야 합니다.',
   });
 
+// 일괄 수정·삭제: 한 번에 50개까지(중복 id 는 한 번만).
+const bulkIds = z
+  .array(z.uuid('올바르지 않은 작업 ID 입니다.'))
+  .min(1, '작업을 하나 이상 선택해 주세요.')
+  .max(50, '한 번에 최대 50개까지 처리할 수 있습니다.')
+  .transform((ids) => [...new Set(ids)]);
+const bulkUpdateBody = z.object({
+  taskIds: bulkIds,
+  patch: z
+    .object({
+      status: status.optional(),
+      priority: priority.optional(),
+      assigneeId: z.uuid('올바르지 않은 담당자 ID 입니다.').nullable().optional(),
+      dueDate: date.nullable().optional(),
+    })
+    .refine((v) => Object.keys(v).length > 0, { message: '변경할 항목이 없습니다.' }),
+});
+const bulkDeleteBody = z.object({ taskIds: bulkIds });
+
 // /projects/:id/tasks
 export const projectTasksRouter = Router({ mergeParams: true });
 projectTasksRouter.use(authenticate);
@@ -99,6 +118,56 @@ projectTasksRouter.post('/', requireProjectMember(), validate(createBody), async
   await recordTaskCreated({ project: req.project, task, actor: req.user });
   res.status(201).json(task);
 });
+
+projectTasksRouter.patch(
+  '/bulk',
+  requireProjectMember(),
+  validate(bulkUpdateBody),
+  async (req, res) => {
+    const { taskIds, patch } = req.body;
+    const rows = await service.loadForBulk(req.project, taskIds);
+    await service.assertBulkUpdatable(req.project, rows, patch);
+    const tasks = [];
+    for (const before of rows) {
+      const task = await service.update(before, req.project, patch);
+      await emitToProject(req, req.project.id, 'task:updated', {
+        projectId: req.project.id,
+        task,
+      });
+      if (task.assignee?.id !== (before.assignee_id ?? undefined)) {
+        await notifyTaskAssigned({ task, actor: req.user });
+      }
+      await recordTaskUpdated({ project: req.project, before, after: task, actor: req.user });
+      tasks.push(task);
+    }
+    res.json({ updated: tasks.length, tasks });
+  },
+);
+
+projectTasksRouter.post(
+  '/bulk-delete',
+  requireProjectMember(),
+  validate(bulkDeleteBody),
+  async (req, res) => {
+    const rows = await service.loadForBulk(req.project, req.body.taskIds);
+    service.assertBulkDeletable(req.project, req.user, rows);
+    for (const task of rows) {
+      await service.remove(task, req.project, req.user);
+      await emitToProject(req, req.project.id, 'task:deleted', {
+        projectId: req.project.id,
+        taskId: task.id,
+      });
+      await record({
+        projectId: req.project.id,
+        taskId: task.id,
+        actorId: req.user.id,
+        action: 'task.deleted',
+        meta: { title: task.title },
+      });
+    }
+    res.json({ deleted: rows.length });
+  },
+);
 
 // /tasks
 export const tasksRouter = Router();
