@@ -2501,7 +2501,7 @@ try {
     }
     await setPage.goto(`${BASE}/projects/${proj.id}`);
     await setPage.getByRole('tab', { name: '목록' }).click();
-    await setPage.getByText(titles[0]).waitFor();
+    await setPage.getByRole('table').getByText(titles[0]).waitFor();
 
     // 머리글 체크박스는 보이는 작업 전체를 고른다
     await setPage.getByRole('checkbox', { name: titles[0] + ' 선택' }).click();
@@ -2536,7 +2536,9 @@ try {
     await bar.getByText('1개 선택').waitFor();
     await bar.getByRole('button', { name: '선택 해제' }).click();
     await bar.waitFor({ state: 'detached' });
+    // 다음 단계가 곧바로 다시 이동하므로, 새로고침 중 토큰 갱신이 끝나도록 화면이 뜰 때까지 기다린다
     await setPage.goto(`${BASE}/settings`);
+    await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
   });
   await step(
     '설정: API 토큰을 만들면 값이 한 번만 보이고, 그 토큰으로 API 를 쓰다가 폐기하면 바로 끊김',
