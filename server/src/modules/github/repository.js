@@ -117,6 +117,23 @@ export async function findTasksByNumbers(projectId, numbers) {
   return rows;
 }
 
+// 이슈 번호에 해당하는 작업(이슈로 만든 카드, 또는 작업 키 이슈가 연결된 작업)을 찾는다(M43).
+export async function findTasksByIssueNumbers(projectId, numbers) {
+  if (numbers.length === 0) return [];
+  const { rows } = await query(
+    `SELECT DISTINCT t.id, t.number, t.title, t.status
+     FROM tasks t
+     WHERE t.project_id = $1 AND (
+       t.id IN (SELECT task_id FROM github_issue_cards
+                WHERE project_id = $1 AND issue_number = ANY($2::int[]) AND task_id IS NOT NULL)
+       OR t.id IN (SELECT task_id FROM github_task_links
+                   WHERE project_id = $1 AND kind = 'issue' AND external_id = ANY($3::text[]))
+     )`,
+    [projectId, numbers, numbers.map(String)],
+  );
+  return rows;
+}
+
 // ---- PR → 작업 카드 자동 등록 (M34) ----
 
 // PR 하나의 등록 자리를 잡는다. 처음이면 true, 이미 등록했거나 다른 전달이 먼저 잡았으면 false.

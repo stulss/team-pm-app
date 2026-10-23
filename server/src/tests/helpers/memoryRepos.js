@@ -918,6 +918,24 @@ export const githubRepo = {
       .filter((t) => t.project_id === projectId && numbers.includes(t.number))
       .map((t) => ({ id: t.id, number: t.number, title: t.title, status: t.status }));
   },
+  async findTasksByIssueNumbers(projectId, numbers) {
+    const ids = new Set([
+      ...store.issueCards
+        .filter((c) => c.project_id === projectId && numbers.includes(c.issue_number) && c.task_id)
+        .map((c) => c.task_id),
+      ...store.githubLinks
+        .filter(
+          (l) =>
+            l.project_id === projectId &&
+            l.kind === 'issue' &&
+            numbers.map(String).includes(l.external_id),
+        )
+        .map((l) => l.task_id),
+    ]);
+    return store.tasks
+      .filter((t) => t.project_id === projectId && ids.has(t.id))
+      .map((t) => ({ id: t.id, number: t.number, title: t.title, status: t.status }));
+  },
   async upsertLink({ taskId, projectId, kind, externalId, title, url, state, author }) {
     const found = store.githubLinks.find(
       (l) => l.task_id === taskId && l.kind === kind && l.external_id === externalId,

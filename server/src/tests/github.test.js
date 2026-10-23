@@ -807,3 +807,66 @@ describe('GitHub 이슈 동기화 (M35)', () => {
     }
   });
 });
+
+describe('PR 의 closes #N 연결 (M43)', () => {
+  const issueHook = (number, title = '결제 화면이 멈춤') =>
+    hook('issues', {
+      action: 'opened',
+      repository: { full_name: 'octo/hello' },
+      issue: {
+        number,
+        title,
+        body: '',
+        html_url: `https://github.com/octo/hello/issues/${number}`,
+        state: 'open',
+        user: { login: 'reporter' },
+        assignees: [],
+      },
+    });
+  const open = (over = {}, action = 'opened') => hook('pull_request', pr(action, over));
+  const cards = () => store.tasks.filter((t) => t.project_id === pid);
+
+  beforeEach(async () => {
+    await connect('owner', { repo: 'octo/hello', syncIssues: true, doneOnMerge: true });
+    await issueHook(3);
+    await issueHook(4, '다른 이슈');
+  });
+
+  it('PR 본문의 closes #N 이 그 이슈 카드에 PR 을 연결한다(새 카드는 만들지 않는다)', async () => {
+    await connect('owner', { repo: 'octo/hello', createOnPr: true });
+    const [card3, card4] = cards();
+    const res = await open({ title: '결제 수정', body: '이 PR 은 Closes #3 합니다.' });
+    expect(res.body).toMatchObject({ tasks: 1, linked: 1, created: 0 });
+    expect(cards()).toHaveLength(2);
+    expect((await links(card3.id)).map((l) => l.kind).sort()).toEqual(['issue', 'pull_request']);
+    expect((await links(card4.id)).map((l) => l.kind)).toEqual(['issue']);
+  });
+
+  it('머지되면 doneOnMerge 로 이슈 카드를 완료로 옮긴다', async () => {
+    const [card3, card4] = cards();
+    await open({ body: 'fixes #3' });
+    await open({ body: 'fixes #3', state: 'closed', merged: true }, 'closed');
+    expect(store.tasks.find((t) => t.id === card3.id).status).toBe('done');
+    expect(store.tasks.find((t) => t.id === card4.id).status).toBe('todo');
+  });
+
+  it('키워드 없는 #N·다른 저장소의 이슈·없는 번호는 무시한다', async () => {
+    const res = await open({
+      title: 'see #3',
+      body: 'related to #4, resolves other/repo#3, closes #99',
+    });
+    expect(res.body).toMatchObject({ tasks: 0, linked: 0 });
+  });
+
+  it('같은 저장소 이름을 붙인 octo/hello#3 과 여러 개를 함께 인정한다', async () => {
+    const res = await open({ body: 'Fixes octo/hello#3 and resolves: #4' });
+    expect(res.body).toMatchObject({ tasks: 2, linked: 2 });
+  });
+
+  it('작업 키와 closes #N 이 같은 카드를 가리켜도 한 번만 연결한다', async () => {
+    const [card3] = cards();
+    const res = await open({ title: `${'TPM'}-${card3.number} 수정`, body: 'closes #3' });
+    expect(res.body.tasks).toBe(1);
+    expect((await links(card3.id)).filter((l) => l.kind === 'pull_request')).toHaveLength(1);
+  });
+});

@@ -5,7 +5,13 @@ import * as projectsRepo from '../projects/repository.js';
 import * as tasksRepo from '../tasks/repository.js';
 import { assertWritable, create as createTask } from '../tasks/service.js';
 import { record } from '../activity/service.js';
-import { extractNumbers, extractNumbersFrom, prState, webhookSecret } from './parse.js';
+import {
+  extractClosedIssues,
+  extractNumbers,
+  extractNumbersFrom,
+  prState,
+  webhookSecret,
+} from './parse.js';
 import * as repo from './repository.js';
 
 const MAX_COMMITS_PER_PUSH = 50;
@@ -230,6 +236,14 @@ async function handlePullRequest(connection, project, payload) {
   const state = prState(pr);
   const numbers = extractNumbersFrom([pr.title, pr.body, pr.head?.ref], project.key);
   const tasks = await repo.findTasksByNumbers(project.id, numbers);
+  // "closes #N" 으로 적은 이슈의 카드도 이 PR 에 연결한다(M43)
+  const closing = await repo.findTasksByIssueNumbers(
+    project.id,
+    extractClosedIssues([pr.title, pr.body], connection.repo),
+  );
+  for (const task of closing) {
+    if (!tasks.some((t) => t.id === task.id)) tasks.push(task);
+  }
   const opened =
     ['opened', 'reopened', 'ready_for_review'].includes(payload.action) && state === 'open';
   const merged = payload.action === 'closed' && state === 'merged';
@@ -237,6 +251,7 @@ async function handlePullRequest(connection, project, payload) {
   let created = 0;
   if (
     connection.create_on_pr &&
+    closing.length === 0 && // 닫으려는 이슈 카드가 있으면 그 카드에 연결하면 된다
     numbers.length === 0 && // 작업 키가 있는 PR 은 그 작업에 연결하는 것이 맞다(오타여도 새로 만들지 않는다)
     opened &&
     project.status === 'active' &&

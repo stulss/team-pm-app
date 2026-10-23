@@ -3948,6 +3948,133 @@ try {
     );
   }
 
+  // --- PR 의 closes #N (M43): 이슈 카드·키 이슈 연결을 찾는 SQL, 머지 시 완료 이동, 중복 연결 없음을 실DB 로 확인
+  {
+    const cp = await call('POST', '/projects', {
+      token: t('manager'),
+      body: { name: 'smoke-closes', key: 'CLS', memberIds: [people.member.id] },
+    });
+    const cpid = cp.body.id;
+    const repoName = `smoke-${run}/closes`;
+    const conn = (
+      await call('PUT', `/projects/${cpid}/github`, {
+        token: t('manager'),
+        body: { repo: repoName, syncIssues: true, doneOnMerge: true },
+      })
+    ).body.connection;
+    const hook = async (event, payload) => {
+      const text = JSON.stringify(payload);
+      const res = await fetch(conn.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': event,
+          'x-github-delivery': crypto.randomUUID(),
+          'x-hub-signature-256': `sha256=${crypto.createHmac('sha256', conn.secret).update(text).digest('hex')}`,
+          ...(process.env.VERCEL_BYPASS && {
+            'x-vercel-protection-bypass': process.env.VERCEL_BYPASS,
+          }),
+        },
+        body: text,
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+    const issue = (number, title) =>
+      hook('issues', {
+        action: 'opened',
+        repository: { full_name: repoName },
+        issue: {
+          number,
+          title,
+          body: '',
+          html_url: `https://github.com/${repoName}/issues/${number}`,
+          state: 'open',
+          user: { login: 'reporter' },
+          assignees: [],
+        },
+      });
+    const pr = (action, body, extra = {}) =>
+      hook('pull_request', {
+        action,
+        repository: { full_name: repoName },
+        pull_request: {
+          number: 21,
+          title: '결제 수정',
+          body,
+          html_url: `https://github.com/${repoName}/pull/21`,
+          state: 'open',
+          merged: false,
+          draft: false,
+          head: { ref: 'feature/pay' },
+          user: { login: 'octocat' },
+          ...extra,
+        },
+      });
+
+    // 이슈 3 → 카드, 이슈 5 는 기존 작업 키(CLS-1)를 적어 그 작업에 링크만 건다
+    const keyed = (
+      await call('POST', `/projects/${cpid}/tasks`, {
+        token: t('manager'),
+        body: { title: '키 작업' },
+      })
+    ).body;
+    await issue(3, '이슈로 만든 카드');
+    await issue(5, `${keyed.key} 관련 이슈`);
+    await issue(9, '상관없는 이슈');
+    const cards = (
+      await db.query('SELECT id, title, status FROM tasks WHERE project_id = $1 ORDER BY number', [
+        cpid,
+      ])
+    ).rows;
+    const card3 = cards.find((c) => c.title === '이슈로 만든 카드');
+
+    const opened = await pr(
+      'opened',
+      '이 PR 은 closes #3 그리고 Fixes #5, 관련 #9 (resolves other/repo#9)',
+    );
+    const linked = (
+      await db.query(
+        `SELECT task_id FROM github_task_links WHERE project_id = $1 AND kind = 'pull_request' AND external_id = '21'`,
+        [cpid],
+      )
+    ).rows.map((r) => r.task_id);
+    check(
+      'closes #N: 이슈 카드와 키 이슈의 작업에 PR 이 연결되고 키워드 없는 이슈(#9)·다른 저장소는 무시한다',
+      opened.status === 200 &&
+        linked.length === 2 &&
+        linked.includes(card3.id) &&
+        linked.includes(keyed.id) &&
+        cards.length === 3, // 이슈 3·9 의 카드 + 키 작업(이슈 5 는 키가 있어 새 카드 없음)
+      JSON.stringify({
+        status: opened.status,
+        body: opened.body,
+        linked: linked.length,
+        cards: cards.length,
+      }),
+    );
+    await pr('edited', '이 PR 은 closes #3 그리고 Fixes #5');
+    check(
+      'closes #N: 같은 PR 을 다시 받아도 연결은 중복되지 않는다',
+      (
+        await db.query(
+          `SELECT count(*)::int AS n FROM github_task_links WHERE project_id = $1 AND kind = 'pull_request'`,
+          [cpid],
+        )
+      ).rows[0].n === 2,
+    );
+    await pr('closed', 'closes #3 그리고 Fixes #5', { state: 'closed', merged: true });
+    const after = (await db.query('SELECT id, status FROM tasks WHERE project_id = $1', [cpid]))
+      .rows;
+    check(
+      'closes #N: 머지되면 연결된 카드가 완료로 이동한다',
+      after.length === 3 &&
+        after.filter((r) => r.status === 'done').length === 2 &&
+        after.find((r) => linked.includes(r.id) === false).status === 'todo',
+      JSON.stringify(after),
+    );
+    await call('DELETE', `/projects/${cpid}`, { token: t('manager') });
+  }
+
   // --- 일괄 선택·수정 (M39): 검증 먼저(전부 아니면 전무)·컬럼 맨 아래 이동·완료 시각·삭제 권한을 실DB 로 확인
   {
     const bp = await call('POST', '/projects', {

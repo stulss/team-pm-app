@@ -28,6 +28,22 @@ export function extractNumbers(text, projectKey) {
   return [...found].sort((a, b) => a - b);
 }
 
+// PR 제목·본문의 "closes #12" 류 키워드로 닫으려는 이슈 번호를 찾는다(GitHub 키워드: close/fix/resolve 계열).
+// 같은 저장소의 `#N` 과 `<repo>#N` 만 인정하고, 다른 저장소의 이슈나 키워드 없는 `#N` 은 무시한다. 중복 없이 오름차순.
+export function extractClosedIssues(texts, repoFullName) {
+  const re =
+    /(?<![A-Za-z0-9])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[ \t]*:?[ \t]+(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#(\d{1,7})(?![A-Za-z0-9])/gi;
+  const found = new Set();
+  for (const text of texts) {
+    for (const m of String(text ?? '').matchAll(re)) {
+      if (m[1] && m[1].toLowerCase() !== String(repoFullName ?? '').toLowerCase()) continue;
+      const n = Number(m[2]);
+      if (n > 0) found.add(n);
+    }
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
 // 여러 텍스트(제목·본문·브랜치 이름…)에서 한꺼번에 찾는다.
 export const extractNumbersFrom = (texts, projectKey) =>
   [...new Set(texts.flatMap((t) => extractNumbers(t, projectKey)))].sort((a, b) => a - b);

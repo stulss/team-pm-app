@@ -123,6 +123,12 @@ export default function GithubConnect({ projectId }) {
           </label>
           {connection.syncIssues && (
             <p className="muted small">
+              PR 본문에 <code>closes #12</code>(fixes·resolves 도 가능)처럼 적으면 그 이슈의 카드에
+              PR 이 연결되고, PR 이 머지되면 위 옵션에 따라 완료로 이동합니다.
+            </p>
+          )}
+          {connection.syncIssues && (
+            <p className="muted small">
               작업 키가 없는 이슈가 열리면 카드를 만들고, 이슈를 닫으면 완료로, 다시 열면 할 일로
               옮기며, 이슈 제목을 고치면 카드 제목도 바뀝니다(GitHub → 앱 한 방향). 웹훅 이벤트에{' '}
               <strong>Issues</strong> 를 꼭 추가하세요.

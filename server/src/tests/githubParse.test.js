@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  extractClosedIssues,
   extractNumbers,
   extractNumbersFrom,
   normalizeRepo,
@@ -101,5 +102,29 @@ describe('웹훅 서명', () => {
     ]) {
       expect(verifySignature(secret, body, bad), String(bad)).toBe(false);
     }
+  });
+});
+
+describe('extractClosedIssues', () => {
+  const find = (text, repo = 'octo/hello') => extractClosedIssues([text], repo);
+
+  it('GitHub 키워드(close/fix/resolve 의 활용형, 대소문자 무시)와 #N 을 찾는다', () => {
+    expect(find('Closes #1, fixed #2 Resolves: #3 and FIX #4')).toEqual([1, 2, 3, 4]);
+    expect(find('fixes #6\r\ncloses #7')).toEqual([6, 7]);
+    expect(find('close #5 fixes #5')).toEqual([5]);
+  });
+
+  it('키워드가 없거나 붙어 있는 글자가 있으면 무시한다', () => {
+    expect(find('see #1, related #2')).toEqual([]);
+    expect(find('prefixes #1 and disclose #2 and closes#3')).toEqual([]);
+    expect(find('closes #12abc')).toEqual([]);
+  });
+
+  it('같은 저장소 이름은 인정하고 다른 저장소는 무시한다(대소문자 무시)', () => {
+    expect(find('fixes octo/hello#7, fixes other/repo#8, fixes OCTO/Hello#9')).toEqual([7, 9]);
+  });
+
+  it('여러 텍스트를 합치고 빈 값은 건너뛴다', () => {
+    expect(extractClosedIssues(['fixes #2', null, undefined, 'closes #1'], 'a/b')).toEqual([1, 2]);
   });
 });
