@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import {
   bulkDeleteTasks,
   bulkUpdateTasks,
@@ -60,43 +60,89 @@ export default function TaskSection({ project, archived }) {
 
   // 알림 링크(?task=<id>)로 들어오면 해당 작업을 연다.
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   // 명령 팔레트가 ?view=<보기>, ?new=task 로 보기 전환·작업 만들기를 요청할 수 있다.
   const viewParam = searchParams.get('view');
   const view = VIEWS.includes(viewParam) ? viewParam : savedView;
-  const creating = searchParams.get('new') === 'task' && !archived;
+  const linkedId = searchParams.get('task');
+  const creating = searchParams.get('new') === 'task' && !archived && !linkedId;
   const dropParams = (...names) => {
     const next = new URLSearchParams(searchParams);
     for (const name of names) next.delete(name);
     setSearchParams(next, { replace: true });
   };
-  const linkedId = searchParams.get('task');
   const linked = useQuery({
     queryKey: ['task', linkedId],
     queryFn: () => getTask(linkedId),
     enabled: Boolean(linkedId),
     retry: false,
   });
-  const closeLinked = () => dropParams('task');
   // 작업 모달 상태는 주소(?task=<id>, ?new=task)에 둔다: 새로고침·뒤로가기·링크 공유가 되고, 뒤로가기로 닫힌다.
+  // 앱 안에서 열었으면(state.modal) 닫을 때 그 이동을 되돌려 히스토리가 쌓이지 않게 하고,
+  // 링크로 직접 들어왔으면 주소에서 파라미터만 걷어 낸다.
+  const closeModal = (name) => (location.state?.modal ? navigate(-1) : dropParams(name));
+  const closeLinked = () => closeModal('task');
+  const closeNew = () => closeModal('new');
   // 목록에서 이미 가진 작업은 캐시에 넣어 두어 바로 열리고, 상세는 뒤에서 다시 받는다.
   const openTask = (task) => {
     queryClient.setQueryData(['task', task.id], task);
     const next = new URLSearchParams(searchParams);
     next.delete('new');
     next.set('task', task.id);
-    setSearchParams(next);
+    setSearchParams(next, { state: { modal: true } });
   };
   const openNew = () => {
     const next = new URLSearchParams(searchParams);
     next.delete('task');
     next.set('new', 'task');
-    setSearchParams(next);
+    setSearchParams(next, { state: { modal: true } });
   };
-  // 없거나 볼 수 없는 작업 링크는 조용히 주소에서 걷어 낸다.
+  // 없거나 볼 수 없는 작업 링크는 조용히 주소에서 걷어 낸다(이미 받은 데이터가 있으면 일시 오류이므로 둔다).
   useEffect(() => {
-    if (linked.isError) dropParams('task');
+    if (linked.isError && !linked.data) dropParams('task');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linked.isError]);
+
+  // 입력을 바꾸던 모달이 뒤로가기로 닫히려 하면 확인을 받는다. 변경 여부(dirty)가 있는 동안은 주소가 바뀌어도
+  // 모달을 그대로 그려 입력을 지키고, 확인에서 취소하면 주소를 되돌린다.
+  // (모달 안의 닫기·Esc 는 TaskModal 이 따로 묻고 변경 여부를 비워 두 번 묻지 않는다.)
+  const dirtyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
+  const onDirtyChange = useCallback((value) => {
+    dirtyRef.current = value;
+    setDirty(value);
+  }, []);
+  const current = useMemo(
+    () => (creating ? { isNew: true } : linkedId && linked.data ? { task: linked.data } : null),
+    [creating, linkedId, linked.data],
+  );
+  const [last, setLast] = useState(null);
+  if (current && current !== last) setLast(current);
+  const shown = current ?? (dirty ? last : null);
+  const lastRef = useRef(null);
+  const setParamsRef = useRef(setSearchParams);
+  useEffect(() => {
+    lastRef.current = last;
+    setParamsRef.current = setSearchParams;
+  });
+  useEffect(() => {
+    const onPop = () => {
+      if (!dirtyRef.current) return;
+      if (window.confirm('저장하지 않은 변경이 있습니다. 그래도 닫을까요?')) {
+        onDirtyChange(false);
+        return;
+      }
+      const target = lastRef.current;
+      const next = new URLSearchParams(window.location.search);
+      if (target?.task) next.set('task', target.task.id);
+      else next.set('new', 'task');
+      setParamsRef.current(next, { state: { modal: true } });
+    };
+    // 렌더마다 해제·재등록하면 이벤트 도중 해제될 수 있어 한 번만 등록한다.
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [onDirtyChange]);
 
   const changeView = (next) => {
     setView(next);
@@ -264,24 +310,16 @@ export default function TaskSection({ project, archived }) {
           onClose={() => setManagingLabels(false)}
         />
       )}
-      {!creating && linked.data && (
+      {shown && (
         <TaskModal
-          key={linked.data.id}
+          key={shown.task?.id ?? 'new'}
           projectId={project.id}
           ownerId={project.ownerId}
           members={project.members}
-          task={linked.data}
+          task={shown.task}
           readOnly={archived}
-          onClose={closeLinked}
-        />
-      )}
-      {creating && (
-        <TaskModal
-          projectId={project.id}
-          ownerId={project.ownerId}
-          members={project.members}
-          readOnly={archived}
-          onClose={() => dropParams('new')}
+          onDirtyChange={onDirtyChange}
+          onClose={shown.task ? closeLinked : closeNew}
         />
       )}
     </div>

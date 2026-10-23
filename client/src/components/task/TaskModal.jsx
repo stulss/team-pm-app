@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { createTask, deleteTask, updateTask } from '../../api/tasks.js';
 import { errorMessage } from '../../api/http.js';
@@ -30,6 +30,7 @@ export default function TaskModal({
   members,
   task,
   readOnly = false,
+  onDirtyChange,
   onClose,
 }) {
   const { user } = useAuth();
@@ -49,9 +50,21 @@ export default function TaskModal({
   // 처음 값에서 바뀌었는지: 바뀐 채로 닫으면(Esc·배경·취소) 확인을 받는다.
   const [initial] = useState(form);
   const dirty = !readOnly && JSON.stringify(form) !== JSON.stringify(initial);
+  // 부모가 뒤로가기 등으로 닫힐 때도 확인할 수 있게 변경 여부를 알려 주고, 새로고침·탭 닫기도 막는다.
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    if (!dirty) return undefined;
+    const warn = (e) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty, onDirtyChange]);
+  const leave = () => {
+    onDirtyChange?.(false); // 확인을 마쳤거나 저장했으니 부모가 다시 묻지 않게 한다
+    onClose();
+  };
   const requestClose = () => {
     if (dirty && !window.confirm('저장하지 않은 변경이 있습니다. 그래도 닫을까요?')) return;
-    onClose();
+    leave();
   };
   // 더블클릭·연타로 같은 작업이 두 번 만들어지지 않게, 응답이 올 때까지 두 번째 제출을 막는다.
   const sending = useRef(false);
@@ -59,7 +72,7 @@ export default function TaskModal({
   const done = () => {
     queryClient.invalidateQueries({ queryKey: ['tasks'] });
     queryClient.invalidateQueries({ queryKey: ['mytasks'] });
-    onClose();
+    leave();
   };
   const save = useMutation({
     mutationFn: () => {

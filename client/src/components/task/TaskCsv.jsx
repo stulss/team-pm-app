@@ -13,6 +13,7 @@ const MAX_PAGES = 5; // 프로젝트 작업 상한(1000)
 export default function TaskCsv({ project, archived }) {
   const queryClient = useQueryClient();
   const fileInput = useRef(null);
+  const picking = useRef(0); // 늦게 끝난 이전 파일의 중복 검사가 새 파일·닫힌 화면을 덮어쓰지 않게 한다
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [importing, setImporting] = useState(false);
@@ -55,6 +56,7 @@ export default function TaskCsv({ project, archived }) {
   });
 
   const close = () => {
+    picking.current += 1;
     setImporting(false);
     setParsed(null);
     setSure(false);
@@ -66,6 +68,7 @@ export default function TaskCsv({ project, archived }) {
     e.target.value = '';
     if (!file) return;
     save.reset();
+    const pick = (picking.current += 1);
     try {
       const { tasks, errors } = readTasks(parseCsv(await file.text()), project.members);
       setSure(false);
@@ -79,8 +82,10 @@ export default function TaskCsv({ project, archived }) {
           /* 확인하지 못해도 가져오기는 막지 않는다 */
         }
       }
+      if (pick !== picking.current) return;
       setParsed({ name: file.name, tasks, errors, duplicates });
     } catch {
+      if (pick !== picking.current) return;
       setParsed({
         name: file.name,
         tasks: [],

@@ -2739,6 +2739,37 @@ try {
       await setPage.getByRole('dialog', { name: '작업 수정' }).waitFor();
       await setPage.goBack();
       await setPage.getByRole('dialog').waitFor({ state: 'detached' });
+
+      // 입력을 바꾼 채 뒤로가기: 확인에서 취소하면 모달·입력이 남고, 확인하면 닫힌다
+      const taskButton = setPage.getByRole('table').getByRole('button', { name: '연타 확인' });
+      await taskButton.click();
+      const edit = setPage.getByRole('dialog', { name: '작업 수정' });
+      await edit.getByLabel('제목').fill('연타 확인 수정');
+      setPage.once('dialog', (d) => d.dismiss());
+      await setPage.goBack();
+      await setPage.waitForTimeout(500);
+      if (!(await edit.isVisible()) || !setPage.url().includes('task=')) {
+        throw new Error(
+          `뒤로가기 확인에서 취소했는데 모달이 닫힘: visible=${await edit.isVisible()} url=${setPage.url()}`,
+        );
+      }
+      if ((await edit.getByLabel('제목').inputValue()) !== '연타 확인 수정') {
+        throw new Error('뒤로가기 확인에서 취소했는데 입력이 사라짐');
+      }
+      setPage.once('dialog', (d) => d.accept());
+      await setPage.goBack();
+      await edit.waitFor({ state: 'detached' });
+
+      // 앱 안에서 열었다 닫으면 히스토리가 쌓이지 않아 뒤로가기 한 번에 이전 화면으로 간다
+      await taskButton.click();
+      await setPage.getByRole('dialog', { name: '작업 수정' }).waitFor();
+      await setPage.getByRole('dialog').getByRole('button', { name: '취소' }).click();
+      await setPage.getByRole('dialog').waitFor({ state: 'detached' });
+      if (setPage.url().includes('task=')) throw new Error('닫았는데 주소에 task 가 남음');
+      await setPage.goBack();
+      await setPage.waitForURL((u) => !u.pathname.includes(`/projects/${proj.id}`));
+      // 뒤로가기로 돌아온 곳이 설정 화면이다. 다시 이동하면 진행 중인 토큰 갱신이 끊기므로 기다리기만 한다
+      await setPage.getByRole('heading', { name: '설정', exact: true }).waitFor();
     },
   );
   await step(
