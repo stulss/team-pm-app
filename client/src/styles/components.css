@@ -727,3 +727,188 @@ button.reaction[aria-pressed='true'] {
 .mention-list li:hover {
   background: var(--primary-soft);
 }
+
+/* ==========================================================================
+   Shortcut Cheatsheet Modal (Linear / Raycast Style HUD)
+   ========================================================================== */
+.cheatsheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+  background: rgba(8, 12, 20, 0.65);
+  backdrop-filter: blur(16px) saturate(160%);
+  animation: cheatsheetFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cheatsheetFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cheatsheet-modal {
+  width: 100%;
+  max-width: 580px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  animation: cheatsheetScaleUp 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cheatsheetScaleUp {
+  from {
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+.cheatsheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.cheatsheet-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cheatsheet-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--r-md);
+  color: var(--muted);
+}
+
+.cheatsheet-close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.cheatsheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-5);
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.cheatsheet-group-title {
+  margin: 0 0 var(--s-2);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+}
+
+.cheatsheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.cheatsheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.cheatsheet-row:hover {
+  background: var(--surface-3);
+}
+
+.cheatsheet-label {
+  font-size: 0.88rem;
+  color: var(--text-2);
+}
+
+.cheatsheet-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kbd-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  box-shadow: 0 2px 0 var(--border-strong);
+}
+
+.cheatsheet-footer {
+  padding: var(--s-3) var(--s-5);
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.cheatsheet-footer code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.cheatsheet-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  border-radius: var(--r-md);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.cheatsheet-trigger-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+

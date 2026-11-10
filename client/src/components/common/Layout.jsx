@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { useUserRealtime } from '../../hooks/useUserRealtime.js';
 import Avatar from './Avatar.jsx';
 import CommandPalette from './CommandPalette.jsx';
+import ShortcutCheatsheet from './ShortcutCheatsheet.jsx';
 import Icon from './Icon.jsx';
 import NotificationBell from './NotificationBell.jsx';
 
@@ -27,6 +28,7 @@ export default function Layout() {
   useUserRealtime();
   const [term, setTerm] = useState('');
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const projects = useQuery({
@@ -35,12 +37,18 @@ export default function Layout() {
   });
   const sideProjects = (projects.data?.data ?? []).slice(0, MAX_SIDE_PROJECTS);
 
-  // Ctrl+K(Mac 은 ⌘K)로 명령 팔레트를 열고 닫는다. 브라우저의 기본 동작(주소창 검색)은 막는다.
+  // Ctrl+K(Mac 은 ⌘K)로 명령 팔레트, ? 로 단축키 치트시트를 열고 닫는다.
   useEffect(() => {
     const onKey = (e) => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const isInput = tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement?.isContentEditable;
+
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((open) => !open);
+      } else if (!isInput && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
+        e.preventDefault();
+        setCheatsheetOpen((open) => !open);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -149,6 +157,15 @@ export default function Layout() {
               <Icon name="command" size={16} />
               <span className="palette-label">빠른 실행</span> <kbd>Ctrl K</kbd>
             </button>
+            <button
+              type="button"
+              className="icon-btn cheatsheet-trigger-btn"
+              aria-label="단축키 안내"
+              title="단축키 가이드 (?)"
+              onClick={() => setCheatsheetOpen(true)}
+            >
+              <Icon name="keyboard" size={16} />
+            </button>
             <NotificationBell />
             <div className="user-menu">
               <button
@@ -188,6 +205,7 @@ export default function Layout() {
         </main>
       </div>
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} />}
+      <ShortcutCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
     </div>
   );
 }
